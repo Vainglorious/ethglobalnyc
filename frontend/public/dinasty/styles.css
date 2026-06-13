@@ -72,7 +72,7 @@ body.underground #atmos {
 .stat .sv b { color: var(--gold); }
 
 /* ---------- region selector ---------- */
-#regions { position: absolute; top: 84px; left: 24px; width: 208px; padding: 9px; display: flex; flex-direction: column; gap: 3px; }
+#regions { display: none !important; }
 .reg-title { font-size: 10px; letter-spacing: 0.13em; text-transform: uppercase; color: var(--ink-faint); font-weight: 650; padding: 3px 9px 7px; }
 .reg { display: flex; align-items: center; gap: 11px; padding: 8px 10px; border-radius: 4px; cursor: pointer; transition: background .16s; }
 .reg:hover { background: rgba(74,58,30,0.08); }
@@ -84,7 +84,7 @@ body.underground #atmos {
 .reg-tag { font-size: 10px; color: var(--ink-faint); margin-top: 1px; }
 
 /* ---------- inspector (right) ---------- */
-#inspector { position: absolute; top: 92px; right: 24px; width: 300px; padding: 18px; max-height: calc(100vh - 230px); overflow-y: auto; display: flex; flex-direction: column; }
+#inspector { display: none !important; }
 #inspector::-webkit-scrollbar { width: 0; }
 .insp-empty { color: var(--ink-faint); font-size: 12.5px; line-height: 1.65; }
 .insp-empty b { color: var(--ink-soft); font-weight: 600; }
