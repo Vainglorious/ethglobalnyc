@@ -47,6 +47,29 @@ Result: A 2->1 USDC, B 0->1 USDC, both status "processed" — 1 USDC moved priva
 
 Script: `unlink/deposit-and-transfer.mjs`. Details in the Unlink learnings doc.
 
+## Balance ledger (after the Dynamic + Unlink routes + sweep)
+```
+Start: 20.000 USDC
+Out:  -1.000  -> Dynamic wallet #1 0x0782…A255 (native/ERC-20 unification test)
+      -3.000  -> Dynamic wallet B  0xDF53…E984 (combined A->B->C->D route funding)
+      -~0.002 gas (Arc gas paid in USDC; negligible)
+In:   +2.000  <- swept from Unlink account C (withdraw -> treasury)
+      +2.000  <- swept from Unlink account D (withdraw -> treasury)
+==> Treasury now: ~17.998 USDC (on-chain 17998044 @ 6dp). Healthy.
+```
+**~2 USDC deliberately parked** (not worth recovering vs ~18 in treasury):
+- `0x0782…A255` (1.0 USDC) — a **pregenerated** Dynamic wallet; Dynamic holds both key shares, so
+  spending needs the **delegation** flow first.
+- `0xDF53…E984` (~1.0 USDC) — an **SDK-created** route wallet; we *can* sign for SDK-created
+  wallets, but `combined-route.mjs` makes it fresh each run and doesn't persist its handle.
+
+**Lesson for wallet design:** if SDK-created Dynamic (MPC) wallets are durable ant wallets,
+**persist `walletMetadata` + `externalServerKeyShares` (encrypted) at creation** — else funds in
+them are stranded. Pregenerated wallets need delegation before they can spend at all. (See the
+Dynamic wallets learnings doc.) Sweep that worked: Unlink
+`withdraw({ recipientEvmAddress, token, amount })` → treasury (`unlink/sweep-to-treasury.mjs`);
+no EVM signer needed — Unlink relays the private→public exit.
+
 ## Handy snippets
 Check treasury balances:
 ```bash

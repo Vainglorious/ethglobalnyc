@@ -222,21 +222,27 @@ def append_in_chunks(page_id, blocks):
 
 def main():
     if len(sys.argv) < 2:
-        sys.exit("usage: push_to_notion.py <PARENT_PAGE_ID_or_URL> [DOCS_DIR]")
+        sys.exit("usage: push_to_notion.py <PARENT_PAGE_ID_or_URL> [DIR_or_FILE ...]")
     parent = normalize_id(sys.argv[1])
-    # Optional second arg: a docs directory. When given, push every *.md in it
-    # (sorted) instead of the default plain-english/ DOC_ORDER set.
+    # Optional extra args: directories and/or individual .md files. A directory
+    # expands to every *.md in it (sorted); a file is pushed as-is. This lets you
+    # push only new docs without re-pushing (= duplicating) existing ones. With no
+    # extra args, fall back to the default plain-english/ DOC_ORDER set.
+    paths = []
     if len(sys.argv) >= 3:
-        docs_dir = os.path.abspath(sys.argv[2])
-        order = sorted(f for f in os.listdir(docs_dir) if f.endswith(".md"))
+        for t in sys.argv[2:]:
+            t = os.path.abspath(t)
+            if os.path.isdir(t):
+                paths += [os.path.join(t, f) for f in sorted(os.listdir(t)) if f.endswith(".md")]
+            else:
+                paths.append(t)
     else:
-        docs_dir = DOCS_DIR
-        order = DOC_ORDER
-    for fname in order:
-        path = os.path.join(docs_dir, fname)
+        paths = [os.path.join(DOCS_DIR, f) for f in DOC_ORDER]
+    for path in paths:
         if not os.path.exists(path):
-            print("skip (missing):", fname)
+            print("skip (missing):", path)
             continue
+        fname = os.path.basename(path)
         with open(path) as f:
             md = f.read()
         title = page_title(md, fname)

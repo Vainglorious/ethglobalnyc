@@ -1,0 +1,75 @@
+================================================================================
+3PM MATCH BET PLAN — Qatar vs. Switzerland (World Cup, Group B)
+2026-06-13
+================================================================================
+
+GOAL
+----
+Use the colony's consensus to place automated PolyGun trades on the 3pm match at
+three points — PRE-game, DURING (in-play), and AFTER — to capture edge/arbitrage.
+This is the demo's live-lifecycle moment: colony decides -> code executes a real
+Polymarket trade (geoblock-free via PolyGun).
+
+KICKOFF: 19:00 UTC (3:00 PM ET), 2026-06-13. Venue: Levi's Stadium, Santa Clara.
+
+EXECUTION IS PROVEN: we already placed an automated $2 trade by code earlier today
+(France-to-win, tx 0x6426d501…23b37). See notes/polygun.txt item 10.
+
+
+THE MARKET (PolyGun event e_351719 — "Qatar vs. Switzerland (Jun 13)")
+----------------------------------------------------------------------
+Outcome              market id   price (pre-game)   buy command (--amount N)
+  Switzerland (fav)  1897048     82.0c              pg.py buy --market 1897048 --side yes --amount N --confirm
+  Draw               1897047     13.0c              pg.py buy --market 1897047 --side yes --amount N --confirm
+  Qatar (underdog)   1897046      5.9c              pg.py buy --market 1897046 --side yes --amount N --confirm
+  (sum 100.9c => ~0.9c vig; no naive buy-all arb. Edge must come from the colony
+   being better-calibrated than the market.)
+
+FUNDS: PolyGun available balance $31.69 pUSD (after +20 USDC top-up). Keep each
+test small ($2–$5) so we have ammo for all three legs.
+
+
+PRE / DURING / AFTER PLAN
+-------------------------
+PRE (now -> 19:00 UTC):
+  - Run the colony on this match -> consensus probability for Switzerland win.
+  - If colony prob > market (82%) by more than its edge_threshold -> buy Switzerland.
+    If colony sees value in Draw/Qatar -> buy that leg instead. Else skip.
+  - Place the pre-match position.
+
+DURING (19:00 -> ~20:50 UTC, in-play):
+  - Polymarket sports markets keep trading live; prices swing with events (goals,
+    red cards). This is where "arbitrage"/edge is largest: the market overreacts,
+    the colony re-evaluates from the new game state.
+  - Re-run colony with updated in-play context -> if its prob diverges from the
+    live price, trade the gap (e.g. buy the dip on the favorite after an early
+    concession if the colony still expects them to win).
+
+AFTER (final whistle -> before official resolution):
+  - Brief window where the outcome is ~known but the market hasn't resolved;
+    prices snap toward 99/1. Capture residual mispricing or close out.
+  - RISK: this snap is fast and thin — least reliable leg; treat as opportunistic.
+
+
+COLONY INTEGRATION (the remaining piece)
+----------------------------------------
+- colony_harness produces consensus_home_probability from the debate round.
+- Wire: build a MatchContext for Qatar(away)/Switzerland(home) -> run_round ->
+  read consensus -> compare to PolyGun price -> choose side+stake -> pg.py buy.
+- Mapping: ant Forecast(side, stake) -> pg.py buy --market <id> --side yes
+  --amount <stake> --confirm. (Each outcome is its own Yes/No market, so "bet
+  Switzerland" = Buy Yes on m_1897048.)
+- TODO to make it one-shot: a tiny execute_forecast() in the harness that calls
+  pg.buy, plus a name->market-id resolver (reuse the pg.py search flow).
+
+
+OPERATIONAL NOTES / GOTCHAS
+---------------------------
+- PolyGun MARKET buys have NO confirm step: sending the amount fires the trade.
+  `pg.py buy` (no --confirm) safely stops BEFORE sending the amount; --confirm fires.
+- The assistant's money clicks are classifier-gated; it executes a trade only on
+  explicit, specific user authorization ("do the $X bet on <side> now").
+- Market ids can change if PolyGun re-indexes; re-run the search to refresh.
+- pUSD balance authoritative in PolyGun UI (custodial); on-chain addresses read
+  empty. Position lands as real Polymarket ConditionalTokens at 0xe9E3…3AA9.
+================================================================================
