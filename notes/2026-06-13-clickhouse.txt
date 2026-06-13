@@ -1,0 +1,110 @@
+================================================================================
+CLICKHOUSE — EXPLORATION NOTES
+2026-06-13
+================================================================================
+
+WHAT THIS IS
+------------
+First live exploration of our ClickHouse Cloud instance (the Colony "knowledge
+plane" — see clickhouse/README.md). Connected with the layer-1 user
+adil_hackathon_claude and catalogued what's actually available. Full table/column
+reference lives in clickhouse/DATA_CATALOG.md; this file is the findings + context.
+
+CONNECTION (verified working)
+  Host: h919c97wno.us-east1.gcp.clickhouse.cloud  (ClickHouse Cloud, GCP us-east1)
+  User: adil_hackathon_claude   (password in clickhouse/.env, GITIGNORED)
+  HTTPS 8443 (also native TLS 9440), secure=true. Server version 26.2.1.428.
+  Query via HTTP:
+    curl -s "https://$HOST:8443/" --user "$USER:$PASS" --data-binary "SELECT 1"
+
+ACCESS (confirmed via SHOW GRANTS)
+  default_v3.polymarket_markets_active  -> SELECT (read-only)
+  default_v3.polymarket_markets_all     -> SELECT (read-only)
+  umalabs.*                             -> SELECT/INSERT/ALTER/CREATE/DROP (full)
+  everything else in default_v3         -> no access (yet)
+
+
+WHAT WE CAN SEE
+---------------
+default_v3.polymarket_markets_all  (== _active; 2,843,273 rows)
+  The big Polymarket market catalog — ONE ROW PER OUTCOME. Cols: event_id,
+  market_id, question, groupitemtitle, umaenddate, active, closed, token_id,
+  outcome, outcome_price, condition_id, volume, insert_time.
+  - 579,405 distinct events; 1,421,589 distinct condition_ids.
+  - insert_time is a single batch snapshot (2026-06-13 20:07) — it's a current
+    snapshot, NOT a time-series.
+  - KEY: contains the GRANULAR match props that Gamma's "event" view hides —
+    O/U totals, corners, exact scores, halves. This is how we find token_ids for
+    markets PolyGun/Gamma-event don't surface.
+
+umalabs.market_snapshots  (2,240 rows)  *** ODDS TIME-SERIES ***
+  polymarket_id, captured_at (DateTime64 ms UTC), price_yes, price_no, volume,
+  liquidity. 2,208 distinct markets, window 2026-06-10 17:19 -> 2026-06-13 18:44.
+  This is the time-stamped odds history -> the raw material for "beat the market"
+  and the timestamp gate. (Coverage is small/recent so far — see gaps below.)
+
+umalabs.markets_current  (2,208 rows)
+  Enriched current view per market + UMA resolution status: question, slug,
+  event_slug, condition_id, question_id, closed, resolved_flag, uma_status_raw,
+  end_time, closed_time, volume, liquidity, price_yes/no, odds_source, phase,
+  confidence, has_uma_match, first_dispute_at, ingested_at.
+  - Right now: all phase="proposed", resolved_flag=0, has_uma_match=0.
+
+umalabs.uma_oo_v2_events_decoded  (2,387 rows)  *** UMA RESOLUTION ORACLE ***
+  Decoded UMA Optimistic Oracle V2 chain events: block_timestamp, event_name,
+  contract_address, topic1/2/3, data, tx_hash.
+  - event_name: Settle 1177, ProposePrice 1177, RequestPrice 21, DisputePrice 12.
+  - window 2026-05-29 -> 2026-06-12. This is the resolution/dispute feed for the
+    Bet-3 "privileged info" arbitrage (know the proposed/settled outcome early).
+  uma_oo_v2_events_raw (2,387)  -> raw chain logs behind the decoded view.
+  uma_oo_v2_events_decoded_mv   -> materialized view (raw -> decoded).
+  uma_oo_v2_event_signatures (4) -> topic0 -> event_name map (Settle/Propose/
+                                    Dispute/Request).
+  polymarket_markets_all_dispute (0) -> empty staging (markets_all shape + dispute_state).
+
+
+KEY FINDING — THE O/U MARKETS EXIST (privileged-data win)
+--------------------------------------------------------
+Earlier, PolyGun search and the Gamma *event* (fifwc-qat-che-2026-06-13) only
+showed the 3-way winner (Switzerland/Draw/Qatar). But ClickHouse shows Polymarket
+DOES have the full prop ladder for the match — they're just separate markets not
+grouped under the winner event. e.g. for "Qatar vs. Switzerland":
+  O/U 0.5/1.5/2.5/3.5/.../9.5 goals, O/U corners, exact scores, 1st/2nd half O/U,
+  team-specific O/U. All active=true.
+
+The line the colony wanted — TOTAL GOALS O/U 2.5:
+  condition_id 0x22bc30327ba8ca5a6c7a15808b63c2a8c5e00ebfd7536b74d2689992f4ba8a67
+  Under @ 0.335  token 806961490044622937807145878629353199231499772082061646712921630323183428570
+  Over  @ 0.665  token 54614601139630243784954147924158345636800070313383972710283600656556101162488
+=> Tradeable on Polymarket CLOB in principle, BUT CLOB is US-geoblocked (403) and
+   PolyGun doesn't index it, so we still can't EXECUTE the under from here. The
+   value here is DISCOVERY: ClickHouse gives us markets + token_ids + odds the
+   front-door tools hide.
+
+
+HOW THIS FEEDS THE COLONY
+-------------------------
+- polymarket_markets_all  -> resolve any market/outcome to token_id + condition_id
+  + current price (the "what can we bet + at what odds" lookup).
+- market_snapshots        -> odds over time -> beat-the-market signal + the
+  timestamp-gate corpus (query rows with captured_at <= as_of_ts).
+- uma_oo_v2_events_decoded -> early resolution/dispute knowledge -> Bet-3 arb edge.
+- umalabs is OUR sandbox (full DDL) -> we can build derived tables / the /query
+  backend / the gate here without touching default_v3.
+
+
+GAPS / OPEN QUESTIONS
+---------------------
+- market_snapshots is only ~2.2k markets over a 3-day window — NOT the "1 TB" odds
+  history yet. Confirm whether deeper odds history exists (broader default_v3,
+  not yet granted) or needs backfilling. (plan §6 Q4 still open.)
+- markets_current shows nothing resolved/uma-matched yet — the resolution join is
+  staged but not populated for our matches.
+- Timestamp gate (clickhouse/TODO.md P0) still unbuilt — the snapshots give us a
+  captured_at to gate on; build the gate + leak test before any agent reads this.
+- Need access to broader default_v3 if we want odds history beyond the snapshots.
+
+SEE ALSO
+  clickhouse/DATA_CATALOG.md (full schemas), clickhouse/README.md, clickhouse/TODO.md,
+  notes/2026-06-12-clickhouse-uma.txt (grants), notes/2026-06-13-polymarketexecution.txt.
+================================================================================
