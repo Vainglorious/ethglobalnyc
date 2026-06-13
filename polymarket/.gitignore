@@ -1,0 +1,16 @@
+# Secrets — never commit these
+.env
+.env.test
+.env.local
+*.key
+keys/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Local caches / run artifacts
+.cache/
+runs/
