@@ -1,0 +1,45 @@
+2026-06-13 — Arc testnet treasury + funding model
+
+THE TREASURY WALLET
+  Generated 2026-06-13 with `cast wallet new`. Throwaway/testnet only.
+    Address:     0x1be3F1edA4C654BdF3bDcF973EF861346EA52D8F
+    Private key: stored in arc/.env (ARC_TREASURY_PRIVATE_KEY) — GITIGNORED, do not commit.
+  Funded via Circle faucet (faucet.circle.com): 20 USDC. Verified on-chain:
+    - native balance: 20000000000000000000 (20 USDC, 18-decimal native gas)
+    - ERC-20 balanceOf: 20000000 (20 USDC, 6-decimal ERC-20 interface)
+    (Same USDC shown two ways. Funding tx 0x7903a8...a44ad minted to the USDC contract.)
+
+ARC TESTNET NETWORK (from docs.arc.io)
+  Chain ID:        5042002
+  RPC (primary):   https://rpc.testnet.arc.network   (also Blockdaemon / dRPC / QuickNode variants)
+  WebSocket:       wss://rpc.testnet.arc.network
+  Native gas:      USDC (18 decimals)
+  USDC ERC-20:     0x3600000000000000000000000000000000000000  (6 decimals)
+  EURC:            0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a
+  Explorer:        https://testnet.arcscan.app
+  Faucet:          https://faucet.circle.com  (USDC + EURC)
+  Permit2:         0x000000000022D473030F116dDEE9F6B43aC78BA3
+  (CCTP + Gateway contract addresses are in arc/README / docs.arc.io contract-addresses.)
+
+FUNDING MODEL — DECIDED: NO MORE FAUCETS
+  The 20 USDC treasury is enough for the ENTIRE hackathon project. Do NOT chase faucets.
+  Fund downstream accounts (Unlink private balances, agent/ant wallets, etc.) by transferring
+  or DEPOSITING from the treasury. The treasury is the single source of test USDC.
+
+PROVEN: UNLINK PRIVATE TRANSFER FUNDED BY THE TREASURY (2026-06-13)
+  The Unlink faucet does NOT dispense Arc USDC ("token not supported by faucet"), so we deposit
+  real USDC from the treasury instead. Full lifecycle worked end-to-end on arc-testnet:
+    treasury 0x1be3...2D8F --depositWithApproval 2 USDC--> Wallet A (private)
+    Wallet A --transfer 1 USDC--> Wallet B (private)
+    Result: A 2->1 USDC, B 0->1 USDC, both status "processed". 1 USDC moved privately ✅
+  Script: unlink/deposit-and-transfer.mjs (viem walletClient over Arc RPC + evm.fromViem,
+  then depositWithApproval + transfer). Details in notes/2026-06-13-unlink-exploration.txt.
+
+USAGE SNIPPETS
+  Check treasury balances:
+    cast balance 0x1be3F1edA4C654BdF3bDcF973EF861346EA52D8F --rpc-url https://rpc.testnet.arc.network
+    cast call 0x3600000000000000000000000000000000000000 "balanceOf(address)(uint256)" \
+      0x1be3F1edA4C654BdF3bDcF973EF861346EA52D8F --rpc-url https://rpc.testnet.arc.network
+
+SEE ALSO
+  arc/.env, arc/README.md (to be written), notes/2026-06-13-unlink-exploration.txt

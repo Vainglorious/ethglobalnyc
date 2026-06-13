@@ -92,5 +92,27 @@ LIVE TEST PROGRESS (2026-06-13) — got an API key, hit ONE remaining blocker
     from the dashboard project config. => see unlink/TODO.md. Need UNLINK_TEST_TOKEN for arc-testnet.
   - Next: paste the arc-testnet token address -> set env=arc-testnet -> run transfer-demo.mjs.
 
+✅ DONE — 1 USDC A->B PRIVATE TRANSFER WORKS (2026-06-13)
+  Resolved the token blocker: the Arc testnet USDC ERC-20 is 0x3600000000000000000000000000000000000000
+  (6 decimals; from docs.arc.io contract-addresses). Set UNLINK_ENVIRONMENT=arc-testnet,
+  UNLINK_TEST_TOKEN=0x3600... in unlink/.env.
+
+  The Unlink faucet does NOT dispense Arc USDC ("token not supported by faucet"), so instead we
+  DEPOSIT real USDC from the funded Arc treasury wallet, then transfer privately. New script:
+  unlink/deposit-and-transfer.mjs (uses viem walletClient over Arc RPC + evm.fromViem; deposits
+  via depositWithApproval, then transfer).
+
+  Run result:
+    Treasury 0x1be3...2D8F (20 USDC) --depositWithApproval 2 USDC--> A : status processed
+    A private balance: 2000000 (2 USDC)
+    transfer 1 USDC A->B : status processed
+    A after: 1000000 (1 USDC) | B after: 1000000 (1 USDC)   <-- 1 USDC moved privately ✅
+
+  Key SDK facts used: evm.fromViem({ walletClient, publicClient }) to sign on-chain from a raw
+  key in Node; client.depositWithApproval({ token, amount, evm }); client.transfer({...}); both
+  return handles -> .wait() -> status "processed". balanceOf(token) returns smallest-unit string
+  (null when zero).
+
 SEE ALSO
-  unlink/README.md, unlink/docs/unlink-overview.md, unlink/transfer-demo.mjs, unlink/TODO.md
+  unlink/README.md, unlink/docs/unlink-overview.md, unlink/transfer-demo.mjs,
+  unlink/deposit-and-transfer.mjs, unlink/TODO.md
