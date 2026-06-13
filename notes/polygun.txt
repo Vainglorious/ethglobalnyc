@@ -122,4 +122,44 @@ HOW THIS COMPARES TO THE DIRECT-API PATH (see 2026-06-13-polymarketexecution.txt
   parked only because the treasury holds native USDC, not USDC.e.
 - PolyGun: less plumbing for us, but custodial — funds leave self-custody and
   recovery depends on PolyGun's withdraw. Convenience vs. custody trade-off.
+
+
+================================================================================
+LESSONS LEARNED — POLYGUN (cumulative, 2026-06-13)
+================================================================================
+1. PolyGun is the EXECUTION PATH for us because Polymarket's direct CLOB
+   geoblocks the US (403). PolyGun's relayer trades from a non-blocked context,
+   so it's not just convenience — it's access. Custody is the price of access.
+
+2. Custody model (verified on-chain): you deposit USDC -> a PolyGun deposit
+   contract -> pooled. Your balance shows as pUSD inside PolyGun's UI (off-chain
+   accounting). The private keys PolyGun hands you are SIGNING/AUTH identities,
+   NOT fund holders — they read empty on-chain. The displayed "trading address"
+   is an empty contract. You cannot self-sweep; only PolyGun's withdraw returns
+   funds. (We withdrew $14 of $15 once; ~$1 stayed behind.)
+
+3. pUSD = "Polymarket USD", ERC20 0xc011a7e12a19f7b1f670d46f03b03f3342e82dfb,
+   6 decimals. Deposited USDC becomes pUSD.
+
+4. Decoded a real $2 trade (France-to-win-WC). Mechanics:
+   - Tx sent by PolyGun relayer 0xb2aadacf...01ee (gasless for us).
+   - Calls PolyGun router 0xe2222d27...310f59, method 0x3c2b4399.
+   - Pays pUSD to a maker + 1% fee to 0x115f48dc...accc9.
+   - Delivers REAL Polymarket ConditionalTokens (ERC1155 0x4d97dcd9...) to our
+     PolyGun address. So positions are genuine Polymarket outcome tokens.
+   - That France-YES token id (108233...842092) is the SAME one our later direct
+     CLOB attempt used — confirming PolyGun trades real Polymarket markets.
+
+5. Multiple keys were issued over the session (account #1 0xD400…, migrated
+   account, then keys deriving to 0xF6d4…731C etc.) — all empty EOAs, i.e.
+   signing identities. Account "migration" changes the displayed addresses.
+
+6. NO API. polygun.xyz confirms Telegram-only (@PolyGunSniperBot), 1% fee, has a
+   copy-trading feature. So automation = Telegram USERBOT.
+
+7. AUTOMATION TOOLING BUILT (polygun/ folder, Telethon 1.43.2 installed):
+   pg.py with subcommands login / whoami / dump / send / click. Plan: log in as
+   our Telegram account, map the bot's inline-button buy flow via dump+click,
+   then add a `buy` subcommand that replays the sequence. See polygun/README.md.
+   Fallback if too brittle: trade manually in the PolyGun app.
 ================================================================================

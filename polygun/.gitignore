@@ -1,0 +1,9 @@
+# Secrets + Telegram session (never commit)
+.env
+*.session
+*.session-journal
+
+# Python
+.venv/
+__pycache__/
+*.pyc

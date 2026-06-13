@@ -1,0 +1,3 @@
+# PolyGun Telegram-userbot automation.
+# Telethon drives the @PolyGunSniperBot bot as your own Telegram account (MTProto).
+telethon>=1.36.0
