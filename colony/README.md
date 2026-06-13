@@ -123,7 +123,9 @@ The public-data path currently fetches:
 
 - Wikipedia page summaries for both national teams.
 - Google News RSS results for the match query.
-- Google News RSS recent-result headlines for each national team.
+- Team-targeted recent-match and form searches for each national team, with DDGS fallback and compact result claims.
+- Key-player season-form searches for both teams, including player-specific DDGS queries for tracked players.
+- Squad-depth, predicted-XI, and role-depth searches for both teams.
 - Google News RSS squad, player, and injury availability headlines.
 
 It does not use X/social unless you explicitly enable the X scout. It also does not claim to have bookmaker odds yet: the odds finding is logged as a low-confidence `odds_unavailable_scout` until a real odds provider is connected.
@@ -290,7 +292,7 @@ Each finding has:
 - `cost`;
 - `citations`;
 - `summary`;
-- optional `evidence_claims` for player/team availability, lineup, tactical, or market-preview facts extracted from public sources.
+- optional `evidence_claims` for player/team availability, recent form, player form, lineup, tactical, or market-preview facts extracted from public sources.
 
 ### Tournament KG And Round Subgraph
 
@@ -367,11 +369,25 @@ Alive predictors expose only `genome_hash`. The plaintext genome can be revealed
 
 ### Debate
 
-Speech is scarce. Only `speaker_slots` predictors become debaters in a round. This mirrors the plan's rule: cost scales with debate slots, not population.
+Speech is scarce, but interaction should still scale with population. A round now uses two debate layers:
+
+```text
+all predictors
+  -> cluster by stance and evidence focus
+  -> small debate rooms
+  -> room syntheses
+  -> final chamber representatives
+  -> public debate signal
+```
+
+With 100 predictors and `--speakers 6`, the harness creates up to 6 rooms. Each room selects a few representatives with roles such as `advocate`, `challenger`, and `source_auditor`. The final chamber then uses one representative per room. This keeps logs readable while still letting a large population interact indirectly.
 
 Each claim includes:
 
 - debater id;
+- debate phase: `room` or `final`;
+- room id;
+- debate role;
 - `claim_type`;
 - `selection_reason`;
 - stated probability;
@@ -380,7 +396,7 @@ Each claim includes:
 - short message;
 - optional evidence tags.
 
-Selection is intentionally explicit in debug logs. A debater is either an elite predictor for the round, based on a simple bankroll/accuracy score, or a wildcard chosen to keep exploration and dissent in the public debate.
+Selection is intentionally explicit in debug logs. Room membership is saved in `rooms.json`, while `debate.md` shows both room debates and the final chamber. Room claims are also added to the round `world_graph.json` as `debate_claim` entities.
 
 ### Listening
 

@@ -52,6 +52,167 @@ def _claim_type_from_genome(genome: Genome) -> str:
     return "evidence"
 
 
+def _evidence_score(evidence: dict, *, direction: Side, source_weight: float, debate_focus: str = "") -> float:
+    impact = str(evidence.get("impact") or "")
+    claim_type = str(evidence.get("claim_type") or "")
+    player = str(evidence.get("player") or "")
+    subject = str(evidence.get("subject") or evidence.get("team") or "").lower()
+    confidence = float(evidence.get("confidence") or 0.35)
+    score = confidence + source_weight
+    if claim_type == "injury_availability":
+        score += 0.35
+    if claim_type in {"recent_form", "player_form"}:
+        score += 0.24
+    if player:
+        score += 0.16
+    if claim_type in {"lineup", "market_preview"} and not player:
+        score -= 0.32
+    if direction == "home" and impact == "negative_away":
+        score += 0.5
+    elif direction == "away" and impact == "negative_home":
+        score += 0.5
+    elif impact in {"context_home", "context_away"}:
+        score += 0.12
+    if debate_focus == "neymar_availability" and "neymar" in subject:
+        score += 1.0
+    elif debate_focus == "morocco_availability" and (
+        "morocco" in subject or "aguerd" in subject or "abde" in subject or impact == "negative_away"
+    ):
+        score += 1.0
+    elif debate_focus == "market_pricing" and claim_type == "market_preview":
+        score += 0.9
+    elif debate_focus == "team_form" and claim_type == "recent_form":
+        score += 0.95
+    elif debate_focus == "player_form" and claim_type == "player_form":
+        score += 0.95
+    elif debate_focus == "source_audit" and evidence.get("source_title"):
+        score += 0.55
+    elif debate_focus == "stats_form" and claim_type in {"lineup", "tactical", "recent_form", "player_form"}:
+        score += 0.35
+    elif debate_focus == "uncertainty" and claim_type == "injury_availability":
+        score += 0.25
+    return score
+
+
+def _prior_evidence_keys(prior_claims: list[DebateClaim]) -> tuple[set[str], set[str]]:
+    subjects: set[str] = set()
+    claim_texts: set[str] = set()
+    for claim in prior_claims:
+        message = claim.message.lower()
+        for evidence in claim.referenced_evidence:
+            subject = str(evidence.get("subject") or evidence.get("team") or "").lower()
+            text = str(evidence.get("claim") or "").lower()[:120]
+            if subject and subject in message:
+                subjects.add(subject)
+            if text and text[:70] in message:
+                claim_texts.add(text)
+    return subjects, claim_texts
+
+
+def _is_counterpoint(evidence: dict, *, direction: Side) -> bool:
+    impact = str(evidence.get("impact") or "")
+    return (direction == "away" and impact == "negative_away") or (direction == "home" and impact == "negative_home")
+
+
+def _is_supporting_evidence(evidence: dict, *, direction: Side) -> bool:
+    impact = str(evidence.get("impact") or "")
+    return (direction == "away" and impact == "negative_home") or (direction == "home" and impact == "negative_away")
+
+
+def _matches_debate_focus(evidence: dict, debate_focus: str) -> bool:
+    subject = str(evidence.get("subject") or evidence.get("team") or "").lower()
+    claim_type = str(evidence.get("claim_type") or "")
+    impact = str(evidence.get("impact") or "")
+    if debate_focus == "neymar_availability":
+        return "neymar" in subject
+    if debate_focus == "morocco_availability":
+        return "morocco" in subject or "aguerd" in subject or "abde" in subject or impact == "negative_away"
+    if debate_focus == "market_pricing":
+        return claim_type == "market_preview"
+    if debate_focus == "team_form":
+        return claim_type == "recent_form"
+    if debate_focus == "player_form":
+        return claim_type == "player_form"
+    if debate_focus == "source_audit":
+        return bool(evidence.get("source_title") or evidence.get("source_url"))
+    if debate_focus == "stats_form":
+        return claim_type in {"lineup", "tactical", "market_preview", "recent_form", "player_form"}
+    if debate_focus == "uncertainty":
+        return claim_type == "injury_availability"
+    return False
+
+
+def _select_debate_evidence(
+    match: MatchContext,
+    genome: Genome,
+    direction: Side,
+    prior_claims: list[DebateClaim],
+    debate_focus: str = "",
+    limit: int = 3,
+) -> list[dict]:
+    weights = genome.source_weights.normalized().to_dict()
+    prior_subjects, prior_claim_texts = _prior_evidence_keys(prior_claims)
+    scored: list[tuple[float, dict]] = []
+    for finding in match.findings:
+        source_weight = weights.get(finding.source_type, weights.get("news", 0.0))
+        for evidence in finding.evidence_claims:
+            enriched = {
+                **evidence,
+                "finding_id": finding.finding_id,
+                "finding_name": finding.finding_name,
+                "scout_name": finding.scout_name,
+                "access_level": finding.access_level,
+                "source_type": finding.source_type,
+            }
+            score = _evidence_score(
+                enriched,
+                direction=direction,
+                source_weight=source_weight,
+                debate_focus=debate_focus,
+            )
+            subject = str(enriched.get("subject") or enriched.get("team") or "").lower()
+            claim_text = str(enriched.get("claim") or "").lower()[:120]
+            if claim_text in prior_claim_texts:
+                score -= 2.0
+            elif subject in prior_subjects:
+                score -= 0.8
+            scored.append((score, enriched))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    selected: list[dict] = []
+    if debate_focus:
+        for _score, evidence in scored:
+            if _matches_debate_focus(evidence, debate_focus):
+                selected.append(evidence)
+                break
+        if not selected and scored:
+            selected.append(scored[0][1])
+    else:
+        for _score, evidence in scored:
+            if _is_supporting_evidence(evidence, direction=direction):
+                selected.append(evidence)
+                break
+    if not selected and scored:
+        selected.append(scored[0][1])
+    if selected:
+        selected_subjects = {str(item.get("subject") or item.get("team") or "").lower() for item in selected}
+        for _score, evidence in scored:
+            subject = str(evidence.get("subject") or evidence.get("team") or "").lower()
+            if subject in selected_subjects:
+                continue
+            if _is_counterpoint(evidence, direction=direction):
+                selected.append(evidence)
+                selected_subjects.add(subject)
+                break
+    for _score, evidence in scored:
+        if len(selected) >= limit:
+            break
+        claim_text = str(evidence.get("claim") or "")
+        if any(str(item.get("claim") or "") == claim_text for item in selected):
+            continue
+        selected.append(evidence)
+    return selected
+
+
 @dataclass
 class AntAgent:
     agent_id: str
@@ -114,12 +275,25 @@ class AntAgent:
         selection_reason: str = "",
         access_tier: AccessTier = "public",
         visible_findings: int = 0,
+        prior_claims: list[DebateClaim] | None = None,
+        debate_phase: str = "final",
+        room_id: str = "",
+        debate_role: str = "",
+        debate_focus: str = "",
     ) -> DebateClaim:
         probability = self.private_baseline_probability(match)
         edge = probability - match.market_home_probability
         confidence = min(abs(edge) * 3.0 + 0.25 + rng.random() * 0.1, 0.95)
         direction: Side = "home" if edge >= 0 else "away"
         voice = voice_model or TemplateVoiceModel()
+        referenced_evidence = _select_debate_evidence(
+            match,
+            self.genome,
+            direction,
+            prior_claims or [],
+            debate_focus=debate_focus,
+        )
+        voice_prior_claims = [claim for claim in (prior_claims or []) if claim.speaker_id != self.agent_id]
         try:
             message = voice.render_claim(
                 agent_name=self.name,
@@ -127,6 +301,10 @@ class AntAgent:
                 match=match,
                 probability=probability,
                 direction=direction,
+                evidence_claims=referenced_evidence,
+                prior_claims=voice_prior_claims,
+                debate_role=debate_role,
+                debate_phase=debate_phase,
             )
             message = _normalize_public_message(self.name, message)
         except Exception as exc:
@@ -137,6 +315,10 @@ class AntAgent:
                 match=match,
                 probability=probability,
                 direction=direction,
+                evidence_claims=referenced_evidence,
+                prior_claims=voice_prior_claims,
+                debate_role=debate_role,
+                debate_phase=debate_phase,
             )
             message = f"{message} [voice fallback: {_short_voice_error(exc)}]"
 
@@ -160,7 +342,11 @@ class AntAgent:
             confidence=round(confidence, 4),
             direction=direction,
             message=message,
+            debate_phase=debate_phase,
+            room_id=room_id,
+            debate_role=debate_role,
             evidence_tags=tags,
+            referenced_evidence=referenced_evidence,
         )
 
     def forecast(

@@ -104,7 +104,12 @@ def main() -> None:
     print(f"Data mode: {args.data_mode}")
     print(f"Optional scouts: x={'enabled' if args.include_x else 'disabled'} camel={'enabled' if args.include_camel else 'disabled'}")
     print(f"Population: {result.summary['population']} predictors")
-    print(f"Debaters: {result.summary['speaker_slots']}")
+    print(
+        "Debate structure: "
+        f"rooms={result.summary['room_count']} "
+        f"room_claims={result.summary['room_claims']} "
+        f"final_claims={result.summary['final_claims']}"
+    )
     print(
         "Findings: "
         f"public={result.summary['public_findings']} "
