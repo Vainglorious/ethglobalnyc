@@ -222,10 +222,18 @@ def append_in_chunks(page_id, blocks):
 
 def main():
     if len(sys.argv) < 2:
-        sys.exit("usage: push_to_notion.py <PARENT_PAGE_ID_or_URL>")
+        sys.exit("usage: push_to_notion.py <PARENT_PAGE_ID_or_URL> [DOCS_DIR]")
     parent = normalize_id(sys.argv[1])
-    for fname in DOC_ORDER:
-        path = os.path.join(DOCS_DIR, fname)
+    # Optional second arg: a docs directory. When given, push every *.md in it
+    # (sorted) instead of the default plain-english/ DOC_ORDER set.
+    if len(sys.argv) >= 3:
+        docs_dir = os.path.abspath(sys.argv[2])
+        order = sorted(f for f in os.listdir(docs_dir) if f.endswith(".md"))
+    else:
+        docs_dir = DOCS_DIR
+        order = DOC_ORDER
+    for fname in order:
+        path = os.path.join(docs_dir, fname)
         if not os.path.exists(path):
             print("skip (missing):", fname)
             continue

@@ -84,6 +84,7 @@ class SimStore {
   readonly agentIds: string[] = new Array(MAX_AGENTS).fill('')
   readonly names: string[] = new Array(MAX_AGENTS).fill('')
   readonly genomeHashes: string[] = new Array(MAX_AGENTS).fill('')
+  readonly walletAddresses: string[] = new Array(MAX_AGENTS).fill('')
   readonly generations = new Int16Array(MAX_AGENTS)
   readonly idToIndex = new Map<string, number>()
 
@@ -218,6 +219,7 @@ class SimStore {
       this.agentIds[i] = ''
       this.names[i] = `ant-${i.toString().padStart(4, '0')}`
       this.genomeHashes[i] = ''
+      this.walletAddresses[i] = ''
       this.generations[i] = 0
     }
   }

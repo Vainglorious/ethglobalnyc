@@ -6,12 +6,58 @@ The goal of this prototype is narrow:
 
 1. spawn many genome-based predictors;
 2. give each predictor a private genome;
-3. select a bounded set of debaters;
-4. let debaters publish structured claims;
-5. let the rest of the colony consume the debate parametrically;
-6. produce sealed betting commitments.
+3. attach match data through scout findings and evidence claims;
+4. route selected predictors into topic debate rooms;
+5. synthesize room disagreements into one final public debate signal;
+6. let the rest of the colony consume the debate parametrically;
+7. produce sealed betting commitments.
 
-This is intentionally not the full product yet. There is no ENS, Arc, x402, ClickHouse, or real match oracle in this first harness. Those systems can be attached once the core loop feels right.
+This is intentionally not the full product yet. Arc trades, x402 purchases, ClickHouse, and real settlement are still outside this first harness. The harness can now generate local EVM wallets and ENS identity-card records for agents so the identity layer can be tested before those systems are attached.
+
+## Current Working Version
+
+This repository now has a first working harness loop. It is not production quality, but it is useful enough to iterate on:
+
+```text
+World Cup KG
+  -> one match subgraph
+  -> public/shared/private scout findings
+  -> evidence claims linked to teams, players, and sources
+  -> many genome predictors
+  -> overlapping topic debate rooms
+  -> final chamber synthesis
+  -> forecasts, pass/bet decisions, compact logs
+```
+
+What works today:
+
+- Build a World Cup tournament KG from OpenFootball.
+- Run a single match from the KG, for example Brazil vs Morocco.
+- Spawn tens of cheap genome predictors with different source weights, thresholds, risk appetite, and herd bias.
+- Fetch public web/search data for match news, squad availability, recent team form, player form, squad depth, predicted XI, tactical context, and optional CAMEL-style research.
+- Normalize datasource output into `Finding` objects and smaller `evidence_claims`.
+- Write a round `world_graph.json` with match, teams, findings, evidence claims, sources, players, genomes, predictions, and debate claims.
+- Create overlapping topic rooms such as `neymar_availability`, `morocco_availability`, `team_form`, `player_form`, `market_pricing`, and `source_audit`.
+- Give challengers role-aware objections against source quality, evidence relevance, or claimed impact size.
+- Store compact dispute metadata for challenger/auditor claims: target claim, target excerpt, critique type, probability gap, and subject shift.
+- Feed structured dispute metadata back into the voice layer so challengers and source auditors reply to the disputed claim directly.
+- Render public debate messages without agent IDs in the text, with short source-grounded replies and a two-sentence cap for template voices.
+- Attach a stable `genome_id` to public roster records, debate claims, forecasts, disputes, conversation memory, and KG genome entities.
+- Attach local EVM wallet addresses and lineage metadata to agents.
+- Generate ENS identity-card records for each ant subdomain, including parent, lineage, World ID inheritance status, profile URL, and agent-context text.
+- Save/load a persistent population state so the same `genome_id` roster can run across multiple matches.
+- Evolve a saved population offline from recent conversation-memory scores, keeping useful genomes and replacing weaker slots with mutations.
+- Aggregate room outputs into one final-chamber synthesis with structured `diagnostics`: consensus, main evidence thread, minority report, source dispute, room range, and dispute counts.
+- Save readable logs and queryable memory in `summary.md`, `debate.md`, `rooms.json`, `conversation_memory.json`, `forecasts.csv`, `findings.json`, `knowledge_views.json`, and `events.compact.jsonl`.
+- Analyze recent `conversation_memory.json` files into a compact debater/archetype report for debugging debate quality.
+
+Known rough edges:
+
+- Claim extraction is still heuristic. It can misclassify a positive player note as `injury_availability`, or attach a sentence to the wrong team when both teams are mentioned.
+- Source quality is not ranked strongly enough yet. Search snippets and generic squad pages can leak into the debate beside stronger sources such as BBC, ESPN, RotoWire, or official pages.
+- Debate wording now uses short source summaries such as "BBC has Neymar missing", structured dispute targets, challenger objections, and room-level synthesis. The replies are cleaner and less repetitive than the first version, but still template-driven rather than a full natural conversation.
+- The public odds scout is still a placeholder unless a real odds provider is connected.
+- Settlement, bankroll updates, death, x402 data purchases, and live Worldcoin privilege routing are not implemented yet.
 
 ## Why This Shape
 
@@ -50,8 +96,94 @@ Each run now saves compact local artifacts by default under `colony/runs/<timest
 With a custom population:
 
 ```bash
-python3 colony/run_demo.py --agents 80 --speakers 8 --seed 9
+python3 colony/run_demo.py --agents 80 --rooms 8 --seed 9
 ```
+
+Create or reuse a persistent population:
+
+```bash
+python3 colony/run_demo.py \
+  --population-state colony/data/demo_population_state.json
+```
+
+Create/reuse local throwaway EVM wallets and assign deterministic ENS names for agents:
+
+```bash
+python3 colony/run_demo.py \
+  --agents 40 \
+  --agent-wallets \
+  --ens-parent colonny.eth \
+  --show-roster
+```
+
+Private keys are written to `colony/secrets/agent-wallets.local.json`, which is gitignored.
+Only `wallet_address` and `ens_name` are exported in public agent records. The same EVM
+address can be registered with Worldcoin AgentKit on World Chain mainnet and later funded
+on Arc testnet for trades/x402 experiments.
+
+Generate ENS identity-card records for the current roster:
+
+```bash
+python3 colony/run_demo.py \
+  --agents 40 \
+  --agent-wallets \
+  --ens-parent colonny.eth \
+  --verified-root ant_0000 \
+  --identity-out colony/data/ens-identities.demo.json
+```
+
+Each record has a subdomain such as `root-fable-0.colonny.eth`, an `addr` record pointing
+to the ant wallet, an ENSIP-26 `agent-context`, `agent-endpoint[web]`, and compact
+`com.colony.*` text records.
+Generation-0 ants become lineage roots. Children keep their own ENS names and inherit
+`verified_lineage` from the root when a root has been registered through Worldcoin AgentKit.
+
+See the full runbook in [`docs/ens-agent-identity.md`](docs/ens-agent-identity.md).
+
+The canonical agent discovery path is the ENSIP-26 text record:
+
+```text
+agent-context         JSON identity card for the ant
+agent-endpoint[web]   URL for the ant profile JSON/page
+com.colony.*          compact Colony-specific indexes
+```
+
+Once a Colony on-chain registry exists, add ENSIP-25 verification records:
+
+```text
+agent-registration[<registry>][<agent_id>] = 1
+```
+
+Dry-run Sepolia registration from the generated identity file:
+
+```bash
+python3 colony/register_ens_identities.py colony/data/ens-identities.demo.json --limit 2
+```
+
+Check whether the parent exists and is ready before broadcasting:
+
+```bash
+python3 colony/register_ens_identities.py \
+  colony/data/ens-identities.demo.json \
+  --check-parent
+```
+
+To send Sepolia transactions, put `PROJECT_ENS_PRIVATE_KEY` and `SEPOLIA_RPC_URL`
+in `colony/.env`, then add `--broadcast`. For ENSv2 parents such as names created in
+`app.ens.dev`, the script deploys a per-owner resolver if needed, deploys and attaches a
+subregistry to the parent if needed, then registers the ant subname and writes the ENSIP-26
+records. Publish a specific ant first:
+
+```bash
+python3 colony/register_ens_identities.py \
+  colony/data/ens-identities.demo.json \
+  --agent-id ant_0001 \
+  --ens-version v2 \
+  --broadcast
+```
+
+The script can still fall back to classic ENS Sepolia for older wrapped/unwrapped parents,
+matching the NpmGuard publisher pattern.
 
 Write an additional full JSONL export:
 
@@ -59,11 +191,18 @@ Write an additional full JSONL export:
 python3 colony/run_demo.py --out colony/runs/demo.jsonl
 ```
 
-Write a human-readable debug report:
+Print room-level debate highlights and write a human-readable debug report:
 
 ```bash
 python3 colony/run_demo.py --debug
 ```
+
+Normal CLI output stays compact and prints the final chamber synthesis. With `--debug`,
+the CLI also prints each topic room, representative role, short claim, and dispute
+target so debate quality can be inspected without opening the run directory first.
+Every run also reports compact debate quality counters: dispute count/rate, number
+of evidence subjects, critique-type variety, subject shifts, and claims carried
+between rooms.
 
 Disable automatic compact run logs:
 
@@ -101,7 +240,7 @@ Outputs are written under `colony/data/`:
 Once the World Cup KG exists, run one match from the graph:
 
 ```bash
-python3 colony/run_match.py --match "Brazil vs Morocco" --agents 40 --speakers 6 --seed 12 --debug
+python3 colony/run_match.py --match "Brazil vs Morocco" --agents 40 --rooms 6 --seed 12 --debug
 ```
 
 This path uses tournament metadata from the KG and deterministic scout placeholders for market, team-form, odds, news, lineup, and weather. X/social scouts are intentionally disabled here so we can test the core predictor/debater loop before adding noisy or paid social data.
@@ -114,7 +253,7 @@ python3 colony/run_match.py \
   --data-mode public \
   --refresh-data \
   --agents 20 \
-  --speakers 5 \
+  --rooms 5 \
   --seed 12 \
   --debug
 ```
@@ -138,12 +277,26 @@ python3 colony/run_match.py \
   --data-mode public \
   --include-camel \
   --agents 20 \
-  --speakers 5 \
+  --rooms 5 \
   --seed 12 \
   --debug
 ```
 
 `--include-camel` writes a `camel_research_scout` finding. By default it uses focused web/news research queries. If `camel-ai` is installed and `COLONY_CAMEL_USE_NATIVE=1`, it attempts native CAMEL `ChatAgent` + `SearchToolkit().search_duckduckgo` using the `COLONY_CAMEL_*` model settings from `colony/.env`; if native CAMEL fails or returns no usable items, it falls back to the focused web/news path.
+
+To keep the same population across several matches, add `--population-state`:
+
+```bash
+python3 colony/run_match.py \
+  --match "Brazil vs Morocco" \
+  --data-mode public \
+  --population-state colony/data/worldcup_population_state.json \
+  --agents 40 \
+  --rooms 6 \
+  --debug
+```
+
+On the first run, the file is created. On later runs, the same agents, genomes, bankrolls, accuracy values, and public wallet addresses are loaded. If a state already exists, omit `--agents` or pass the same population size.
 
 Add the optional X/social scout:
 
@@ -153,7 +306,7 @@ python3 colony/run_match.py \
   --data-mode public \
   --include-x \
   --agents 20 \
-  --speakers 5 \
+  --rooms 5 \
   --seed 12 \
   --debug
 ```
@@ -167,15 +320,62 @@ Default logs are intentionally compact. They are designed for debugging and anal
 Each automatic run directory contains:
 
 - `summary.md` - match, population, datasource, and betting summary.
-- `debate.md` - public debater claims.
+- `debate.md` - room debates and the final chamber synthesis.
+- `rooms.json` - topic room membership, representatives, claims, and synthesis.
+- `conversation_memory.json` - queryable debate memory: room timeline, claims, dispute edges, debater activity, and final diagnostics.
 - `forecasts.csv` - final forecast and bet/pass decision for every predictor.
 - `findings.json` - normalized findings used by the run.
 - `knowledge_views.json` - filtered predictor views derived from the full graph.
-- `world_graph.json` - lightweight round subgraph for the selected match, findings, predictions, and claims.
+- `world_graph.json` - lightweight round subgraph for the selected match, findings, genomes, predictions, and claims.
 - `events.compact.jsonl` - compact event stream with summary, findings, claims, and forecasts.
 - `debug.md` - optional, written only with `--debug`.
 
 The legacy `--out` JSONL export still includes bet commitments and should be used deliberately.
+
+## Analyze Debate Memory
+
+After several runs, aggregate the conversation memories:
+
+```bash
+python3 colony/analyze_memory.py \
+  --latest 20 \
+  --out colony/runs/conversation_memory_report.md \
+  --json-out colony/runs/conversation_memory_report.json
+```
+
+The report summarizes:
+
+- debate quality trends, including dispute rate, evidence subjects, critique variety, subject shifts, and carried claims;
+- critique mix across recent rooms, such as source quality vs counter-evidence;
+- final diagnostic themes, such as recurring availability disputes;
+- top stable `genome_id` rows when analyzed runs include genome identity;
+- top debater archetypes by persona/model/access tier;
+- top single-run debaters for debugging specific room behavior.
+
+This is a debugging heuristic, not a truth label. `speaker_id` is still run-local; use `genome_id` for a stable genome identity and archetypes for broader behavior patterns. To make `genome_id` recur across matches, run with `--population-state`.
+
+## Evolve A Population
+
+Once a population has run for a few matches, create the next population state:
+
+```bash
+python3 colony/evolve_population.py \
+  --population-state colony/data/worldcup_population_state.json \
+  --out colony/data/worldcup_population_state.next.json \
+  --latest 20 \
+  --survival-rate 0.55 \
+  --mutation-rate 0.18
+```
+
+The evolution pass is intentionally offline and inspectable. It scores genomes using recent `conversation_memory.json` files, keeps the stronger genomes, and fills weaker agent slots with mutated children. It preserves public wallet addresses by slot and writes lineage hints such as `parent_genome_id`, `previous_genome_id`, and `evolution_role`.
+
+Then run the next match with the evolved state:
+
+```bash
+python3 colony/run_match.py \
+  --match "Brazil vs Morocco" \
+  --population-state colony/data/worldcup_population_state.next.json
+```
 
 ## Optional LLM Voices
 
@@ -365,7 +565,7 @@ Each predictor has:
 - `query_budget`;
 - `persona`;
 
-Alive predictors expose only `genome_hash`. The plaintext genome can be revealed later on death.
+Alive predictors expose `genome_id` and `genome_hash`, not the plaintext genome. The plaintext genome can be revealed later on death.
 
 ### Debate
 
@@ -376,11 +576,23 @@ all predictors
   -> cluster by stance and evidence focus
   -> small debate rooms
   -> room syntheses
-  -> final chamber representatives
+  -> final chamber synthesis
   -> public debate signal
 ```
 
-With 100 predictors and `--speakers 6`, the harness creates up to 6 rooms. Each room selects a few representatives with roles such as `advocate`, `challenger`, and `source_auditor`. The final chamber then uses one representative per room. This keeps logs readable while still letting a large population interact indirectly.
+With 100 predictors and `--rooms 6`, the harness creates up to 6 topic rooms. `--speakers` remains as a deprecated alias for old commands. Each room selects a few representatives with roles such as `advocate`, `challenger`, and `source_auditor`. The final chamber now aggregates the room claims into one public synthesis: market lean, main evidence thread, and unresolved disagreement. This keeps logs readable while still letting a large population interact indirectly.
+
+Availability rooms are created only when visible findings contain structured injury or
+availability claims. A Brazil vs Morocco synthetic run, for example, should debate
+team form or market pricing unless real/scouted Morocco availability evidence exists.
+
+The run summary tracks lightweight debate quality metrics:
+
+- `dispute_count` and `dispute_rate` show whether room representatives are challenging each other.
+- `subject_count` shows how many distinct evidence subjects entered the room debate.
+- `critique_type_count` shows whether disagreements are varied or all the same kind.
+- `subject_shift_count` shows how often a reply brings a different counterweight.
+- `carried_claim_count` shows whether agents are bridging ideas across rooms.
 
 Each claim includes:
 
@@ -394,9 +606,15 @@ Each claim includes:
 - confidence;
 - direction;
 - short message;
-- optional evidence tags.
+- optional evidence tags;
+- optional `dispute` metadata when the claim challenges a previous room claim.
 
-Selection is intentionally explicit in debug logs. Room membership is saved in `rooms.json`, while `debate.md` shows both room debates and the final chamber. Room claims are also added to the round `world_graph.json` as `debate_claim` entities.
+Selection is intentionally explicit in debug logs. With `--debug`, the terminal prints
+a compact room-by-room debate preview. Room membership is saved in `rooms.json`, while
+`debate.md` shows both room debates and the final chamber synthesis. Room claims and
+the final synthesis are also added to the round `world_graph.json` as `debate_claim`
+entities. When a claim disputes another claim, the KG also adds a `disputes`
+relationship between the two debate-claim entities.
 
 ### Listening
 
@@ -416,8 +634,9 @@ The side, stake, and salt are kept in the local reveal record. This gives us the
 
 ## Next Steps
 
-1. Add real datasource adapters that emit `Finding` objects.
-2. Add optional CAMEL scouts for extraction and source critique.
-3. Add shared/private finding access policies.
-4. Add settlement and bankroll updates.
-5. Add reproduction/death across epochs.
+1. Clean claim extraction: better team/player attribution, claim typing, duplicate handling, and source-quality ranking.
+2. Add settlement and bankroll/accuracy updates after match results.
+3. Use settled accuracy plus debate usefulness for reproduction/death.
+4. Add a first real odds datasource.
+5. Add shared/private finding access policies backed by explicit purchase events.
+6. Promote useful source-quality scouts into explicit datasource trust scores.

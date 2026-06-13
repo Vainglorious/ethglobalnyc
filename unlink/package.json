@@ -1,0 +1,14 @@
+{
+  "name": "unlink-transfer-demo",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Exploration: a private payment between two test wallets on an Unlink testnet.",
+  "scripts": {
+    "demo": "node transfer-demo.mjs"
+  },
+  "dependencies": {
+    "@unlink-xyz/sdk": "canary",
+    "dotenv": "^16.4.5"
+  }
+}

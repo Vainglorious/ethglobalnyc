@@ -113,6 +113,21 @@ def mock_findings_for_match(
             confidence=0.8,
             summary=f"Consensus market baseline for {home_team} vs {away_team}.",
             citations=["mock://market/closing-consensus"],
+            evidence_claims=[
+                _mock_claim(
+                    claim_type="market_preview",
+                    subject=f"{home_team} market baseline",
+                    team=home_team,
+                    claim=(
+                        f"Synthetic market baseline keeps {home_team} near the consensus price "
+                        f"against {away_team}."
+                    ),
+                    impact="context_home",
+                    confidence=0.65,
+                    source_title="Synthetic market baseline",
+                    source_url="mock://market/closing-consensus",
+                )
+            ],
         ),
         _finding(
             round_id=round_id,
@@ -129,6 +144,21 @@ def mock_findings_for_match(
                 "No web or X/social data is used in this test."
             ),
             citations=[f"mock://ratings/{_slug(home_team)}", f"mock://ratings/{_slug(away_team)}"],
+            evidence_claims=[
+                _mock_claim(
+                    claim_type="recent_form",
+                    subject=f"{home_team} rating form",
+                    team=home_team,
+                    claim=(
+                        f"Synthetic ratings put {home_team}'s recent-form baseline "
+                        f"{'above' if stats >= market else 'below'} the market anchor."
+                    ),
+                    impact=_mock_impact(stats, market),
+                    confidence=0.62,
+                    source_title="Synthetic team-form scout",
+                    source_url=f"mock://ratings/{_slug(home_team)}",
+                )
+            ],
         ),
         _finding(
             round_id=round_id,
@@ -142,6 +172,21 @@ def mock_findings_for_match(
             confidence=0.7,
             summary="Synthetic odds scout normalizing a second market view into home-win probability.",
             citations=["mock://odds/exchange-book", "mock://odds/bookmaker-consensus"],
+            evidence_claims=[
+                _mock_claim(
+                    claim_type="market_preview",
+                    subject="secondary odds view",
+                    team=home_team if odds >= market else away_team,
+                    claim=(
+                        "Synthetic odds scout sees the secondary book "
+                        f"{'above' if odds >= market else 'below'} the consensus home price."
+                    ),
+                    impact=_mock_impact(odds, market),
+                    confidence=0.58,
+                    source_title="Synthetic secondary odds scout",
+                    source_url="mock://odds/exchange-book",
+                )
+            ],
         ),
         _finding(
             round_id=round_id,
@@ -158,6 +203,21 @@ def mock_findings_for_match(
                 "X/social is intentionally excluded from this run."
             ),
             citations=[f"mock://news/{_slug(home_team)}", f"mock://news/{_slug(away_team)}"],
+            evidence_claims=[
+                _mock_claim(
+                    claim_type="lineup",
+                    subject=f"{home_team} team-news test signal",
+                    team=home_team,
+                    claim=(
+                        f"Synthetic team-news signal gives {home_team} "
+                        f"{'a cleaner' if news >= market else 'a less stable'} lineup read."
+                    ),
+                    impact=_mock_impact(news, market),
+                    confidence=0.5,
+                    source_title="Synthetic team-news scout",
+                    source_url=f"mock://news/{_slug(home_team)}",
+                )
+            ],
         ),
         _finding(
             round_id=round_id,
@@ -171,6 +231,21 @@ def mock_findings_for_match(
             confidence=0.5,
             summary="Shared mock lineup read. This is the paid/premium placeholder, not an X/social scrape.",
             citations=["mock://lineup/projected-xi"],
+            evidence_claims=[
+                _mock_claim(
+                    claim_type="lineup",
+                    subject="shared projected XI",
+                    team=home_team if lineup >= market else away_team,
+                    claim=(
+                        "Synthetic shared lineup read gives paid agents a small "
+                        f"{home_team if lineup >= market else away_team} adjustment."
+                    ),
+                    impact=_mock_impact(lineup, market),
+                    confidence=0.48,
+                    source_title="Synthetic projected XI scout",
+                    source_url="mock://lineup/projected-xi",
+                )
+            ],
         ),
         _finding(
             round_id=round_id,
@@ -204,6 +279,21 @@ def mock_findings_for_match(
                 confidence=0.42,
                 summary="Shared mock social sentiment read. Useful later for debate pressure and noise testing.",
                 citations=["mock://social/reddit-twitter-sample"],
+                evidence_claims=[
+                    _mock_claim(
+                        claim_type="market_preview",
+                        subject="public sentiment test signal",
+                        team=home_team if social >= market else away_team,
+                        claim=(
+                            "Synthetic public sentiment is noisy, but it gives the room "
+                            f"a small {'home' if social >= market else 'away'} pressure test."
+                        ),
+                        impact=_mock_impact(social, market),
+                        confidence=0.38,
+                        source_title="Synthetic social sentiment scout",
+                        source_url="mock://social/reddit-twitter-sample",
+                    )
+                ],
             ),
         )
     return findings
@@ -230,6 +320,7 @@ def _finding(
     summary: str,
     citations: list[str],
     cost: float = 0.0,
+    evidence_claims: list[dict] | None = None,
 ) -> Finding:
     return Finding(
         finding_id=f"{round_id}:{key}",
@@ -243,7 +334,40 @@ def _finding(
         cost=cost,
         citations=citations,
         summary=summary,
+        evidence_claims=evidence_claims or [],
     )
+
+
+def _mock_claim(
+    *,
+    claim_type: str,
+    subject: str,
+    team: str,
+    claim: str,
+    impact: str,
+    confidence: float,
+    source_title: str,
+    source_url: str,
+) -> dict:
+    return {
+        "claim_type": claim_type,
+        "subject": subject,
+        "team": team,
+        "player": "",
+        "claim": claim,
+        "impact": impact,
+        "confidence": confidence,
+        "source_title": source_title,
+        "source_url": source_url,
+    }
+
+
+def _mock_impact(probability: float, market: float) -> str:
+    if probability >= market + 0.006:
+        return "negative_away"
+    if probability <= market - 0.006:
+        return "negative_home"
+    return "context_home"
 
 
 def _clamp(value: float) -> float:

@@ -1,0 +1,170 @@
+================================================================================
+POLYMARKET EXECUTION — NOTES
+2026-06-13
+================================================================================
+
+GOAL
+----
+Hook the Colony into Polymarket and prove we can execute a real order.
+Two roles for this integration:
+  1. DATA      — Polymarket implied odds = the "beat-the-market" benchmark
+                 (an ant is only "skilled" if it beats these odds).
+  2. EXECUTION — actually placing CLOB orders = the economic plane working
+                 (an ant's Forecast -> a real on-chain settled bet).
+
+
+TREASURY WALLET (Polymarket bets)
+---------------------------------
+- Address:  0xcc16bEC342794f35a32d4Ba2c76BF9D759C131eB  (plain EOA, sig type 0)
+- Funded:   42 USDC.e + 1 POL (gas) on Polygon, as of 2026-06-13.
+- Role:     shared treasury for all Polymarket execution / test bets.
+- Private key: NOT in these notes (notes are committed to git). It lives only in
+               polymarket/.env, which is gitignored. Treat this wallet as
+               disposable — small hackathon funds only; sweep leftovers after.
+
+
+FUND FLOW + BALANCE CHECK (on-chain, 2026-06-13)
+------------------------------------------------
+Direct-API account setup was verified working (address confirmed, L2 API creds
+derived). BUT the treasury was funded with the WRONG token for direct trading:
+  - Treasury held 42 NATIVE USDC (0x3c499c...), NOT USDC.e (0x2791Bca...).
+  - Polymarket CLOB settles in USDC.e, so check_account showed balance 0.
+  => Direct-API path is parked pending a native-USDC -> USDC.e swap (not done).
+
+We instead moved funds into PolyGun (custodial execution). On-chain trace:
+  - Treasury 0xcc16…31eB: 42 -> 27 native USDC (POL 1.0 -> 0.83 for gas).
+  - $15 left as TWO transfers to a PolyGun deposit CONTRACT:
+        5 USDC  tx 0x15461599e180294762e09750042a42e26a651541fcad5849f0e650102733c77f
+       10 USDC  tx 0xd7847aa230a30f6978545dd41f0134669f2a08c4bab47776de434c4e43dc529f
+       dest: 0x0323fbd7aa9a1cbff6121a22e4bb4a7298d620f5  (contract, holds 0 now —
+             funds already forwarded/converted by PolyGun).
+  - PolyGun EOA 0xD400Aa0cc2F377Affd9E36eE02E0A016138D6355 (key we were given):
+       EMPTY on-chain (0 POL / 0 USDC.e / 0 native USDC).
+
+KEY TAKEAWAY: the $15 is in PolyGun CUSTODY, not in a wallet we control. "pUSD"
+is PolyGun's internal/custodial balance — their UI is the source of truth, not an
+on-chain address we can read. The 0xD400 key is a signing/auth identity for the
+bot, not the fund holder. This is the custody trade-off of the PolyGun path.
+
+PolyGun-reported "trading address": 0x37eee1f5fdcf9ed912fff8ce94fcbea757818ca6
+  - On-chain: a CONTRACT, but EMPTY (0 POL / 0 USDC.e / 0 native USDC) with no
+    inbound transfers in the recent window. The $15 is NOT visibly here either.
+  - PolyGun deposit contract 0x0323fbd7…620f5 also shows no traceable outbound
+    USDC transfers — funds move inside PolyGun's pooled/custodial system, not
+    followable from a public RPC. Trust the PolyGun UI for the pUSD balance.
+
+Addresses summary:
+  - Treasury (self-custody, direct API):  0xcc16bEC342794f35a32d4Ba2c76BF9D759C131eB
+  - PolyGun signing/auth EOA (key we hold): 0xD400Aa0cc2F377Affd9E36eE02E0A016138D6355
+  - PolyGun deposit contract:               0x0323fbd7aa9a1cbff6121a22e4bb4a7298d620f5
+  - PolyGun "trading address":              0x37eee1f5fdcf9ed912fff8ce94fcbea757818ca6
+
+Current state:
+  - Treasury 0xcc16…31eB: 27 native USDC + ~0.83 POL (self-custodied, untouched).
+  - PolyGun: ~$15 pUSD (custodial; verify in PolyGun UI).
+
+TO LEARN THE POLYGUN PATH: need an actual trade tx hash. Decoding it will reveal
+which address touches Polymarket's CTF Exchange and how PolyGun routes the order.
+
+
+KEY FACTS ABOUT POLYMARKET (the constraints that shaped everything)
+-------------------------------------------------------------------
+- MAINNET ONLY. Runs on Polygon (chain 137). There is NO testnet.
+  => a "test trade" is a tiny REAL order spending REAL USDC.e. That is the
+     entire reason for the strict safety guards below.
+- Collateral is USDC.e (bridged USDC): 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174
+- Trading = CLOB (Central Limit Order Book) at https://clob.polymarket.com
+  with EIP-712-signed orders. Market discovery = Gamma API at
+  https://gamma-api.polymarket.com.
+- Official client `py-clob-client` does the signing. We lean on it for
+  auth/orders but kept the connectivity smoke test pure-stdlib so it runs
+  with zero install.
+- Gamma returns ACTIVE markets directly; the CLOB /markets first page is mostly
+  resolved markets (learned this the hard way — first version found no live
+  token). Gamma carries clobTokenIds + outcome labels as JSON-encoded strings.
+
+
+WHAT WE BUILT  (folder: polymarket/)
+------------------------------------
+connectivity_check.py  Read-only smoke test. No key, no money. Pings CLOB /time,
+                       Gamma /markets, finds a live tradable token, reads its
+                       order book, and prints a token_id to paste into .env.test.
+config.py              Loads .env (base) + .env.test (overrides). Auto-sets
+                       SSL_CERT_FILE from certifi (fixes macOS python.org TLS).
+pm_client.py           Builds the authenticated ClobClient (wallet + L2 creds).
+check_account.py       Address, derive/print API creds, USDC balance/allowance.
+                       --approve sends the one-time USDC allowance tx (costs gas).
+place_test_trade.py    Builds + (only on demand) posts ONE tiny order.
+.env                   Real secrets (GITIGNORED). Private key goes here.
+.env.test              Test-order knobs (GITIGNORED): token id, side, price,
+                       size, USDC cap, dry-run switch.
+.env.example           Committed template / docs.
+requirements.txt       py-clob-client, web3, eth-account, certifi.
+README.md              Full setup + safety docs.
+.gitignore             Ignores .env, .env.test, venv, caches.
+
+
+SAFETY MODEL on place_test_trade.py  (3 independent guards)
+-----------------------------------------------------------
+An order posts ONLY if ALL THREE hold:
+  1. PM_DRY_RUN=false in .env.test           (defaults to true = safe)
+  2. --execute passed on the CLI
+  3. notional (price * size) <= PM_MAX_TEST_USDC   (default cap: 2 USDC)
+Default state = dry run: builds + prints the order, posts nothing.
+
+
+STATUS  (as of 2026-06-13)
+--------------------------
+[DONE] Folder scaffolded, .env / .env.test / .env.example created.
+[DONE] .env and .env.test confirmed gitignored (private key can't be committed).
+[VERIFIED] connectivity_check.py runs green end-to-end:
+           - CLOB /time         -> OK
+           - Gamma /markets     -> OK (returned live markets)
+           - live token + book  -> OK (read midpoint / best bid / best ask)
+[TODO - Adil] the execution layer (see below).
+
+
+EXECUTION LAYER — REMAINING STEPS (Adil)
+----------------------------------------
+1. Install deps:
+     python -m venv polymarket/.venv && source polymarket/.venv/bin/activate
+     pip install -r polymarket/requirements.txt
+
+2. Wallet (simplest = plain EOA, POLYMARKET_SIGNATURE_TYPE=0):
+     - Put a fresh wallet's 0x private key in polymarket/.env (POLYMARKET_PRIVATE_KEY).
+     - Fund it on POLYGON with a small amount of USDC.e + a little MATIC/POL (gas).
+     (UI/email/browser accounts instead: SIGNATURE_TYPE=1 or 2 + FUNDER address.)
+
+3. Inspect account + get API creds:
+     python polymarket/check_account.py
+     (paste the printed POLYMARKET_API_* values back into .env to skip re-deriving)
+
+4. One-time allowance (lets the Exchange spend your USDC.e; costs gas):
+     python polymarket/check_account.py --approve
+
+5. Configure + run the test order:
+     - paste PM_TEST_TOKEN_ID into .env.test (connectivity_check prints one)
+     - pick a LIQUID market; set PM_TEST_PRICE near the best ask so a BUY fills
+     - dry run first:   python polymarket/place_test_trade.py
+     - go live:         set PM_DRY_RUN=false in .env.test, then
+                        python polymarket/place_test_trade.py --execute
+
+
+GOTCHAS / NOTES
+---------------
+- Wide spreads: the token the smoke test happened to surface (an F1 market) had
+  a 0.05/0.65 spread. For the real test pick a liquid market or your limit order
+  may sit unfilled. Set price near best ask (BUY) to cross immediately.
+- macOS python.org Python: TLS can fail (CERTIFICATE_VERIFY_FAILED). config.py
+  auto-points SSL_CERT_FILE at certifi when installed — no system files touched.
+- Minimum order size / tick size vary per market (check the market record).
+- NEVER commit a private key. .env + .env.test are gitignored on purpose.
+
+
+NEXT (optional)
+---------------
+- Wire place_test_trade.py to read an ant's Forecast (side + stake) from a
+  colony run so the test order reflects a real colony decision.
+- Pull Polymarket implied odds into the colony as the odds_home_signal /
+  beat-the-market benchmark (the DATA role above).
+================================================================================

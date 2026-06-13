@@ -908,26 +908,27 @@
       <section class="panel intro">
         <h1>Colony Harness System Map</h1>
         <p class="lead">
-          A compact visual board for the current football forecasting harness: World Cup knowledge graph,
-          scout ingestion, filtered predictor views, debaters, consensus, bets, and readable logs.
+          A compact visual board for the first working football forecasting harness: World Cup knowledge graph,
+          scout ingestion, filtered predictor views, topic debate rooms, final synthesis, forecasts, and readable logs.
         </p>
         <div class="tag-row">
+          <span class="tag green">first working loop</span>
           <span class="tag green">default logs stay compact</span>
-          <span class="tag">OpenRouter voice layer</span>
-          <span class="tag gold">mock scouts now, CAMEL later</span>
+          <span class="tag">public scouts + optional CAMEL</span>
+          <span class="tag gold">claim quality still rough</span>
           <span class="tag red">predictors stay local and cheap</span>
         </div>
       </section>
 
       <aside class="panel run-card">
-        <h2>Current Demo Shape</h2>
+        <h2>Current Prototype</h2>
         <div class="metric-grid">
-          <div class="metric"><span>Predictors</span><strong>40</strong></div>
-          <div class="metric"><span>Debaters</span><strong>6</strong></div>
+          <div class="metric"><span>Predictors tested</span><strong>60</strong></div>
+          <div class="metric"><span>Topic rooms</span><strong>6</strong></div>
           <div class="metric"><span>KG entities</span><strong>204</strong></div>
           <div class="metric"><span>KG matches</span><strong>104</strong></div>
         </div>
-        <div class="code">python3 colony/build_kg.py --force-refresh</div>
+        <div class="code">python3 colony/run_match.py --match "Brazil vs Morocco" --data-mode public --include-camel --agents 60 --rooms 6 --debug</div>
       </aside>
     </header>
 
@@ -978,8 +979,8 @@
             </div>
             <div class="flow-node">
               <h3>7. Final Chamber</h3>
-              <p>Room representatives compress local arguments into the public debate.</p>
-              <div class="tag-row"><span class="tag green">room syntheses</span></div>
+              <p>Room claims collapse into one public synthesis: market lean, main evidence, unresolved risk.</p>
+              <div class="tag-row"><span class="tag green">synthesis claim</span></div>
             </div>
             <div class="flow-node">
               <h3>8. Listen and Decide</h3>
@@ -990,7 +991,7 @@
         </article>
 
         <aside class="panel side-panel">
-          <h2>Design Rule</h2>
+          <h2>Prototype Status</h2>
           <div class="code">CAMEL scouts collect data
         |
         v
@@ -1003,15 +1004,56 @@ match subgraph + access zones
 filtered predictor views
         |
         v
-small rooms -> final chamber
+small rooms -> final synthesis
         |
         v
 consensus + bets</div>
           <p class="footnote">
-            The harness should not turn every colony member into a costly free-form LLM worker.
-            CAMEL is best used for fewer, tool-using scouts. Genomes are best for many reproducible opinions.
+            This loop now runs end to end. The next work is quality: cleaner evidence claims, stronger source ranking,
+            better debater scoring, and less scripted conversation.
           </p>
         </aside>
+      </div>
+
+      <div class="log-levels">
+        <article class="log-card">
+          <h2>Works Now</h2>
+          <p>Build the World Cup KG, run one match, fetch public findings, spawn predictors, open topic rooms, write compact logs and queryable debate memory.</p>
+          <div class="check-list">
+            <div>World Cup KG and match subgraph</div>
+            <div>Public/shared/private knowledge views</div>
+            <div>Evidence claims linked to teams, players, and sources</div>
+            <div>Stable genome_id fields and KG genome entities</div>
+            <div>Save/load population state across multiple matches</div>
+            <div>Offline population evolution from memory scores</div>
+            <div>Room debates, dispute links, and structured final diagnostics</div>
+            <div>Conversation memory with claims, dispute edges, and debater activity</div>
+            <div>Cleaner debate text without agent IDs or repeated stock phrases</div>
+            <div>Memory analysis report for debater archetypes and critique mix</div>
+          </div>
+        </article>
+
+        <article class="log-card">
+          <h2>Rough Edges</h2>
+          <p>The harness is usable for iteration, but not yet reliable as a prediction system.</p>
+          <div class="check-list">
+            <div>Heuristic claim extraction can misclassify notes</div>
+            <div>Team attribution can fail when both teams appear in a sentence</div>
+            <div>Search snippets can be noisier than article data</div>
+            <div>Debate is cleaner now, but still needs more natural turn-taking</div>
+          </div>
+        </article>
+
+        <article class="log-card">
+          <h2>Next Fix</h2>
+          <p>Combine debate usefulness with settled match accuracy so evolution has a real fitness signal.</p>
+          <div class="check-list">
+            <div>Source score: official/BBC/ESPN/RotoWire above generic snippets</div>
+            <div>Settlement updates for bankroll and accuracy</div>
+            <div>Structured final diagnostics feed downstream analysis</div>
+            <div>Memory and reputation feed later genome evolution</div>
+          </div>
+        </article>
       </div>
     </section>
 
@@ -1067,7 +1109,7 @@ consensus + bets</div>
               <h2>Finding</h2>
               <p>A compact piece of evidence that the simulation can consume without reading raw web pages.</p>
               <div class="role-details">
-                <div class="role-row"><strong>Now</strong><span>Public market/stats/odds/news, shared lineup/social, private weather.</span></div>
+                <div class="role-row"><strong>Now</strong><span>Public match news, recent form, player form, squad depth, availability, and optional shared CAMEL research.</span></div>
                 <div class="role-row"><strong>Later</strong><span>Budgets decide who can buy shared or private findings.</span></div>
               </div>
             </article>
@@ -1087,36 +1129,36 @@ consensus + bets</div>
               <h2>Debater</h2>
               <p>A predictor selected inside a room to publish a compressed public claim.</p>
               <div class="role-details">
-                <div class="role-row"><strong>Role</strong><span>Advocate, challenger, source auditor, skeptic, or room representative.</span></div>
-                <div class="role-row"><strong>Effect</strong><span>Room syntheses feed the final chamber and public debate signal.</span></div>
+                <div class="role-row"><strong>Role</strong><span>Advocate, challenger, source auditor, or skeptic inside a topic room.</span></div>
+                <div class="role-row"><strong>Effect</strong><span>Room claims feed one final synthesis and public debate signal.</span></div>
               </div>
             </article>
           </div>
 
-          <div class="code">Scout -> Finding -> Predictor -> Debate Room -> Final Chamber -> Bet/Pass</div>
+          <div class="code">Scout -> Finding -> Predictor -> Debate Room -> Final Synthesis -> Bet/Pass</div>
 
           <p class="footnote">
-            Shared paid access can come later. For now, the useful core is: collect findings, let predictors interpret them, cluster opinions into rooms, then let representatives make the social finding visible.
+            Shared paid access can come later. For now, the useful core is: collect findings, let predictors interpret them, cluster opinions into rooms, then synthesize the room disagreement into one social finding.
           </p>
         </article>
 
         <aside class="panel role-side">
           <div class="ring">
             <h2>Public Debate</h2>
-            <p>Debaters are not separate workers. They are selected predictors speaking inside rooms or the final chamber.</p>
+            <p>Debaters are not separate workers. They are selected predictors speaking inside topic rooms; the final chamber aggregates their room claims.</p>
             <div class="mini-flow">
               <div>1. Scouts publish structured findings</div>
               <div>2. Predictors make private predictions</div>
               <div>3. Predictors cluster by stance and evidence focus</div>
-              <div>4. Room reps debate as advocate/challenger/auditor</div>
-              <div>5. Final chamber compresses the best room arguments</div>
+              <div>4. Selected predictors debate as advocate/challenger/auditor</div>
+              <div>5. Final chamber synthesizes the room claims</div>
               <div>6. Everyone listens, updates, and bets/pass</div>
             </div>
           </div>
 
           <div class="code">All predictors think.
 Small rooms debate.
-Room reps meet.
+Final chamber synthesizes.
 All predictors decide.</div>
 
           <p class="footnote">
@@ -1457,8 +1499,8 @@ All predictors decide.</div>
 
         <article class="data-card">
           <h2>News Scout</h2>
-          <p>Uses CAMEL with search/browser tools to find recent news, then returns a compact structured finding.</p>
-          <div class="tag-row"><span class="tag gold">CAMEL</span><span class="tag red">cite sources</span></div>
+          <p>Uses Google News RSS or optional CAMEL-style search to find recent news, then returns compact structured findings.</p>
+          <div class="tag-row"><span class="tag gold">CAMEL optional</span><span class="tag red">cite sources</span></div>
           <div class="schema">{ scout_name, summary, home_probability, confidence, citations[] }</div>
         </article>
 
@@ -1498,6 +1540,9 @@ All predictors decide.</div>
             <div>debate.md</div>
             <div>forecasts.csv</div>
             <div>findings.json</div>
+            <div>rooms.json</div>
+            <div>conversation_memory.json</div>
+            <div>debate quality counters</div>
             <div>world_graph.json</div>
             <div>events.compact.jsonl</div>
           </div>
@@ -1508,8 +1553,12 @@ All predictors decide.</div>
           <p>Optional human-readable explanation for development.</p>
           <div class="check-list">
             <div>debater selection reasons</div>
+            <div>room participants and representatives</div>
+            <div>terminal room-by-room debate preview</div>
+            <div>disputes, subjects, subject shifts, carried claims</div>
             <div>top edges and decision reasons</div>
-            <div>mock scout finding table</div>
+            <div>scout finding table</div>
+            <div>conversation_memory_report.md via analyze_memory.py</div>
             <div>LLM call status without raw payloads</div>
           </div>
         </article>
@@ -1527,7 +1576,7 @@ All predictors decide.</div>
       </div>
 
       <p class="footnote">
-        Proposed default: save compact logs automatically. Add <code>--debug</code> for readable internals and <code>--trace</code> for full experiments.
+        Current default: save compact logs automatically. Add <code>--debug</code> for a terminal room-by-room debate preview plus readable internals. Keep full traces off by default.
       </p>
     </section>
   </main>

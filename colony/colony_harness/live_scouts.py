@@ -406,8 +406,11 @@ def fetch_team_scout_news(
         except Exception:
             news_items = []
         items = _dedupe_items(items + news_items)
-        filtered = _filter_topic_items(items, topic)
-        bundles[topic] = (filtered or items)[:5]
+        filtered = _filter_topic_items(items, topic, team=team)
+        if topic in {"recent_form", "player_form"}:
+            bundles[topic] = filtered[:5]
+        else:
+            bundles[topic] = (filtered or items)[:5]
     return bundles
 
 
@@ -423,12 +426,16 @@ def _team_scout_items(
     return _dedupe_items(items)
 
 
-def _filter_topic_items(items: list[NewsItem], topic: str) -> list[NewsItem]:
+def _filter_topic_items(items: list[NewsItem], topic: str, *, team: str) -> list[NewsItem]:
     filtered: list[NewsItem] = []
     for item in items:
-        text = item.title.lower()
+        text = f"{item.title} {item.source} {item.link}".lower()
+        if _is_noisy_public_item(text):
+            continue
         if topic == "recent_form":
             if any(noisy in text for noisy in ("prediction", "predictions", "odds", "pick", "betting", "tips")):
+                continue
+            if not _item_mentions_team_or_player(text, team):
                 continue
             if not any(
                 marker in text
@@ -449,6 +456,8 @@ def _filter_topic_items(items: list[NewsItem], topic: str) -> list[NewsItem]:
         elif topic == "player_form":
             if any(noisy in text for noisy in ("prediction", "odds", "pick", "betting", "tips")):
                 continue
+            if not _item_mentions_team_or_player(text, team):
+                continue
             if not any(
                 marker in text
                 for marker in (
@@ -466,6 +475,24 @@ def _filter_topic_items(items: list[NewsItem], topic: str) -> list[NewsItem]:
                 continue
         filtered.append(item)
     return filtered
+
+
+def _is_noisy_public_item(lowered_text: str) -> bool:
+    noisy_sources = (
+        "tiktok",
+        "youtube",
+        "reddit",
+        "pinterest",
+        "facebook",
+        "instagram",
+    )
+    return any(source in lowered_text for source in noisy_sources)
+
+
+def _item_mentions_team_or_player(lowered_text: str, team: str) -> bool:
+    if team.lower() in lowered_text:
+        return True
+    return any(player in lowered_text for player in STAR_PLAYERS.get(team, []))
 
 
 def fetch_x_availability(
@@ -575,23 +602,25 @@ def extract_evidence_claims(
 ) -> list[EvidenceClaim]:
     claims: list[EvidenceClaim] = []
     for item in items[:max_articles]:
-        source_text = item.title
         article_text = _fetch_article_text(
             item.link,
             cache_dir=cache_dir,
             refresh=refresh,
             timeout_seconds=timeout_seconds,
         )
-        combined_text = f"{item.title}. {article_text}"
-        claims.extend(
-            _extract_claims_from_text(
-                text=combined_text or source_text,
-                source_title=item.title,
-                source_url=item.link,
-                home_team=home_team,
-                away_team=away_team,
+        source_texts = [item.title]
+        if article_text:
+            source_texts.append(article_text)
+        for source_text in source_texts:
+            claims.extend(
+                _extract_claims_from_text(
+                    text=source_text,
+                    source_title=item.title,
+                    source_url=item.link,
+                    home_team=home_team,
+                    away_team=away_team,
+                )
             )
-        )
     return _dedupe_claims(claims)[:12]
 
 
@@ -1055,20 +1084,40 @@ def _extract_claims_from_text(
         subject, team, player = _claim_subject(sentence, home_team=home_team, away_team=away_team)
         if team is None and player is None:
             continue
+        if claim_type == "injury_availability" and not _has_negative_availability_signal(lowered):
+            continue
+        if claim_type == "player_form" and not _has_player_form_signal(lowered):
+            continue
         claims.append(
             EvidenceClaim(
                 claim_type=claim_type,
                 subject=subject,
-                claim=_shorten(sentence, limit=260),
+                claim=_shorten(
+                    _trim_claim_sentence(sentence, claim_type=claim_type, team=team),
+                    limit=260,
+                ),
                 team=team,
                 player=player,
                 impact=_claim_impact(claim_type, team=team, home_team=home_team, away_team=away_team),
-                confidence=_claim_confidence(claim_type, lowered),
+                confidence=_claim_confidence(claim_type, lowered, source_title=source_title, source_url=source_url),
                 source_title=source_title,
                 source_url=source_url,
             )
         )
     return claims
+
+
+def _trim_claim_sentence(sentence: str, *, claim_type: str, team: str | None) -> str:
+    cleaned = sentence.strip()
+    if claim_type != "injury_availability" or not team:
+        return cleaned
+    lowered = cleaned.lower()
+    team_key = team.lower()
+    for match in re.finditer(rf"\b{re.escape(team_key)}\b", lowered):
+        window = lowered[match.start() : match.start() + 140]
+        if _has_negative_availability_signal(window):
+            return cleaned[match.start() :].strip(" -:|")
+    return cleaned
 
 
 def _sentences(text: str) -> list[str]:
@@ -1078,7 +1127,7 @@ def _sentences(text: str) -> list[str]:
 
 
 def _claim_type(lowered_sentence: str) -> str | None:
-    if any(word in lowered_sentence for word in ("injury", "injured", "sidelined", "doubt", "misses", "miss ", "out for", "out of", "calf", "hamstring")):
+    if _has_negative_availability_signal(lowered_sentence):
         return "injury_availability"
     if any(
         word in lowered_sentence
@@ -1094,20 +1143,7 @@ def _claim_type(lowered_sentence: str) -> str | None:
         )
     ):
         return "recent_form"
-    if any(
-        word in lowered_sentence
-        for word in (
-            "season form",
-            "club form",
-            "goals",
-            "assists",
-            "scored",
-            "minutes",
-            "starter",
-            "key player",
-            "key players",
-        )
-    ):
+    if _has_player_form_signal(lowered_sentence):
         return "player_form"
     if any(word in lowered_sentence for word in ("lineup", "line-up", "starting 11", "starting xi", "predicted xi", "bench", "formation")):
         return "lineup"
@@ -1120,19 +1156,67 @@ def _claim_type(lowered_sentence: str) -> str | None:
 
 def _claim_subject(sentence: str, *, home_team: str, away_team: str) -> tuple[str, str | None, str | None]:
     lowered = sentence.lower()
-    for team, players in STAR_PLAYERS.items():
+    for team in (home_team, away_team):
+        players = STAR_PLAYERS.get(team, [])
         for player in players:
             if player in lowered:
                 return player.title(), team, player.title()
     inferred_player = _infer_player_from_availability_sentence(sentence, home_team=home_team, away_team=away_team)
     if inferred_player:
-        team = home_team if home_team.lower() in lowered else away_team if away_team.lower() in lowered else None
+        team = _team_from_sentence(sentence, home_team=home_team, away_team=away_team)
         return inferred_player, team, inferred_player
-    if home_team.lower() in lowered:
-        return home_team, home_team, None
-    if away_team.lower() in lowered:
-        return away_team, away_team, None
+    team = _team_from_sentence(sentence, home_team=home_team, away_team=away_team)
+    if team:
+        return team, team, None
     return "unknown", None, None
+
+
+def _team_from_sentence(sentence: str, *, home_team: str, away_team: str) -> str | None:
+    lowered = sentence.lower()
+    locally_signaled_team = _team_with_local_availability_signal(lowered, home_team=home_team, away_team=away_team)
+    if locally_signaled_team:
+        return locally_signaled_team
+    home_index = lowered.find(home_team.lower())
+    away_index = lowered.find(away_team.lower())
+    has_home = home_index >= 0
+    has_away = away_index >= 0
+    if has_home and has_away:
+        # When both teams appear, the sentence subject usually appears first:
+        # "Morocco have suffered ... against Brazil" should be about Morocco.
+        return home_team if home_index < away_index else away_team
+    if has_home:
+        return home_team
+    if has_away:
+        return away_team
+    return None
+
+
+def _team_with_local_availability_signal(lowered_sentence: str, *, home_team: str, away_team: str) -> str | None:
+    if not _has_negative_availability_signal(lowered_sentence):
+        return None
+    availability_words = (
+        "injury",
+        "injured",
+        "suffered",
+        "ruled out",
+        "out of",
+        "unavailable",
+        "doubtful",
+        "headaches",
+        "blow",
+        "absences",
+    )
+    candidates: list[tuple[int, str]] = []
+    for team in (home_team, away_team):
+        team_key = team.lower()
+        for match in re.finditer(rf"\b{re.escape(team_key)}\b", lowered_sentence):
+            window = lowered_sentence[match.start() : match.start() + 120]
+            if any(word in window for word in availability_words):
+                candidates.append((match.start(), team))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1]
 
 
 def _infer_player_from_availability_sentence(sentence: str, *, home_team: str, away_team: str) -> str:
@@ -1169,7 +1253,113 @@ def _claim_impact(claim_type: str, *, team: str | None, home_team: str, away_tea
     return "unknown"
 
 
-def _claim_confidence(claim_type: str, lowered_sentence: str) -> float:
+def _has_negative_availability_signal(lowered_sentence: str) -> bool:
+    if _is_roster_omission_context(lowered_sentence) or _is_historical_injury_context(lowered_sentence):
+        return False
+    negative_pattern = re.compile(
+        r"\b("
+        r"injured|injury|sidelined|doubtful|doubt|miss|misses|"
+        r"ruled out|out for|out of|withdrawn|unavailable|"
+        r"calf|hamstring|knee ligament|groin|pubalgia|acl"
+        r")\b"
+    )
+    false_positive_context = (
+        "injury time",
+        "without injury",
+        "no injury",
+        "injury-free",
+        "returned from injury",
+        "back from injury",
+    )
+    return bool(negative_pattern.search(lowered_sentence)) and not any(
+        marker in lowered_sentence for marker in false_positive_context
+    )
+
+
+def _is_roster_omission_context(lowered_sentence: str) -> bool:
+    roster_patterns = (
+        r"\bwho was left out\b",
+        r"\bleft out of\b",
+        r"\bleaving out\b",
+        r"\bnot included in\b",
+        r"\bexcluded from\b",
+    )
+    if not any(re.search(pattern, lowered_sentence) for pattern in roster_patterns):
+        return False
+    current_injury_markers = (
+        "injured",
+        "injury blow",
+        "injury doubt",
+        "doubtful",
+        "unavailable",
+        "sidelined",
+        "ruled out",
+        "withdrawn",
+    )
+    return not any(marker in lowered_sentence for marker in current_injury_markers)
+
+
+def _is_historical_injury_context(lowered_sentence: str) -> bool:
+    historical_patterns = (
+        r"\breturning (?:to|from)\b.{0,80}\binjury\b",
+        r"\breturned (?:to|from)\b.{0,80}\binjury\b",
+        r"\bback (?:from|after)\b.{0,80}\binjury\b",
+        r"\bafter (?:a |an )?.{0,40}\binjury\b",
+        r"\bsince [a-z]+ \d{1,2},? \d{4}\b.{0,80}\binjury\b",
+        r"\b\d+(?:\.\d+)?\s*(?:years?|months?) out with\b.{0,50}\binjury\b",
+        r"\binternational absence\b",
+    )
+    if not any(re.search(pattern, lowered_sentence) for pattern in historical_patterns):
+        return False
+    current_markers = (
+        "will miss",
+        "to miss",
+        "miss opener",
+        "misses",
+        "ruled out",
+        "sidelined",
+        "doubtful",
+        "unavailable",
+        "injury blow",
+        "injury doubt",
+        "game-time",
+    )
+    return not any(marker in lowered_sentence for marker in current_markers)
+
+
+def _has_player_form_signal(lowered_sentence: str) -> bool:
+    performance_markers = (
+        "season form",
+        "club form",
+        "goals",
+        "assists",
+        "scored",
+        "minutes",
+        "appearances",
+        "starter",
+        "starts",
+        "in form",
+        "top scorer",
+        "leading goalscorer",
+        "performance",
+        "performances",
+    )
+    generic_only = (
+        "key player",
+        "key players",
+        "squad list",
+        "squad roster",
+        "player breakdown",
+        "projected squad",
+    )
+    if any(marker in lowered_sentence for marker in performance_markers):
+        return True
+    return any(marker in lowered_sentence for marker in generic_only) and any(
+        detail in lowered_sentence for detail in ("goals", "assists", "minutes", "scored", "appearances")
+    )
+
+
+def _claim_confidence(claim_type: str, lowered_sentence: str, *, source_title: str = "", source_url: str = "") -> float:
     confidence = {
         "injury_availability": 0.72,
         "recent_form": 0.56,
@@ -1182,7 +1372,43 @@ def _claim_confidence(claim_type: str, lowered_sentence: str) -> float:
         confidence += 0.08
     if "predicted" in lowered_sentence or "possible" in lowered_sentence:
         confidence -= 0.05
+    confidence += _source_quality_adjustment(source_title=source_title, source_url=source_url)
     return round(max(min(confidence, 0.9), 0.1), 2)
+
+
+def _source_quality_adjustment(*, source_title: str, source_url: str) -> float:
+    source = f"{source_title} {source_url}".lower()
+    trusted = (
+        "bbc",
+        "espn",
+        "rotowire",
+        "fifa",
+        "the athletic",
+        "reuters",
+        "associated press",
+        "apnews",
+        "sports illustrated",
+        "sports mole",
+        "flashscore",
+    )
+    weak = (
+        "tiktok",
+        "youtube",
+        "reddit",
+        "pinterest",
+        "prediction",
+        "predictions",
+        "odds",
+        "pick",
+        "betting",
+        "tips",
+    )
+    adjustment = 0.0
+    if any(marker in source for marker in trusted):
+        adjustment += 0.05
+    if any(marker in source for marker in weak):
+        adjustment -= 0.08
+    return adjustment
 
 
 def _claim_signal(*, claims: list[EvidenceClaim], home_team: str, away_team: str) -> float:

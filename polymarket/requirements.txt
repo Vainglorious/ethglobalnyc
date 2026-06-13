@@ -1,0 +1,15 @@
+# Polymarket integration dependencies.
+#
+# connectivity_check.py needs NONE of these (pure stdlib). They are only required
+# for authenticated account checks and order placement.
+
+# Official Polymarket CLOB client — handles EIP-712 order signing + REST.
+py-clob-client>=0.17
+
+# Pulled in transitively by py-clob-client, pinned here for the allowance helper.
+web3>=6.0.0
+eth-account>=0.10.0
+
+# Optional but recommended on macOS python.org Python: provides a CA bundle so
+# TLS verification works without touching system files. config.py auto-detects it.
+certifi

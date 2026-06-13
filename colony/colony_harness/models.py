@@ -20,6 +20,7 @@ EntityType = Literal[
     "evidence_claim",
     "source",
     "player",
+    "genome",
     "predictor",
     "debate_claim",
     "prediction",
@@ -177,6 +178,9 @@ class DebateClaim:
     debate_role: str = ""
     evidence_tags: list[str] = field(default_factory=list)
     referenced_evidence: list[dict] = field(default_factory=list)
+    dispute: dict = field(default_factory=dict)
+    diagnostics: dict = field(default_factory=dict)
+    genome_id: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -221,6 +225,7 @@ class Forecast:
     stake: float
     bankroll: float
     decision_reason: str
+    genome_id: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)

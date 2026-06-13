@@ -1,0 +1,120 @@
+================================================================================
+ENS — TODO / HANDOFF FOR TANGUY
+Note date: 2026-06-13
+Path: ethglobalnyc/ens/
+Source of truth for the vision: ethglobalnyc/notes/colony-hackathon-plan.md
+================================================================================
+
+--------------------------------------------------------------------------------
+THE GOAL (one line)
+--------------------------------------------------------------------------------
+Give every ant a gasless ENS identity: an offchain (CCIP-Read) subname under
+colony.eth whose text records hold the ant's entire life story. The demo
+moment: a judge resolves `bob-d7.colony.eth` in a real ENS tool and reads the
+ant's generation, parent, verified flag, bankroll, accuracy, alive/dead, and
+genome straight off the records.
+
+
+--------------------------------------------------------------------------------
+WHY OFFCHAIN (don't skip this)
+--------------------------------------------------------------------------------
+Onchain minting one subname per ant = gas + latency and will NOT survive
+thousands of generations or per-round record updates. Use an offchain
+CCIP-Read resolver (durin-style) so subnames are gasless and updatable every
+round. The plan flags "reverting to onchain ENS minting under time pressure"
+as a footgun — decide offchain now and hold the line.
+
+
+--------------------------------------------------------------------------------
+TASK LIST (rough priority order)
+--------------------------------------------------------------------------------
+[ ] 1. Confirm the ENS namespace
+       - Lock the parent name (colony.eth or whatever we actually control).
+       - Lock the subname format (e.g. {name}-{gen}.colony.eth).
+       - Confirm we can set an offchain resolver on the parent.
+
+[ ] 2. Stand up the offchain CCIP-Read resolver (the core deliverable)
+       - durin-style gateway: resolver contract points at an HTTP gateway that
+         signs answers; resolution is gasless.
+       - Wildcard resolution for *.colony.eth so we don't mint per ant.
+       - A signer key serves text records on demand.
+
+[ ] 3. Define the text-record schema (agree with colony + frontend devs)
+       Suggested keys (finalize names):
+         - colony.generation
+         - colony.parent          (parent subname)
+         - colony.verified        (Worldcoin lineage flag: true/false)
+         - colony.bankroll        (current USDC)
+         - colony.accuracy
+         - colony.status          (alive/dead)
+         - colony.genome          (encoded genome string; colony exposes a hash)
+         - colony.arc_address     (the ant's Arc wallet — cross-plane binding)
+       NOTE: colony harness currently exposes only genome_hash for alive ants;
+       plaintext genome is revealed on death. Decide what ENS shows while alive.
+
+[ ] 4. Write path: update records every round
+       - Take ant life-stats from the colony harness output (it produces
+         genomes + bankroll + accuracy + alive/dead per round).
+       - The harness emits events.compact.jsonl / agent_record events — use
+         those (or a small bridge) as the data feed into the gateway store.
+       - Make updates idempotent and fast (this fires for many ants per round).
+
+[ ] 5. Lineage / reproduction
+       - On reproduction: mint child subname, set parent record, copy/mutate
+         genome record, reflect the USDC inheritance transfer.
+       - On death: flag colony.status=dead (do NOT delete — the life story is
+         the point).
+
+[ ] 6. Cross-plane binding (the seam to watch)
+       - Ant lives on Arc, named on Ethereum. Keep arc_address in the ENS
+         record and verify the two never drift.
+
+[ ] 7. Verify against the EXACT tool judges will use
+       - Open decision #8 in the plan: the offchain resolver must clear the ENS
+         prize's "real resolution" bar in the public tool (e.g. app.ens.domains),
+         not just locally. Test the full resolve-and-read flow there early.
+
+
+--------------------------------------------------------------------------------
+SCOPE FOR THE 36 HOURS (from plan §5)
+--------------------------------------------------------------------------------
+BUILD FOR REAL: offchain subnames + lineage written to text records, resolving
+publicly. That is the ENS deliverable.
+NARRATED ONLY: thousands of ants, 8-week live run, Arc mainnet.
+Population is tens, not thousands; replay clock is accelerated.
+
+
+--------------------------------------------------------------------------------
+FOOTGUNS (from plan §7) — read before building
+--------------------------------------------------------------------------------
+- Onchain-minting relapse under crunch (#1). Stay offchain.
+- Cross-chain identity drift: Arc address vs ENS name. Keep them in sync.
+- World ID uniqueness: verification attaches to a LINEAGE ROOT, never per ant
+  (one proof per human). So colony.verified is a lineage property, not minted
+  fresh for every child. Coordinate with whoever owns Worldcoin.
+- "ENS name doesn't resolve publicly" on demo day: the resolve-`bob-d7.colony.eth`
+  -read-its-life moment must work in the judges' tool. Test it there, not just
+  on localhost.
+
+
+--------------------------------------------------------------------------------
+DEPENDENCIES / WHO TO TALK TO
+--------------------------------------------------------------------------------
+- Colony harness owner: source of genomes, bankroll, accuracy, alive/dead,
+  lineage. Agree the record schema + the data bridge (events.compact.jsonl is
+  the existing contract; see 2026-06-13-colony.txt).
+- Worldcoin owner: how the verified lineage flag is set (proof-of-personhood at
+  the lineage root).
+- Arc owner: where the ant's wallet address comes from (goes into arc_address).
+- Frontend owner: the frontend will want to resolve/show lineage; agree subname
+  format + record keys so both sides match (see 2026-06-13-frontend.txt).
+
+
+--------------------------------------------------------------------------------
+SCAFFOLDING IN PLACE
+--------------------------------------------------------------------------------
+- ens/README.md       — blank handoff, points back here.
+- ens/.env.example    — placeholder env (parent name, RPC, resolver gateway +
+                        signer, ENS owner key, Arc binding). cp -> ens/.env and
+                        keep .env out of git.
+- (everything else)   — yours to build, Tanguy. Document in ens/README.md as you go.

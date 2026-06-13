@@ -81,13 +81,14 @@ def build_world_graph(
         for forecast in forecasts:
             predictor_id = f"predictor:{forecast.agent_id}"
             prediction_id = f"prediction:{match.round_id}:{forecast.agent_id}"
+            genome_id = f"genome:{forecast.genome_id}" if forecast.genome_id else ""
             entities.extend(
                 [
                     WorldEntity(
                         entity_id=predictor_id,
                         entity_type="predictor",
                         name=forecast.agent_id,
-                        attributes={"bankroll": forecast.bankroll},
+                        attributes={"bankroll": forecast.bankroll, "genome_id": forecast.genome_id},
                     ),
                     WorldEntity(
                         entity_id=prediction_id,
@@ -97,6 +98,15 @@ def build_world_graph(
                     ),
                 ]
             )
+            if genome_id:
+                entities.append(
+                    WorldEntity(
+                        entity_id=genome_id,
+                        entity_type="genome",
+                        name=forecast.genome_id,
+                        attributes={"genome_id": forecast.genome_id},
+                    )
+                )
             relationships.extend(
                 [
                     WorldRelationship(
@@ -111,12 +121,21 @@ def build_world_graph(
                     ),
                 ]
             )
+            if genome_id:
+                relationships.append(
+                    WorldRelationship(
+                        source_id=predictor_id,
+                        relation_type="instantiates_genome",
+                        target_id=genome_id,
+                    )
+                )
 
     if claims is not None:
         for claim in claims:
             phase = claim.debate_phase or "final"
             room = claim.room_id or "global"
             claim_id = f"debate_claim:{match.round_id}:{phase}:{room}:{claim.speaker_id}"
+            genome_id = f"genome:{claim.genome_id}" if claim.genome_id else ""
             entities.append(
                 WorldEntity(
                     entity_id=claim_id,
@@ -141,6 +160,30 @@ def build_world_graph(
                     ),
                 ]
             )
+            if genome_id:
+                relationships.append(
+                    WorldRelationship(
+                        source_id=claim_id,
+                        relation_type="expresses_genome",
+                        target_id=genome_id,
+                        weight=claim.confidence,
+                    )
+                )
+            if claim.dispute.get("target_claim_id"):
+                relationships.append(
+                    WorldRelationship(
+                        source_id=claim_id,
+                        relation_type="disputes",
+                        target_id=str(claim.dispute["target_claim_id"]),
+                        weight=claim.confidence,
+                        attributes={
+                            "critique_type": claim.dispute.get("critique_type"),
+                            "probability_gap": claim.dispute.get("probability_gap"),
+                            "target_subject": claim.dispute.get("target_subject"),
+                            "counter_subject": claim.dispute.get("counter_subject"),
+                        },
+                    )
+                )
 
     return WorldGraph(
         graph_id=f"world_graph:{match.round_id}",

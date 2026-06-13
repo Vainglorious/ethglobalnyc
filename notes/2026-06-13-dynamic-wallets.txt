@@ -1,0 +1,94 @@
+2026-06-13 — Dynamic (dynamicauth.com) wallet exploration
+
+GOAL
+  Understand Dynamic for wallet architecture; test whether we can set up 10 wallets fast on
+  testnet, to be used with Arc testnet (EVM).
+
+ACCOUNT / CREDENTIALS (saved to dynamic/.env, gitignored)
+  Environment ID: cf59a816-223e-4f99-a716-29b08c751210
+  Org ID:         0708a2f4-2abf-466e-8c1d-93b6138dd3e8
+  JWKS:           https://app.dynamicauth.com/api/v0/sdk/cf59a816-.../.well-known/jwks
+  API key:        dyn_... (secret; server-side only)
+  API base:       https://app.dynamicauth.com/api/v0
+
+KEY ARCHITECTURE FINDING — this env uses V3 (MPC / WaaS) wallets
+  - The deprecated server endpoint /environments/{env}/embeddedWallets creates V2/Turnkey
+    wallets and is REJECTED here: "Cannot create a Turnkey embedded wallet in an environment
+    configured for V3 wallets."
+  - The working server-side endpoint for V3 pregenerated wallets:
+      POST {base}/environments/{ENV_ID}/waas/create
+      headers: Authorization: Bearer <DYNAMIC_API_KEY>, Content-Type: application/json
+      body:    { "identifier": "<email>", "type": "email", "chains": ["EVM"] }
+      -> 201, returns user.verifiedCredentials[].address (eip155 EVM address),
+         wallet_properties.version "V3", thresholdSignatureScheme "TWO_OF_TWO".
+  - V3 = MPC: key shares held by Dynamic (2-of-2). **No raw private key is returned.**
+    Signing happens THROUGH Dynamic (API/SDK), not via a local private key. This is the big
+    contrast with our cast-generated treasury wallet (which we DO hold the key for).
+
+THE 10-WALLET TEST — PASSED ✅ (dynamic/create-wallets.mjs)
+  Created 10 V3 MPC EVM wallets in parallel: 10/10 in ~3550 ms (~355 ms/wallet).
+  All eip155 (EVM) addresses -> usable on Arc testnet (chain 5042002).
+  Addresses (run-tagged identifiers colony-ant-<i>-<ts>@colony.test):
+    1  0x0782826e754532F31acb8136a777D4e1F291A255
+    2  0xd0cd69fA2533eB5B445C482B4699419B81B106eD
+    3  0x12a5CC00E5FEa29deBc8CBB9782379f01e41347f
+    4  0xBE4635FF51fB385c90232dFd615119eb2DA7f5C6
+    5  0x85F2819B415a8eb65bAf4f69599B5D32918b28dd
+    6  0xa8A8E2B1c7A5De6374BbaF19754a355b796Bda1C
+    7  0x9E17f730cC32E8CA6C75663BF5f30a244455F055
+    8  0x43EbA1Cd98483c936385d35A77B9c745162b204F
+    9  0x39bCd3C6b9DB17B9f60c0c8D73eaD44e46da0D60
+    10 0x1090bC3C01191cF484823e4a4FafdfF932e0d7C6
+  (A single earlier probe also created 0x8Ae6d26945C244fcaB20b9c1Eee32d7f5d4b4cC7.)
+
+WHAT THIS MEANS FOR COLONY WALLET ARCHITECTURE
+  - Dynamic can pregenerate many ant wallets fast, server-side, with one API key. Good for
+    "tens of ants" and beyond. Each wallet is tied to an identifier that a real user could
+    later "claim" by logging in with that identifier.
+  - Tradeoff vs. local cast keys:
+      * Dynamic MPC: managed, no key to leak, claimable by humans, but SIGNING requires a
+        Dynamic API/SDK call (not a local signer). Need to wire that for ant Arc txs.
+      * cast local keys (treasury-style): we hold the key, can sign locally/instantly, but we
+        manage secrets ourselves and there's no human-claim story.
+  - Open question: how to SIGN an Arc tx from a Dynamic V3 wallet server-side (the WaaS signing
+    API). Needed before ants funded via Dynamic can actually stake/transfer on Arc.
+
+✅ SERVER-SIDE SIGNING WORKS + FULL CROSS-PRODUCT ROUTE (2026-06-13)
+  Two server-side signing paths in @dynamic-labs-wallet/node-evm:
+    1. DELEGATED (delegatedSignTransaction/Message/TypedData): needs walletId + walletApiKey +
+       keyShare from a wallet.delegation.created flow. For wallets a USER delegates to us.
+    2. DEVELOPER-CREATED (DynamicEvmWalletClient): we create the wallet and HOLD the key share,
+       so we can sign immediately — no delegation needed. THIS is what we used.
+  Recipe (developer-created, server-side):
+    const c = new DynamicEvmWalletClient({ environmentId });
+    await c.authenticateApiToken(apiKey);                       // exchanges API key -> JWT
+    const w = await c.createWalletAccount({ thresholdSignatureScheme:"TWO_OF_TWO", password, backUpToDynamic:true });
+    const walletClient = await c.getWalletClient({ walletMetadata:w.walletMetadata, password,
+        externalServerKeyShares:w.externalServerKeyShares, chainId:5042002, rpcUrl });
+    // walletClient is a viem WalletClient that signs via MPC -> use for Arc txs AND Unlink evm.fromViem.
+  Proven: created an MPC wallet in ~2.2s and signed a message; then signed real Arc txs.
+
+  COMBINED A->B->C->D ROUTE (dynamic/combined-route.mjs) — ALL HOPS PROCESSED ✅
+    A treasury 0x1be3...2D8F --3 USDC native (Arc)-->        B Dynamic MPC 0xDF53...E984
+    B --depositWithApproval 2 USDC (B signs via MPC)-->      C Unlink (private)  -> C private 3 USDC
+    C --Unlink private transfer 1 USDC-->                    D Unlink (private)
+    Result: deposit processed, transfer processed, C private 2 USDC, D private 2 USDC.
+  Key point: the SAME Dynamic MPC walletClient both sends Arc USDC AND acts as Unlink's EVM
+  provider (evm.fromViem) for the deposit. Dynamic + Unlink compose cleanly.
+
+  ARC NATIVE/ERC-20 NOTE: native USDC (18dp) and the 0x3600 ERC-20 (6dp) are the SAME balance.
+  Funding a wallet with native USDC also gives it spendable ERC-20 USDC + gas. Verified on-chain.
+
+WALLET-MODEL TAKEAWAY FOR COLONY
+  Hybrid is viable and proven: treasury (local key) funds Dynamic MPC wallets (managed, no key to
+  leak, claimable by humans -> ties to Worldcoin verified lineages), which can push USDC into
+  Unlink's private layer. Decide per-ant: Dynamic MPC for verified/human roots, local cast keys
+  for cheap ephemeral ants.
+
+STILL OPEN
+  [ ] Pregenerated REST wallets (waas/create) vs developer-created (SDK) — the REST ones need
+      DELEGATION before we can sign for them; the SDK-created ones we can sign for immediately.
+      Decide which we use for ants.
+
+SEE ALSO
+  dynamic/.env, dynamic/README.md, dynamic/create-wallets.mjs, notes/2026-06-13-treasury.txt

@@ -1,0 +1,18 @@
+{
+  "name": "dynamic",
+  "version": "1.0.0",
+  "description": "Exploring **Dynamic** (dynamicauth.com) for Colony's wallet architecture: can we pre-generate many EVM wallets fast, server-side, for use on Arc testnet? **Answer: yes** (10 in ~3.5s).",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@dynamic-labs-wallet/node-evm": "^1.0.38",
+    "@unlink-xyz/sdk": "^0.3.0-canary.598",
+    "dotenv": "^17.4.2"
+  }
+}

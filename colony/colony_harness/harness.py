@@ -12,7 +12,9 @@ from .debate import DebateFeed
 from .genes import random_genome
 from .knowledge import build_knowledge_views
 from .models import DebateClaim, DebateRoom, KnowledgeView, MatchContext, RoundResult
+from .population import normalize_agent_lineages
 from .voice import TemplateVoiceModel, VoiceModel
+from .wallets import WalletStore
 from .world_graph import build_world_graph
 
 
@@ -43,7 +45,12 @@ class ColonyHarness:
         seed: int = 42,
         starting_bankroll: float = 100.0,
         voice_model: VoiceModel | None = None,
+        create_agent_wallets: bool = False,
+        wallet_store_path: str | Path | None = None,
+        agents: list[AntAgent] | None = None,
     ) -> None:
+        if agents is not None:
+            population_size = len(agents)
         if population_size < 1:
             raise ValueError("population_size must be positive")
         if speaker_slots < 1:
@@ -55,22 +62,40 @@ class ColonyHarness:
         self.rng = random.Random(seed)
         self.starting_bankroll = starting_bankroll
         self.voice_model = voice_model or TemplateVoiceModel()
-        self.agents = self._spawn_agents()
+        self.wallet_store = WalletStore(wallet_store_path) if create_agent_wallets or wallet_store_path else None
+        self.agents = agents if agents is not None else self._spawn_agents()
+        if agents is not None and self.wallet_store is not None:
+            self._attach_wallets()
+        normalize_agent_lineages(self.agents)
 
     def _spawn_agents(self) -> list[AntAgent]:
         agents: list[AntAgent] = []
         for index in range(self.population_size):
+            agent_id = f"ant_{index:04d}"
+            wallet_address = ""
+            if self.wallet_store is not None:
+                wallet_address = self.wallet_store.get_or_create(agent_id).address
             genome = random_genome(self.rng)
             agent = AntAgent(
-                agent_id=f"ant_{index:04d}",
+                agent_id=agent_id,
                 name=f"ant-{index:04d}",
                 generation=0,
                 genome=genome,
                 bankroll=round(self.starting_bankroll * self.rng.uniform(0.92, 1.08), 4),
                 accuracy=round(self.rng.uniform(0.35, 0.65), 4),
+                wallet_address=wallet_address,
+                lineage_id=f"lineage_{agent_id}",
+                lineage_root_agent_id=agent_id,
             )
             agents.append(agent)
         return agents
+
+    def _attach_wallets(self) -> None:
+        if self.wallet_store is None:
+            return
+        for agent in self.agents:
+            if not agent.wallet_address:
+                agent.wallet_address = self.wallet_store.get_or_create(agent.agent_id).address
 
     def select_debaters(self) -> list[tuple[AntAgent, str]]:
         ranked = sorted(
@@ -98,7 +123,7 @@ class ColonyHarness:
         profiles = self._build_debate_profiles(match, knowledge_views_by_agent)
         self._last_profiles = profiles
         rooms = self._run_room_debates(profiles)
-        feed = self._run_final_chamber(rooms)
+        feed = self._run_final_chamber(rooms, match)
 
         debate_signal = feed.consensus_home_probability()
         forecasts = []
@@ -123,12 +148,14 @@ class ColonyHarness:
         passes = sum(1 for forecast in forecasts if forecast.side == "pass")
         total_staked = round(sum(forecast.stake for forecast in forecasts), 4)
 
+        debate_quality = _debate_quality_metrics(rooms)
         summary = {
             "population": self.population_size,
             "speaker_slots": self.speaker_slots,
             "room_count": len(rooms),
             "room_claims": sum(len(room.claims) for room in rooms),
             "final_claims": len(feed.claims),
+            **debate_quality,
             "debate_home_probability": None if debate_signal is None else round(debate_signal, 4),
             "market_home_probability": match.market_home_probability,
             "findings": len(match.findings),
@@ -268,32 +295,53 @@ class ColonyHarness:
             )
         return rooms
 
-    def _run_final_chamber(self, rooms: list[DebateRoom]) -> DebateFeed:
+    def _run_final_chamber(self, rooms: list[DebateRoom], match: MatchContext) -> DebateFeed:
         final_feed = DebateFeed()
+        if not rooms:
+            return final_feed
         room_claims = [claim for room in rooms for claim in room.claims]
-        final_representatives = _select_final_representatives(rooms, self.speaker_slots)
-        for room, representative_id in final_representatives:
-            profile = self._profile_by_agent_id(representative_id)
-            if profile is None:
-                continue
-            final_feed.append(
-                profile.agent.speak(
-                    profile.match,
-                    self.rng,
-                    self.voice_model,
-                    selection_reason=(
-                        f"final chamber representative for {room.room_id}: "
-                        f"{room.stance}, focus={room.evidence_focus}, room_p={_format_probability(room.synthesis_home_probability)}"
-                    ),
-                    access_tier=profile.view.access_tier,
-                    visible_findings=len(profile.view.visible_findings),
-                    prior_claims=room_claims + final_feed.claims,
-                    debate_phase="final",
-                    room_id=room.room_id,
-                    debate_role="room_representative",
-                    debate_focus=room.evidence_focus,
-                )
+        synthesis_probability = _weighted_room_probability(rooms)
+        if synthesis_probability is None:
+            synthesis_probability = _weighted_claim_probability(room_claims) or match.market_home_probability
+        referenced_evidence = _final_referenced_evidence(rooms)
+        diagnostics = _final_chamber_diagnostics(
+            match=match,
+            rooms=rooms,
+            probability=synthesis_probability,
+            evidence=referenced_evidence,
+        )
+        final_feed.append(
+            DebateClaim(
+                round_id=match.round_id,
+                speaker_id="colony_synthesis",
+                speaker_name="final-chamber",
+                model="synthesis",
+                persona="room aggregator",
+                access_tier="public",
+                visible_findings=sum(len(claim.referenced_evidence) for claim in room_claims),
+                claim_type="synthesis",
+                selection_reason=(
+                    f"aggregated {len(rooms)} rooms and {len(room_claims)} room claims; "
+                    f"room_range={_room_probability_range(rooms)}"
+                ),
+                stated_home_probability=round(synthesis_probability, 4),
+                confidence=round(_average_room_confidence(rooms), 4),
+                direction=_direction_for_probability(synthesis_probability, match.market_home_probability),
+                message=_final_chamber_message(
+                    match=match,
+                    rooms=rooms,
+                    probability=synthesis_probability,
+                    evidence=referenced_evidence,
+                    diagnostics=diagnostics,
+                ),
+                debate_phase="final",
+                room_id="final",
+                debate_role="synthesis",
+                evidence_tags=_final_evidence_tags(rooms),
+                referenced_evidence=referenced_evidence,
+                diagnostics=diagnostics,
             )
+        )
         return final_feed
 
     def _profile_by_agent_id(self, agent_id: str) -> DebateProfile | None:
@@ -308,6 +356,42 @@ class ColonyHarness:
 
 def _debate_score(agent: AntAgent) -> float:
     return (agent.bankroll * 0.7) + (agent.accuracy * 100.0 * 0.3)
+
+
+def _debate_quality_metrics(rooms: list[DebateRoom]) -> dict:
+    room_claims = [claim for room in rooms for claim in room.claims]
+    disputes = [claim.dispute for claim in room_claims if claim.dispute]
+    subjects: set[str] = set()
+    critique_types: set[str] = set()
+    subject_shifts = 0
+    carried_claims = 0
+
+    for claim in room_claims:
+        if "carried_from=none" not in claim.selection_reason:
+            carried_claims += 1
+        for evidence in claim.referenced_evidence:
+            subject = str(evidence.get("subject") or evidence.get("team") or evidence.get("player") or "").strip()
+            if subject:
+                subjects.add(subject.lower())
+        if claim.dispute:
+            critique_type = str(claim.dispute.get("critique_type") or "dispute")
+            if critique_type:
+                critique_types.add(critique_type)
+            target_subject = str(claim.dispute.get("target_subject") or "").strip().lower()
+            counter_subject = str(claim.dispute.get("counter_subject") or "").strip().lower()
+            if target_subject and counter_subject and target_subject != counter_subject:
+                subject_shifts += 1
+
+    room_claim_count = len(room_claims)
+    dispute_count = len(disputes)
+    return {
+        "dispute_count": dispute_count,
+        "dispute_rate": round(dispute_count / room_claim_count, 4) if room_claim_count else 0.0,
+        "subject_count": len(subjects),
+        "critique_type_count": len(critique_types),
+        "subject_shift_count": subject_shifts,
+        "carried_claim_count": carried_claims,
+    }
 
 
 def _stance_for_probability(probability: float, market_probability: float) -> str:
@@ -349,9 +433,9 @@ def _clean_focus(value: str) -> str:
 def _conversation_venues(profiles: list[DebateProfile], *, max_rooms: int) -> list[ConversationVenue]:
     evidence_text = " ".join(_visible_evidence_text(profile.match) for profile in profiles[: min(len(profiles), 12)])
     candidates: list[tuple[str, str]] = []
-    if "neymar" in evidence_text:
+    if _has_availability_evidence(profiles, tokens=("neymar",)):
         candidates.append(("neymar_availability", "How much does Neymar availability move Brazil?"))
-    if any(token in evidence_text for token in ("nayef aguerd", "ez abde", "morocco")):
+    if _has_availability_evidence(profiles, tokens=("nayef aguerd", "ez abde", "morocco")):
         candidates.append(("morocco_availability", "Do Morocco injuries offset the Neymar drag?"))
     if "recent_form" in evidence_text or "recent form" in evidence_text or "last matches" in evidence_text:
         candidates.append(("team_form", "What do recent matches say about each team's baseline?"))
@@ -375,6 +459,21 @@ def _conversation_venues(profiles: list[DebateProfile], *, max_rooms: int) -> li
             )
         )
     return venues
+
+
+def _has_availability_evidence(profiles: list[DebateProfile], *, tokens: tuple[str, ...]) -> bool:
+    for profile in profiles[: min(len(profiles), 12)]:
+        for finding in profile.match.findings:
+            for evidence in finding.evidence_claims:
+                if evidence.get("claim_type") != "injury_availability":
+                    continue
+                text = " ".join(
+                    str(evidence.get(field) or "")
+                    for field in ("subject", "team", "player", "claim")
+                ).lower()
+                if any(token in text for token in tokens):
+                    return True
+    return False
 
 
 def _visible_evidence_text(match: MatchContext) -> str:
@@ -590,6 +689,313 @@ def _average_confidence(claims: list[DebateClaim]) -> float:
     if not claims:
         return 0.0
     return sum(claim.confidence for claim in claims) / len(claims)
+
+
+def _weighted_room_probability(rooms: list[DebateRoom]) -> float | None:
+    weighted_sum = 0.0
+    total_weight = 0.0
+    for room in rooms:
+        if room.synthesis_home_probability is None:
+            continue
+        weight = max(room.synthesis_confidence, 0.05) * max(len(room.participant_ids), 1)
+        weighted_sum += room.synthesis_home_probability * weight
+        total_weight += weight
+    if total_weight <= 0:
+        return None
+    return weighted_sum / total_weight
+
+
+def _average_room_confidence(rooms: list[DebateRoom]) -> float:
+    if not rooms:
+        return 0.0
+    return sum(max(room.synthesis_confidence, 0.05) for room in rooms) / len(rooms)
+
+
+def _direction_for_probability(probability: float, market_probability: float) -> str:
+    edge = probability - market_probability
+    if edge >= 0.01:
+        return "home"
+    if edge <= -0.01:
+        return "away"
+    return "pass"
+
+
+def _room_probability_range(rooms: list[DebateRoom]) -> str:
+    probabilities = [room.synthesis_home_probability for room in rooms if room.synthesis_home_probability is not None]
+    if not probabilities:
+        return "n/a"
+    return f"{min(probabilities):.1%}-{max(probabilities):.1%}"
+
+
+def _final_evidence_tags(rooms: list[DebateRoom]) -> list[str]:
+    tags: list[str] = []
+    for room in rooms:
+        if room.evidence_focus and room.evidence_focus not in tags:
+            tags.append(room.evidence_focus)
+        for claim in room.claims:
+            for tag in claim.evidence_tags:
+                if tag not in tags:
+                    tags.append(tag)
+    return tags[:5]
+
+
+def _final_referenced_evidence(rooms: list[DebateRoom], limit: int = 5) -> list[dict]:
+    scored: list[tuple[float, dict]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for room in rooms:
+        room_weight = max(room.synthesis_confidence, 0.05)
+        for claim in room.claims:
+            for evidence in claim.referenced_evidence[:2]:
+                subject = str(evidence.get("subject") or evidence.get("team") or "")
+                claim_text = str(evidence.get("claim") or "")
+                source = str(evidence.get("source_title") or evidence.get("source_url") or "")
+                key = (subject.lower(), claim_text.lower()[:96], source.lower()[:96])
+                if key in seen:
+                    continue
+                seen.add(key)
+                confidence = float(evidence.get("confidence") or claim.confidence or 0.3)
+                score = confidence + room_weight + (0.15 if evidence.get("player") else 0.0)
+                if evidence.get("claim_type") == "injury_availability":
+                    score += 0.2
+                scored.append((score, evidence))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [evidence for _score, evidence in scored[:limit]]
+
+
+def _final_chamber_message(
+    *,
+    match: MatchContext,
+    rooms: list[DebateRoom],
+    probability: float,
+    evidence: list[dict],
+    diagnostics: dict | None = None,
+) -> str:
+    diagnostics = diagnostics or _final_chamber_diagnostics(
+        match=match,
+        rooms=rooms,
+        probability=probability,
+        evidence=evidence,
+    )
+    market_line = str(diagnostics.get("consensus") or "")
+    focus_line = str(diagnostics.get("main_evidence_thread") or "")
+    disagreement_line = str(diagnostics.get("minority_report") or diagnostics.get("unresolved_risk") or "")
+    parts = [market_line, focus_line, disagreement_line]
+    return " ".join(part for part in parts if part)
+
+
+def _final_chamber_diagnostics(
+    *,
+    match: MatchContext,
+    rooms: list[DebateRoom],
+    probability: float,
+    evidence: list[dict],
+) -> dict:
+    edge = probability - match.market_home_probability
+    if abs(edge) < 0.006:
+        consensus = f"Final chamber keeps {match.home_team} close to market."
+        consensus_label = "close_to_market"
+    elif edge > 0:
+        consensus = f"Final chamber leans above market on {match.home_team}."
+        consensus_label = "above_market_home"
+    else:
+        consensus = f"Final chamber trims {match.home_team} below market."
+        consensus_label = "below_market_home"
+
+    focus_line = _final_focus_line(evidence, match=match) or _final_room_focus_line(rooms)
+    dispute = _final_dispute_summary(match, rooms)
+    unresolved_risk = _final_unresolved_risk_line(match, rooms, evidence)
+    minority_report = str(dispute.get("line") or unresolved_risk)
+    probabilities = [room.synthesis_home_probability for room in rooms if room.synthesis_home_probability is not None]
+    room_range = _room_probability_range(rooms)
+    spread = None if not probabilities else round(max(probabilities) - min(probabilities), 4)
+    return {
+        "consensus": consensus,
+        "consensus_label": consensus_label,
+        "main_evidence_thread": focus_line,
+        "minority_report": minority_report,
+        "source_dispute": dispute,
+        "unresolved_risk": unresolved_risk,
+        "room_probability_range": room_range,
+        "room_probability_spread": spread,
+        "room_count": len(rooms),
+        "room_claims": sum(len(room.claims) for room in rooms),
+    }
+
+
+def _final_focus_line(evidence: list[dict], *, match: MatchContext) -> str:
+    if not evidence:
+        return ""
+    excluded_teams = {match.home_team, match.away_team}
+    availability = [item for item in evidence if item.get("claim_type") == "injury_availability"]
+    player_form = [item for item in evidence if item.get("claim_type") == "player_form"]
+    recent_form = [item for item in evidence if item.get("claim_type") == "recent_form"]
+    if availability:
+        subjects = _subject_list(availability, limit=3, exclude_if_possible=excluded_teams)
+        return f"The main live question is availability: {subjects}."
+    if player_form:
+        return f"Player form is the strongest shared thread: {_subject_list(player_form, limit=3, exclude_if_possible=excluded_teams)}."
+    if recent_form:
+        return f"Recent form is the common thread: {_subject_list(recent_form, limit=3)}."
+    return f"The room evidence clusters around {_subject_list(evidence, limit=3, exclude_if_possible=excluded_teams)}."
+
+
+def _final_room_focus_line(rooms: list[DebateRoom]) -> str:
+    focuses = [room.evidence_focus.replace("_", " ") for room in rooms if room.evidence_focus]
+    if not focuses:
+        return ""
+    return f"The rooms mostly argued about {_join_human(focuses[:3])}."
+
+
+def _final_disagreement_line(match: MatchContext, rooms: list[DebateRoom], evidence: list[dict]) -> str:
+    dispute = _final_dispute_summary(match, rooms)
+    if dispute.get("line"):
+        return str(dispute["line"])
+
+    return _final_unresolved_risk_line(match, rooms, evidence)
+
+
+def _final_unresolved_risk_line(match: MatchContext, rooms: list[DebateRoom], evidence: list[dict]) -> str:
+
+    probabilities = [room.synthesis_home_probability for room in rooms if room.synthesis_home_probability is not None]
+    if not probabilities:
+        return "The remaining disagreement is source quality, not the direction of the match."
+    spread = max(probabilities) - min(probabilities)
+    excluded_teams = {match.home_team, match.away_team}
+    negative_home = _subject_list(
+        [item for item in evidence if item.get("impact") == "negative_home"],
+        limit=2,
+        exclude_if_possible=excluded_teams,
+    )
+    negative_away = _subject_list(
+        [item for item in evidence if item.get("impact") == "negative_away"],
+        limit=2,
+        exclude_if_possible=excluded_teams,
+    )
+    if negative_home and negative_away:
+        return f"Unresolved: which risk should dominate, {negative_home} or {negative_away}."
+    if spread >= 0.018:
+        return "Unresolved: the rooms agree on the topics, but not on how hard to move price."
+    if negative_home:
+        return f"Unresolved: whether {negative_home} is already priced."
+    if negative_away:
+        return f"Unresolved: whether {negative_away} is enough to lift {match.home_team}."
+    return "Unresolved: source quality still decides how much the room should move."
+
+
+def _final_dispute_summary(match: MatchContext, rooms: list[DebateRoom]) -> dict:
+    disputes = [claim.dispute for room in rooms for claim in room.claims if claim.dispute]
+    if not disputes:
+        return {}
+
+    critique_counts: dict[str, int] = {}
+    for dispute in disputes:
+        critique_type = str(dispute.get("critique_type") or "dispute")
+        critique_counts[critique_type] = critique_counts.get(critique_type, 0) + 1
+
+    dominant_type = max(critique_counts.items(), key=lambda item: (item[1], _dispute_priority(item[0])))[0]
+    dominant_pair = _dominant_dispute_subject_pair(
+        dispute for dispute in disputes if dispute.get("critique_type") == dominant_type
+    )
+
+    if dominant_type == "source_quality":
+        if dominant_pair:
+            target_subject, counter_subject = dominant_pair
+            if target_subject and counter_subject and target_subject != counter_subject:
+                line = f"Minority report: source quality dispute favors checking {counter_subject} against {target_subject}."
+                return _dispute_summary_dict(disputes, critique_counts, dominant_type, dominant_pair, line)
+        line = "Minority report: the sharpest objection is source quality, not another price model."
+        return _dispute_summary_dict(disputes, critique_counts, dominant_type, dominant_pair, line)
+    if dominant_type == "counter_evidence":
+        if dominant_pair:
+            target_subject, counter_subject = dominant_pair
+            if target_subject and counter_subject and target_subject != counter_subject:
+                line = f"Minority report: the live counterweight is {counter_subject} against {target_subject}."
+                return _dispute_summary_dict(disputes, critique_counts, dominant_type, dominant_pair, line)
+        line = "Minority report: challengers are arguing counter-evidence more than raw probability."
+        return _dispute_summary_dict(disputes, critique_counts, dominant_type, dominant_pair, line)
+    if dominant_type == "underpriced_home":
+        line = f"Minority report: some rooms think {match.home_team} is still underpriced after the risk adjustment."
+        return _dispute_summary_dict(disputes, critique_counts, dominant_type, dominant_pair, line)
+    if dominant_type == "overpriced_home":
+        line = f"Minority report: some rooms think {match.home_team}'s price is still too high after the evidence."
+        return _dispute_summary_dict(disputes, critique_counts, dominant_type, dominant_pair, line)
+    if dominant_type == "impact_size":
+        line = "Minority report: the topic is accepted, but the impact size is still disputed."
+        return _dispute_summary_dict(disputes, critique_counts, dominant_type, dominant_pair, line)
+    return {}
+
+
+def _dispute_summary_dict(
+    disputes: list[dict],
+    critique_counts: dict[str, int],
+    dominant_type: str,
+    dominant_pair: tuple[str, str] | None,
+    line: str,
+) -> dict:
+    target_subject = ""
+    counter_subject = ""
+    if dominant_pair:
+        target_subject, counter_subject = dominant_pair
+    return {
+        "line": line,
+        "dominant_type": dominant_type,
+        "critique_counts": dict(sorted(critique_counts.items())),
+        "target_subject": target_subject,
+        "counter_subject": counter_subject,
+        "dispute_count": len(disputes),
+    }
+
+
+def _dominant_dispute_subject_pair(disputes) -> tuple[str, str] | None:
+    subject_pairs: dict[tuple[str, str], int] = {}
+    for dispute in disputes:
+        target_subject = str(dispute.get("target_subject") or "").strip()
+        counter_subject = str(dispute.get("counter_subject") or "").strip()
+        if target_subject or counter_subject:
+            key = (target_subject, counter_subject)
+            subject_pairs[key] = subject_pairs.get(key, 0) + 1
+    if not subject_pairs:
+        return None
+    return max(subject_pairs.items(), key=lambda item: (item[1], item[0]))[0]
+
+
+def _dispute_priority(critique_type: str) -> int:
+    priority = {
+        "source_quality": 5,
+        "counter_evidence": 4,
+        "impact_size": 3,
+        "overpriced_home": 2,
+        "underpriced_home": 2,
+    }
+    return priority.get(critique_type, 1)
+
+
+def _subject_list(
+    evidence: list[dict],
+    *,
+    limit: int,
+    exclude_if_possible: set[str] | None = None,
+) -> str:
+    subjects: list[str] = []
+    for item in evidence:
+        subject = str(item.get("subject") or item.get("player") or item.get("team") or "").strip()
+        if subject and subject not in subjects:
+            subjects.append(subject)
+    if exclude_if_possible:
+        specific_subjects = [subject for subject in subjects if subject not in exclude_if_possible]
+        if specific_subjects:
+            subjects = specific_subjects
+    return _join_human(subjects[:limit]) if subjects else "the available evidence"
+
+
+def _join_human(items: list[str]) -> str:
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} and {items[1]}"
+    return f"{', '.join(items[:-1])}, and {items[-1]}"
 
 
 def _room_synthesis(

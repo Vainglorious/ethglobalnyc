@@ -1,0 +1,118 @@
+2026-06-13 — Unlink protocol exploration
+
+GOAL
+  Understand the Unlink protocol and see ONE simple ~1 USDC private transfer between two
+  throwaway test wallets on a testnet, to confirm the flow works.
+
+WHAT UNLINK IS
+  "Build private applications on blockchains." A smart contract on an existing EVM chain
+  (no separate chain, no bridge). You deposit ERC-20 tokens in, then transfer them PRIVATELY
+  between Unlink accounts (no on-chain balances/amounts/history), then withdraw back out.
+  Docs: https://docs.unlink.xyz  (clean .md pages + https://docs.unlink.xyz/llms.txt)
+  Saved reference: unlink/docs/unlink-overview.md
+
+  Four operations: depositWithApproval() in, transfer() private, withdraw() out,
+  execute() to call contracts (needs a seed-backed account).
+
+WHY IT MATTERS FOR COLONY
+  Unlink supports arc-testnet (chainId 5042002) — the SAME Arc chain Colony settles money on
+  (USDC = native gas there). So Unlink is a candidate privacy layer for ant-to-ant USDC
+  (private stakes/inheritance). For this first "does it work" test we lean base-sepolia
+  (simplest, best documented).
+
+SDK + ACCOUNTS (key facts)
+  - Install: npm install @unlink-xyz/sdk@canary
+  - Packages: /browser (MetaMask), /client (custodial Node — what we use), /admin (apiKey +
+    registration + auth tokens), /crypto (account constructors, alt import path).
+  - Account constructors: fromMnemonic, fromSeed, fromEthereumSignature, fromMetaMask, fromKeys.
+    NO fromPrivateKey — so we use mnemonics. Need appId + chainId; wrong chainId = different account.
+  - getAddress() returns an "unlink1..." address.
+  - transfer({ recipientAddress, token, amount }) -> tx.wait() -> status "processed"|"failed".
+    amount is in smallest unit as a string (NOT decimals-adjusted).
+  - faucet.requestPrivateTokens({ token, amount }) funds the Unlink account (shielded);
+    requestTestTokens() mints ERC-20 to an EVM wallet.
+
+SUPPORTED TESTNETS
+  arc-testnet 5042002 (USDC native gas; faucet.circle.com) — Colony's chain
+  base-sepolia 84532 (ETH faucet: alchemy.com/faucets/base-sepolia)
+  ethereum-sepolia 11155111 ; monad-testnet 10143
+
+THROWAWAY TEST WALLETS (generated 2026-06-13 with `cast wallet new-mnemonic`; NOT for real funds)
+  Wallet A (sender):
+    mnemonic:    diesel dutch under leopard snack give stay program video venue matrix advance
+    EVM addr:    0x56fA7cD7ca0549330993bB29647719b02a20fE54
+    private key: 0x7878ebfd31dbe8763ac2771846b9a330eb96d75f5f72385ac272364b778414b9
+  Wallet B (recipient):
+    mnemonic:    reason boil width unknown unfair jump neck office rib path gaze injury
+    EVM addr:    0x015c057bF5C358890B8bb55e0b6de474b5F46F43
+    private key: 0x03b0e1b8190a51ae82b73cec766b9630d16eb74be5159ad969680c3647d8fd9d
+  (These are also written into unlink/.env, which is gitignored.)
+
+WHAT'S BUILT
+  unlink/transfer-demo.mjs — DRAFT custodial two-wallet flow: register both -> faucet-fund A
+    -> private transfer A->B -> print balances. Reconstructed from docs, NOT yet run live.
+  unlink/package.json (@unlink-xyz/sdk@canary, dotenv), unlink/.env(.example), README, docs/.
+
+VERIFIED AGAINST THE INSTALLED SDK (2026-06-13) — @unlink-xyz/sdk@0.3.0-canary.598
+  Ran `npm install` and inspected the real .d.ts types. Confirmed and corrected the draft:
+  - `account` + `createUnlinkClient` ARE exported from /client (our import is right).
+  - account.fromMnemonic takes ONLY { mnemonic, accountIndex? } — NO appId/chainId.
+    (appId/chainId are bound only in fromMetaMask / fromEthereumSignature.) So the mnemonic
+    flow does NOT need an appId — that blocker is GONE.
+  - transfer(SingleTransferParams) = { token, amount, recipientAddress } -> TransactionHandle;
+    await tx.wait() -> { status }.
+  - faucet.requestPrivateTokens({ token, amount? }) (amount optional; auto-registers caller).
+  - balanceOf(token) -> smallest-unit string | null (used for before/after display).
+  - Script now PARSES and imports load; dry run stops cleanly at the missing API key.
+
+BLOCKERS BEFORE WE CAN RUN THE 1 USDC TRANSFER (need from Adil) — now just 2
+  [ ] UNLINK_API_KEY from https://dashboard.unlink.xyz (org -> project -> API Keys).
+  [ ] UNLINK_TEST_TOKEN — the test token address for the chosen environment (dashboard config).
+  (appId NO LONGER needed.) Mnemonics already in unlink/.env. Amount set to 1000000 = 1 USDC
+  at 6 decimals (use 1000000000000000000 if the test token is 18-decimal).
+  Once the API key + token are in unlink/.env: `cd unlink && node transfer-demo.mjs`
+  (SDK already installed).
+
+STILL OPEN
+  - token value shape: confirmed it's a string (ERC-20 address) per SingleTransferParams.token: string.
+  - whether arc-testnet's native USDC can be transferred via Unlink (Unlink moves ERC-20s; a
+    native gas token may need a wrapped/test ERC-20 instead) — base-sepolia test token is safer first.
+
+LIVE TEST PROGRESS (2026-06-13) — got an API key, hit ONE remaining blocker
+  - API key saved to unlink/.env (UNLINK_API_KEY). It authenticates fine.
+  - Tenant provisioning is environment-specific. Probing all testnets with the key:
+      base-sepolia / ethereum-sepolia / monad-testnet -> "tenant not provisioned"
+      arc-testnet -> "unlink_address does not belong to this tenant/project"  (DIFFERENT error)
+    => Our project is provisioned on ARC-TESTNET (chain 5042002) — Colony's chain. Good.
+  - On arc-testnet: account.fromMnemonic + createUnlinkClient + ensureRegistered() => OK ✅.
+    Both wallets register. getEnvironmentInfo() returns chain_id 5042002, pool_address
+    0x075b8D19b214cd939a0aA6B1Eb8E2152b9a5dCdA, permit2, execution_account — but NO token list.
+  - BLOCKER: faucet() and transfer() both require a `token` (ERC-20 address). Could not discover
+    it via SDK (getEnvironmentInfo / ENVIRONMENTS / getBalances all lack a token list). Must come
+    from the dashboard project config. => see unlink/TODO.md. Need UNLINK_TEST_TOKEN for arc-testnet.
+  - Next: paste the arc-testnet token address -> set env=arc-testnet -> run transfer-demo.mjs.
+
+✅ DONE — 1 USDC A->B PRIVATE TRANSFER WORKS (2026-06-13)
+  Resolved the token blocker: the Arc testnet USDC ERC-20 is 0x3600000000000000000000000000000000000000
+  (6 decimals; from docs.arc.io contract-addresses). Set UNLINK_ENVIRONMENT=arc-testnet,
+  UNLINK_TEST_TOKEN=0x3600... in unlink/.env.
+
+  The Unlink faucet does NOT dispense Arc USDC ("token not supported by faucet"), so instead we
+  DEPOSIT real USDC from the funded Arc treasury wallet, then transfer privately. New script:
+  unlink/deposit-and-transfer.mjs (uses viem walletClient over Arc RPC + evm.fromViem; deposits
+  via depositWithApproval, then transfer).
+
+  Run result:
+    Treasury 0x1be3...2D8F (20 USDC) --depositWithApproval 2 USDC--> A : status processed
+    A private balance: 2000000 (2 USDC)
+    transfer 1 USDC A->B : status processed
+    A after: 1000000 (1 USDC) | B after: 1000000 (1 USDC)   <-- 1 USDC moved privately ✅
+
+  Key SDK facts used: evm.fromViem({ walletClient, publicClient }) to sign on-chain from a raw
+  key in Node; client.depositWithApproval({ token, amount, evm }); client.transfer({...}); both
+  return handles -> .wait() -> status "processed". balanceOf(token) returns smallest-unit string
+  (null when zero).
+
+SEE ALSO
+  unlink/README.md, unlink/docs/unlink-overview.md, unlink/transfer-demo.mjs,
+  unlink/deposit-and-transfer.mjs, unlink/TODO.md

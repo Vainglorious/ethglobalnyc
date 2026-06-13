@@ -1,0 +1,79 @@
+================================================================================
+POLYGUN — NOTES
+(PolyGun = Telegram/web bot for trading Polymarket, polygun.xyz)
+Last updated: 2026-06-13
+================================================================================
+
+WHAT IT IS
+----------
+PolyGun (polygun.xyz, Telegram: @PolyGunSniperBot) is a third-party trading bot
+for Polymarket. We're evaluating it as the EXECUTION LAYER for the Colony — i.e.
+the thing that actually places bets on Polymarket on behalf of the ants.
+
+Access was via a referral link: t.me/PolyGunSniperBot?start=ref_vainglorious
+
+
+CUSTODY MODEL — THE KEY THING TO UNDERSTAND
+-------------------------------------------
+PolyGun is CUSTODIAL / POOLED. When you deposit, funds do NOT stay in a wallet
+you control:
+  - You deposit USDC from your own wallet to a PolyGun DEPOSIT CONTRACT.
+  - PolyGun forwards/pools those funds internally; your balance then shows as
+    "pUSD" inside PolyGun's UI (an off-chain / custodial accounting balance).
+  - The private key PolyGun gives you is a SIGNING/AUTH identity for the bot, NOT
+    the wallet that holds the money. That EOA stays empty on-chain.
+  - PolyGun also shows a "trading address" — observed on-chain as an empty
+    contract; the real funds live in PolyGun's pooled system, not there.
+
+CONSEQUENCE: you cannot sweep funds back yourself with a raw on-chain transfer
+(no wallet you hold the key for ever holds the money). The ONLY way out is
+PolyGun's own WITHDRAW function. Treat anything deposited as fully in PolyGun's
+custody until withdrawn.
+
+
+FIRST EXPERIMENT (2026-06-13) — what happened
+---------------------------------------------
+- Funded a PolyGun account with $15 from treasury 0xcc16…31eB.
+- On-chain trace:
+    treasury -> PolyGun deposit contract 0x0323fbd7aa9a1cbff6121a22e4bb4a7298d620f5
+      5 USDC  tx 0x15461599e180294762e09750042a42e26a651541fcad5849f0e650102733c77f
+     10 USDC  tx 0xd7847aa230a30f6978545dd41f0134669f2a08c4bab47776de434c4e43dc529f
+  (sent as NATIVE USDC, 0x3c499c...).
+- The deposit contract, the signing EOA 0xD400…6355, and the "trading address"
+  0x37eee1f5…818ca6 all show EMPTY / no traceable balance on-chain. Funds are
+  inside PolyGun's pooled custody. pUSD balance is only visible in PolyGun's UI.
+- This first account was "aged and had problems" -> abandoning it. Withdrawing
+  the $15 back to the treasury and creating a FRESH PolyGun account.
+
+ADDRESSES (account #1, being retired)
+  - PolyGun signing/auth EOA (key in polymarket/.env): 0xD400Aa0cc2F377Affd9E36eE02E0A016138D6355
+  - PolyGun deposit contract:                          0x0323fbd7aa9a1cbff6121a22e4bb4a7298d620f5
+  - PolyGun "trading address":                         0x37eee1f5fdcf9ed912fff8ce94fcbea757818ca6
+
+
+STATUS / TODO
+-------------
+[in progress] Withdraw $15 from PolyGun account #1 back to treasury 0xcc16…31eB.
+              (watch_treasury.py is polling the treasury for the inbound.)
+[pending]     Stand up a NEW PolyGun account (the old one had issues).
+[pending]     Record new account's signing key (-> polymarket/.env) + addresses.
+[pending]     Get ONE real trade tx hash from PolyGun -> decode it to learn the
+              actual order path (which contract touches Polymarket's CTF Exchange,
+              how the order is formatted) so we can map ant Forecast -> order.
+
+OPERATING RULES (learned the hard way)
+  - Don't fund a new PolyGun account until the previous withdrawal is CONFIRMED
+    landed on-chain, so funds are never in-flight across accounts we can't see.
+  - Keep deposits small while evaluating — it's custodial.
+  - Secrets (PolyGun signing keys) live ONLY in polymarket/.env (gitignored),
+    never in committed notes.
+
+
+HOW THIS COMPARES TO THE DIRECT-API PATH (see 2026-06-13-polymarketexecution.txt)
+--------------------------------------------------------------------------------
+- Direct API (py-clob-client): self-custody, keys never leave us, but we manage
+  USDC.e + allowances + signing ourselves. Verified working (auth + creds OK);
+  parked only because the treasury holds native USDC, not USDC.e.
+- PolyGun: less plumbing for us, but custodial — funds leave self-custody and
+  recovery depends on PolyGun's withdraw. Convenience vs. custody trade-off.
+================================================================================

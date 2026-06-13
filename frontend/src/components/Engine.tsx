@@ -108,6 +108,7 @@ export default function Engine() {
           side: sim.side[i],
           stake: sim.stake[i],
           genomeHash: sim.genomeHashes[i],
+          walletAddress: sim.walletAddresses[i],
           generation: sim.generations[i],
         }
         store.setAntSnapshot(snap)

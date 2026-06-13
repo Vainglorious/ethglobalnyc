@@ -90,6 +90,14 @@ export default function AntCard() {
               <span className="v">{snap.genomeHash.slice(0, 10)}…</span>
             </div>
           )}
+          {snap.walletAddress && (
+            <div className="row">
+              <span className="k">Wallet</span>
+              <span className="v">
+                {snap.walletAddress.slice(0, 6)}…{snap.walletAddress.slice(-4)}
+              </span>
+            </div>
+          )}
         </div>
       </Html>
     </group>
