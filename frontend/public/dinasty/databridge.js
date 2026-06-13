@@ -144,7 +144,7 @@ DN.databridge = (function () {
 
   B.startDemoRun = function (opts) {
     if (!apiUrl) return Promise.reject(new Error('No backend API configured.'));
-    const body = Object.assign({ agents: 20, rooms: 4, seed: Math.floor(Math.random() * 10000), voice_mode: 'template' }, opts || {});
+    const body = Object.assign({ agents: 20, rooms: 4, seed: Math.floor(Math.random() * 10000), voice_mode: 'llm' }, opts || {});
     runEvents = [];
     B.ready = false;
     return fetch(apiUrl + '/runs/demo', {

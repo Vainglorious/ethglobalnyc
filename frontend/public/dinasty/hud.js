@@ -43,15 +43,15 @@ DN.hud = (function () {
     if (!root) return;
     root.innerHTML =
       '<div class="backend-copy"><div class="backend-k">Backend</div><div class="backend-s" id="backend-status">Railway linked</div></div>' +
-      '<button class="backend-btn" id="backend-run">Run agents</button>';
+      '<button class="backend-btn" id="backend-run">Run LLM agents</button>';
     const btn = $('backend-run');
     const status = $('backend-status');
     btn.addEventListener('click', () => {
       if (!DN.databridge || !DN.databridge.startDemoRun) return;
       btn.disabled = true;
       status.textContent = 'Starting run...';
-      H.pushThought('Frontend requested a new Railway colony run.', 'Backend', '#3FA89F');
-      DN.databridge.startDemoRun({ agents: 20, rooms: 4, voice_mode: 'template' })
+      H.pushThought('Frontend requested a new LLM-powered Railway colony run.', 'Backend', '#3FA89F');
+      DN.databridge.startDemoRun({ agents: 20, rooms: 4, voice_mode: 'llm' })
         .then((result) => {
           status.textContent = 'Loaded ' + (result.events || 'new') + ' events';
           H.pushThought('Backend run completed and the colony view loaded its events.', 'Backend', '#3FA89F');

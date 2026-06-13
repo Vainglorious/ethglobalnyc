@@ -34,7 +34,7 @@ The frontend can create a run with `POST /runs/demo`.
 ```bash
 curl -X POST https://ethglobalnyc-production.up.railway.app/runs/demo \
   -H "Content-Type: application/json" \
-  -d '{"agents":20,"rooms":4,"seed":42,"voice_mode":"template"}'
+  -d '{"agents":20,"rooms":4,"seed":42,"voice_mode":"llm"}'
 ```
 
 Response:
@@ -47,8 +47,9 @@ Response:
 }
 ```
 
-Use `voice_mode: "template"` for cheap smoke tests. Use `voice_mode: "llm"` only
-after the OpenRouter/DeepSeek variables are configured in Railway.
+Use `voice_mode: "llm"` for the deployed frontend interaction. Use
+`voice_mode: "template"` only for cheap smoke tests or when OpenRouter/DeepSeek
+variables are not configured in Railway.
 
 ## Poll Run Status
 
@@ -121,7 +122,7 @@ frontend/public/dinasty/hud.js
 Frontend flow:
 
 1. `databridge.js` loads the latest successful backend run from `GET /runs`.
-2. The `Run agents` button calls `POST /runs/demo`.
+2. The `Run LLM agents` button calls `POST /runs/demo`.
 3. The browser listens to `GET /runs/{run_id}/stream`.
 4. When events arrive, the frontend seeds colony stats and the thought ticker.
 5. If the backend is unavailable, the frontend falls back to `/data/demo.jsonl`.
@@ -137,7 +138,7 @@ async function startRun() {
     body: JSON.stringify({
       agents: 20,
       rooms: 4,
-      voice_mode: 'template',
+      voice_mode: 'llm',
     }),
   })
   const run = await response.json()
