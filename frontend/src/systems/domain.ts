@@ -68,7 +68,7 @@ function spawnWorker(cid: number): boolean {
   const x = colony.x + Math.cos(a) * r
   const z = colony.z + Math.sin(a) * r
   sim.positions[i3] = x
-  sim.positions[i3 + 1] = groundY(x, z) + 1.2
+  sim.positions[i3 + 1] = groundY(x, z)
   sim.positions[i3 + 2] = z
   sim.velocities[i3] = Math.cos(a) * 0.5
   sim.velocities[i3 + 1] = 0

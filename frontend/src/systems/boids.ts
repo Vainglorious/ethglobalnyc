@@ -217,11 +217,12 @@ export function updateBoids(dt: number) {
       V[i3 + 2] *= s
     }
 
-    // integrate position; sit on the surface with a small hover offset
+    // integrate position; store the terrain contact point. Renderers add model
+    // foot clearance from their own bounds so ants do not float above hills.
     const nx = px + V[i3] * dt
     const nz = pz + V[i3 + 2] * dt
     P[i3] = nx
     P[i3 + 2] = nz
-    P[i3 + 1] = groundY(nx, nz) + 1.2
+    P[i3 + 1] = groundY(nx, nz)
   }
 }

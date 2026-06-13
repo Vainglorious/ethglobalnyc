@@ -176,7 +176,7 @@ class SimStore {
       const x = colony.x + Math.cos(a) * r
       const z = colony.z + Math.sin(a) * r
       this.positions[i3] = x
-      this.positions[i3 + 1] = groundY(x, z) + 1.2
+      this.positions[i3 + 1] = groundY(x, z)
       this.positions[i3 + 2] = z
 
       const sp = 0.4 + rand() * 0.4
