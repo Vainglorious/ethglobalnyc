@@ -58,9 +58,13 @@ def decode_trade(tx: str) -> dict:
             token = int(lg["data"][2:][:64], 16)
             shares = int(lg["data"][2:][64:128], 16) / 1e6
         elif t0 == TRANSFER and lg["address"].lower() == PUSD:
-            to = "0x" + lg["topics"][2][-40:]
+            frm = "0x" + lg["topics"][1][-40:]
             amt = int(lg["data"], 16) / 1e6
-            if POLYGUN_ADDR not in to.lower():
+            # only count pUSD LEAVING our wallet (avoids internal split/merge
+            # transfers on neg-risk multi-outcome markets). For neg-risk there's
+            # usually one all-in outflow (stake+fee); for binary markets two
+            # (stake to maker + fee).
+            if POLYGUN_ADDR in frm.lower():
                 outflows.append(amt)
     outflows.sort(reverse=True)
     spent = outflows[0] if outflows else None

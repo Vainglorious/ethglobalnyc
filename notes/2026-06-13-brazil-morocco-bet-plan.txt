@@ -1,0 +1,89 @@
+================================================================================
+BRAZIL vs MOROCCO — 3-BET PLAN (next match)
+2026-06-13  (World Cup, Group C; kickoff 22:00 UTC / 6:00 PM ET)
+================================================================================
+
+WHY THIS MATCH
+--------------
+The next World Cup game after Qatar-Switzerland, kickoff 22:00 UTC (~6 PM ET).
+It's the colony's HOME match — the harness scouts hardcode Brazil/Morocco star
+players (colony/colony_harness/live_scouts.py). Same 3-bet structure as the 3pm
+plan: PRE-game, DURING (~halftime), AFTER/late.
+
+(Match after this one: Haiti vs Scotland, 01:00 UTC Jun 14 / 9 PM ET.)
+
+
+THE MARKET  (PolyGun event e_351720 — "Brazil vs. Morocco (Jun 13)")
+--------------------------------------------------------------------
+Outcome   market id   price (pre-game ~21:25)   buy command (--amount N)
+  Brazil  1897049     59c (favorite)            pg.py buy --market 1897049 --side yes --amount N --confirm
+  Draw    1897050     26c                       pg.py buy --market 1897050 --side yes --amount N --confirm
+  Morocco 1897051     17c                       pg.py buy --market 1897051 --side yes --amount N --confirm
+  (winner market only on PolyGun. O/U totals exist on Polymarket/ClickHouse but
+   are NOT tradeable from here — PolyGun doesn't index them, CLOB geoblocks US.)
+
+FUNDS: ~$29 pUSD available in PolyGun (after the France + Switzerland bets). Keep
+each leg ~$2 so we have ammo for all three.
+
+
+3-BET PLAN (pre / during / after)
+---------------------------------
+BET 1 — PRE-GAME (~10 min before 22:00 UTC):
+  - Colony runs consensus on Brazil/Morocco (its home match) -> prob per outcome.
+  - edge = colony_prob - market_price; bet the outcome with the largest positive
+    edge above threshold, else skip. ~$2.
+BET 2 — DURING (~halftime):
+  - Re-run colony with in-play state -> trade the gap vs the live price.
+BET 3 — AFTER/LATE:
+  - Opportunistic close-out / privileged-info bet near full time.
+
+EXECUTION: colony emits {outcome, $amount} -> we map to the market id above ->
+pg.py buy ... --confirm. Claude fires on explicit "go" (or the infra does).
+
+
+LESSONS FROM QATAR-SWITZERLAND (apply here)
+-------------------------------------------
+1. SPEED is the bottleneck, not the trade path. The draw arb (1-1) was a ~+$55
+   counterfactual we missed because the market repriced before we acted. For the
+   late/arb bet we need a live-score read FASTER than the market reprice.
+   (See simulatedtransactions.json.)
+2. PRICE OFF THE LIVE SOURCE (PolyGun/Polymarket), not ClickHouse — CH's
+   polymarket_markets_all batch lags the live game by minutes.
+3. CHECK THE OUTCOME MARKET DIRECTLY before betting: a market quoting ~100c/0.1c
+   (or all outcomes near 0) = resolved/closing book -> do NOT market-buy into it.
+4. WINNER MARKET ONLY is executable here; O/U is discovery-only.
+5. Our reads have been good (Switzerland win pre-game = in profit; under-2.5 +
+   draw both correct) — keep trusting the colony, fix speed + venue.
+
+CONSENSUS METHODOLOGY (Bet 1)
+-----------------------------
+The pre-game pick was a CONSENSUS of 4 humans role-playing as the ants (a stand-in
+for the colony swarm while the live colony output isn't wired in). They predicted
+the outcome; consensus = BRAZIL.
+  Source / record of the 4-user consensus:
+  https://chatgpt.com/share/6a2dd1f5-8ca8-83e8-b151-47dbf87911e9
+
+
+EXECUTION LOG
+-------------
+[DONE] Bet 1 (PRE-GAME): consensus pick = BRAZIL. $2 on Brazil (market 1897049)
+       via pg.py buy --confirm. Filled 3.389829 shares @ 0.59 (paid 2.044579 pUSD
+       incl. ~0.04458 fee). tx 0xc3878c734e43b9e6fbc6b08bab337a06d1483669f44a45f97e20e6beb12c5cd0.
+       Recorded as trade #4 in predictions.json. Confirmed visible in PolyGun UI.
+[TODO] Bet 2 (halftime): ____
+[TODO] Bet 3 (late):     ____
+(Each fill -> record in predictions.json via polygun/record_trade.py.)
+
+NOTE — NEG-RISK MARKET MECHANICS / LEDGER FIX
+  Brazil/Morocco/Draw is a NEG-RISK (multi-outcome) market. Its tx has split/merge
+  token flows, so record_trade.py's first decode mis-summed pUSD and logged
+  avg_price=1.0. Fixed: the decoder now counts only pUSD LEAVING our wallet
+  (sender = our address), and predictions.json trade #4 was corrected to the real
+  values (avg 0.59, total 2.044579 pUSD). Binary markets (France winner, O/U) were
+  unaffected. Always sanity-check avg_price vs the PolyGun "Average Price" line.
+
+SEE ALSO
+  notes/2026-06-13-3pm-bet-plan.txt (the Qatar-Switzerland run),
+  notes/2026-06-13-qatar-switzerland-game.txt, simulatedtransactions.json,
+  notes/2026-06-13-polygun.txt, predictions.json.
+================================================================================
