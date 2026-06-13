@@ -35,6 +35,28 @@ PROVEN: UNLINK PRIVATE TRANSFER FUNDED BY THE TREASURY (2026-06-13)
   Script: unlink/deposit-and-transfer.mjs (viem walletClient over Arc RPC + evm.fromViem,
   then depositWithApproval + transfer). Details in notes/2026-06-13-unlink-exploration.txt.
 
+BALANCE LEDGER (as of 2026-06-13, after the Dynamic+Unlink route + sweep)
+  Start: 20.000 USDC
+  Out:  -1.000  -> Dynamic wallet #1 0x0782...A255 (native/ERC-20 unification test)
+        -3.000  -> Dynamic wallet B  0xDF53...E984 (combined A->B->C->D route funding)
+        -~0.002 gas (Arc gas paid in USDC; negligible)
+  In:   +2.000  <- swept from Unlink account C (withdraw -> treasury)
+        +2.000  <- swept from Unlink account D (withdraw -> treasury)
+  ==> Treasury now: ~17.998 USDC (on-chain: 17998044 @ 6dp). Healthy.
+
+  ~2 USDC PARKED (deliberately left, not worth recovering vs ~18 in treasury):
+    0x0782...A255  1.000 USDC — a PREGENERATED Dynamic wallet (REST waas/create). Dynamic holds
+                   both key shares, so spending it requires the DELEGATION flow first.
+    0xDF53...E984  ~0.999 USDC — SDK-created route wallet B. We CAN sign for SDK-created wallets,
+                   but combined-route.mjs makes B fresh each run and does NOT persist its
+                   walletMetadata + externalServerKeyShares, so there's no saved handle to reload it.
+
+  LESSON FOR WALLET DESIGN: if SDK-created Dynamic (MPC) wallets are used as durable ant wallets,
+  PERSIST walletMetadata + externalServerKeyShares (encrypted) at creation — else funds left in
+  them are stranded. Pregenerated wallets need delegation set up before they can spend at all.
+  Sweep mechanism that worked: Unlink withdraw({recipientEvmAddress, token, amount}) -> treasury
+  (unlink/sweep-to-treasury.mjs); no EVM signer needed (Unlink relays the private->public exit).
+
 USAGE SNIPPETS
   Check treasury balances:
     cast balance 0x1be3F1edA4C654BdF3bDcF973EF861346EA52D8F --rpc-url https://rpc.testnet.arc.network
