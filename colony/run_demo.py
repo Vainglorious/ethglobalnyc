@@ -104,6 +104,12 @@ def main() -> None:
         f"shared={result.summary['shared_findings']} "
         f"private={result.summary['private_findings']}"
     )
+    print(
+        "Knowledge views: "
+        f"public={result.summary['public_views']} "
+        f"shared={result.summary['shared_views']} "
+        f"private={result.summary['private_views']}"
+    )
     print(f"Market home probability: {result.summary['market_home_probability']:.1%}")
     print(f"Debate home probability: {result.summary['debate_home_probability']:.1%}")
     print(
@@ -117,7 +123,7 @@ def main() -> None:
     print("\nDebate feed:")
     for claim in result.claims:
         tags = ", ".join(claim.evidence_tags) if claim.evidence_tags else "no dominant source"
-        print(f"- [{claim.model} | {claim.claim_type} | {tags}] {claim.message}")
+        print(f"- [{claim.model} | {claim.access_tier}/{claim.visible_findings} | {claim.claim_type} | {tags}] {claim.message}")
 
     if args.show_roster:
         print("\nPublic roster:")

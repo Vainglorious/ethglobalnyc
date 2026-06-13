@@ -1,4 +1,4 @@
-"""Lightweight World Cup graph for run memory."""
+"""Lightweight match-round subgraph for run memory."""
 
 from __future__ import annotations
 

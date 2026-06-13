@@ -53,6 +53,7 @@ def write_compact_run_artifacts(
     _write_debate(path / "debate.md", result)
     _write_forecasts(path / "forecasts.csv", result)
     _write_findings(path / "findings.json", result)
+    _write_knowledge_views(path / "knowledge_views.json", result)
     _write_world_graph(path / "world_graph.json", result)
     _write_compact_events(path / "events.compact.jsonl", result)
     if debug:
@@ -77,6 +78,7 @@ def _write_summary(path: Path, match: MatchContext, result: RoundResult) -> None
         f"- Predictors: {summary['population']}",
         f"- Debaters: {summary['speaker_slots']}",
         f"- Findings: {summary['findings']} public={summary['public_findings']} shared={summary['shared_findings']} private={summary['private_findings']}",
+        f"- Knowledge views: public={summary['public_views']} shared={summary['shared_views']} private={summary['private_views']}",
         "",
         "## Betting",
         "",
@@ -90,7 +92,8 @@ def _write_summary(path: Path, match: MatchContext, result: RoundResult) -> None
         "- `debate.md`: public debater claims.",
         "- `forecasts.csv`: final forecast and bet/pass decision for every predictor.",
         "- `findings.json`: normalized findings used by this run.",
-        "- `world_graph.json`: lightweight graph memory for this run.",
+        "- `knowledge_views.json`: filtered predictor views derived from the full graph.",
+        "- `world_graph.json`: lightweight round subgraph for this selected match.",
         "- `events.compact.jsonl`: compact machine-readable event stream.",
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -106,6 +109,7 @@ def _write_debate(path: Path, result: RoundResult) -> None:
                 "",
                 f"- Model: `{claim.model}`",
                 f"- Persona: {claim.persona}",
+                f"- Knowledge access: {claim.access_tier} ({claim.visible_findings} findings)",
                 f"- Claim type: {claim.claim_type}",
                 f"- Selection reason: {claim.selection_reason}",
                 f"- Evidence tags: {tags}",
@@ -125,6 +129,8 @@ def _write_forecasts(path: Path, result: RoundResult) -> None:
             handle,
             fieldnames=[
                 "agent_id",
+                "access_tier",
+                "visible_findings",
                 "home_probability",
                 "market_edge",
                 "edge_threshold",
@@ -145,6 +151,11 @@ def _write_findings(path: Path, result: RoundResult) -> None:
     path.write_text(json.dumps(findings, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _write_knowledge_views(path: Path, result: RoundResult) -> None:
+    views = [view.to_dict() for view in result.knowledge_views]
+    path.write_text(json.dumps(views, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def _write_world_graph(path: Path, result: RoundResult) -> None:
     graph = result.world_graph.to_dict()
     path.write_text(json.dumps(graph, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -153,6 +164,21 @@ def _write_world_graph(path: Path, result: RoundResult) -> None:
 def _write_compact_events(path: Path, result: RoundResult) -> None:
     events = [{"event_type": "round_summary", **result.summary}]
     events.extend({"event_type": "finding", **finding.to_dict()} for finding in result.findings)
+    events.extend(
+        {
+            "event_type": "knowledge_view",
+            "agent_id": view.agent_id,
+            "access_tier": view.access_tier,
+            "visible_finding_ids": [finding.finding_id for finding in view.visible_findings],
+            "source_probabilities": {
+                "market": view.market_home_probability,
+                "stats": view.stats_home_signal,
+                "odds": view.odds_home_signal,
+                "news": view.news_home_signal,
+            },
+        }
+        for view in result.knowledge_views
+    )
     events.append(
         {
             "event_type": "world_graph_summary",
@@ -201,8 +227,17 @@ def _write_debug_report(path: Path, match: MatchContext, result: RoundResult) ->
                 "",
             ]
         )
+        if finding.evidence_claims:
+            lines.append("Evidence claims:")
+            for claim in finding.evidence_claims[:8]:
+                claim_text = claim.get("claim", "")
+                claim_type = claim.get("claim_type", "claim")
+                subject = claim.get("subject", "unknown")
+                source = claim.get("source_title") or claim.get("source_url") or "source"
+                lines.append(f"- `{claim_type}` {subject}: {claim_text} ({source})")
+            lines.append("")
 
-    lines.extend(["## World Graph", ""])
+    lines.extend(["## Round Subgraph", ""])
     lines.extend(
         [
             f"- Graph id: {result.world_graph.graph_id}",
@@ -212,18 +247,29 @@ def _write_debug_report(path: Path, match: MatchContext, result: RoundResult) ->
         ]
     )
 
+    lines.extend(["## Knowledge Views", ""])
+    for tier in ("public", "shared", "private"):
+        tier_views = [view for view in result.knowledge_views if view.access_tier == tier]
+        if not tier_views:
+            continue
+        avg_findings = sum(len(view.visible_findings) for view in tier_views) / len(tier_views)
+        lines.append(f"- {tier}: predictors={len(tier_views)}, avg_visible_findings={avg_findings:.1f}")
+    lines.append("")
+
     lines.extend(["## Debaters", ""])
     for claim in result.claims:
         lines.append(
             f"- {claim.speaker_name}: {claim.persona}, {claim.model}, "
-            f"type={claim.claim_type}, p={_pct(claim.stated_home_probability)}, "
+            f"access={claim.access_tier}/{claim.visible_findings}, type={claim.claim_type}, "
+            f"p={_pct(claim.stated_home_probability)}, "
             f"confidence={claim.confidence:.3f}, reason={claim.selection_reason}"
         )
 
     lines.extend(["", "## Top Final Edges", ""])
     for forecast in forecasts_by_edge[:10]:
         lines.append(
-            f"- {forecast.agent_id}: side={forecast.side}, p={_pct(forecast.home_probability)}, "
+            f"- {forecast.agent_id}: access={forecast.access_tier}/{forecast.visible_findings}, "
+            f"side={forecast.side}, p={_pct(forecast.home_probability)}, "
             f"market_edge={_pct(forecast.market_edge)}, threshold={_pct(forecast.edge_threshold)}, "
             f"stake={forecast.stake}, reason={forecast.decision_reason}"
         )

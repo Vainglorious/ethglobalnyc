@@ -27,6 +27,16 @@ For Colony, the equivalent first loop is:
 match context -> predictor genomes -> debate claims -> herd-adjusted forecasts -> sealed stakes
 ```
 
+## Install
+
+From the workspace root:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
+The core harness uses the Python standard library. The requirements file adds CAMEL and `ddgs` for native CAMEL research scouts and web search.
+
 ## Run
 
 From the workspace root:
@@ -61,6 +71,93 @@ Disable automatic compact run logs:
 python3 colony/run_demo.py --no-run-log
 ```
 
+## Build The World Cup KG
+
+Build the tournament-level knowledge graph from OpenFootball:
+
+```bash
+python3 colony/build_kg.py --force-refresh
+```
+
+Highlight specific teams in the readable summary:
+
+```bash
+python3 colony/build_kg.py \
+  --team Brazil --team Morocco \
+  --team Scotland --team Haiti \
+  --team Qatar --team Switzerland
+```
+
+Outputs are written under `colony/data/`:
+
+- `openfootball/worldcup_2026.json` - cached source schedule.
+- `world_cup_kg.json` - tournament graph JSON.
+- `world_cup_kg.summary.md` - readable graph summary and focused matches.
+
+`colony/data/` is ignored by git because future scouts may store fetched or premium data there.
+
+## Run One KG Match Without X
+
+Once the World Cup KG exists, run one match from the graph:
+
+```bash
+python3 colony/run_match.py --match "Brazil vs Morocco" --agents 40 --speakers 6 --seed 12 --debug
+```
+
+This path uses tournament metadata from the KG and deterministic scout placeholders for market, team-form, odds, news, lineup, and weather. X/social scouts are intentionally disabled here so we can test the core predictor/debater loop before adding noisy or paid social data.
+
+To fetch lightweight public data instead of using synthetic scout placeholders:
+
+```bash
+python3 colony/run_match.py \
+  --match "Brazil vs Morocco" \
+  --data-mode public \
+  --refresh-data \
+  --agents 20 \
+  --speakers 5 \
+  --seed 12 \
+  --debug
+```
+
+The public-data path currently fetches:
+
+- Wikipedia page summaries for both national teams.
+- Google News RSS results for the match query.
+- Google News RSS recent-result headlines for each national team.
+- Google News RSS squad, player, and injury availability headlines.
+
+It does not use X/social unless you explicitly enable the X scout. It also does not claim to have bookmaker odds yet: the odds finding is logged as a low-confidence `odds_unavailable_scout` until a real odds provider is connected.
+
+Add the optional deeper research scout:
+
+```bash
+python3 colony/run_match.py \
+  --match "Brazil vs Morocco" \
+  --data-mode public \
+  --include-camel \
+  --agents 20 \
+  --speakers 5 \
+  --seed 12 \
+  --debug
+```
+
+`--include-camel` writes a `camel_research_scout` finding. By default it uses focused web/news research queries. If `camel-ai` is installed and `COLONY_CAMEL_USE_NATIVE=1`, it attempts native CAMEL `ChatAgent` + `SearchToolkit().search_duckduckgo` using the `COLONY_CAMEL_*` model settings from `colony/.env`; if native CAMEL fails or returns no usable items, it falls back to the focused web/news path.
+
+Add the optional X/social scout:
+
+```bash
+python3 colony/run_match.py \
+  --match "Brazil vs Morocco" \
+  --data-mode public \
+  --include-x \
+  --agents 20 \
+  --speakers 5 \
+  --seed 12 \
+  --debug
+```
+
+The X scout is isolated as `x_availability_scout` and is `shared` access by default. To wire ScrapeCreators or another X provider, set `SCRAPECREATORS_API_KEY` and `SCRAPECREATORS_X_SEARCH_URL` in `colony/.env`. The URL may either contain `{query}` for a templated GET request, or accept POST JSON shaped as `{"query": "..."}`.
+
 ## Run Artifacts
 
 Default logs are intentionally compact. They are designed for debugging and analysis without saving raw LLM prompts, raw provider responses, or secret-bearing payloads.
@@ -71,7 +168,8 @@ Each automatic run directory contains:
 - `debate.md` - public debater claims.
 - `forecasts.csv` - final forecast and bet/pass decision for every predictor.
 - `findings.json` - normalized findings used by the run.
-- `world_graph.json` - lightweight graph memory for teams, match, findings, predictions, and claims.
+- `knowledge_views.json` - filtered predictor views derived from the full graph.
+- `world_graph.json` - lightweight round subgraph for the selected match, findings, predictions, and claims.
 - `events.compact.jsonl` - compact event stream with summary, findings, claims, and forecasts.
 - `debug.md` - optional, written only with `--debug`.
 
@@ -126,8 +224,12 @@ If you are using a Token Plan quota, put the Subscription Key in `COLONY_LLM_API
 ## Files
 
 - `run_demo.py` - CLI entrypoint.
+- `run_match.py` - one-match runner from the World Cup KG, with X/social scouts disabled.
+- `build_kg.py` - World Cup tournament KG builder.
 - `colony_harness/genes.py` - genome definitions and random generation.
 - `colony_harness/scouts.py` - mock scout findings until real datasources are connected.
+- `colony_harness/knowledge.py` - access policy and per-predictor filtered knowledge views.
+- `colony_harness/tournament_graph.py` - OpenFootball schedule loader and tournament graph builder.
 - `colony_harness/agent.py` - predictor behavior, forecasting, debating, listening.
 - `colony_harness/debate.py` - bounded debate feed.
 - `colony_harness/harness.py` - orchestration.
@@ -160,7 +262,13 @@ The harness now represents match inputs as `Finding` objects. A finding is a com
 - shared social read;
 - private weather read.
 
-Only stats, odds, news, market, and debate currently affect predictor probabilities. The shared/private findings are logged and added to the world graph so we can design paid access and scout economics next without pretending that policy already exists.
+Findings are written into the full graph, but predictors do not automatically see all findings. The harness builds a filtered `KnowledgeView` for every predictor:
+
+- `public`: sees public findings;
+- `shared`: sees public and shared findings;
+- `private`: sees public, shared, and private findings.
+
+The current access policy is still local and deterministic: a predictor's `query_budget` decides whether it receives public, shared, or private access. Later this can be replaced with x402 payments, Worldcoin privilege, or real data-purchase events.
 
 This gives us the shape needed for future real datasources:
 
@@ -183,9 +291,23 @@ Each finding has:
 - `citations`;
 - `summary`.
 
-### World Graph
+### Tournament KG And Round Subgraph
 
-Each run now writes a lightweight `world_graph.json`. This is not a full MiroFish/Zep graph yet. It is a local memory layer for prediction:
+The target architecture is a World Cup-level knowledge graph, not a graph for only one match.
+
+```text
+World Cup KG
+  -> tournament
+  -> groups
+  -> teams
+  -> venues
+  -> matches
+  -> match-specific findings
+  -> predictions and debate claims per match
+  -> persistent predictor history
+```
+
+Each current run writes a lightweight `world_graph.json`. Today this file is a round subgraph for the selected match. It is the first local version of what will later be extracted from the larger World Cup KG:
 
 - `team` entities;
 - `match` entity;
@@ -201,6 +323,20 @@ Relations include:
 - predictor `made_prediction`;
 - predictor `published_claim`;
 - claim `concerns` match.
+
+### Knowledge Views
+
+The tournament graph can store everything the system knows. A round extracts a match subgraph, then forecasting and debating use a filtered `KnowledgeView` instead of the raw full graph.
+
+```text
+World Cup KG
+  -> selected match subgraph
+  -> access policy
+  -> predictor-specific KnowledgeView
+  -> forecast / claim
+```
+
+This is the first version of the premium data layer. Shared findings can alter the source probabilities for predictors with enough query budget; private findings are visible only to high-budget predictors. Each forecast and debate claim records its `access_tier` and number of visible findings.
 
 ### Genome
 

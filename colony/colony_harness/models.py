@@ -7,8 +7,20 @@ from typing import Literal
 
 Side = Literal["home", "away", "pass"]
 AccessLevel = Literal["public", "shared", "private"]
+AccessTier = Literal["public", "shared", "private"]
 SourceType = Literal["market", "stats", "odds", "news", "lineup", "social", "weather", "retrieval", "other"]
-EntityType = Literal["team", "match", "finding", "predictor", "debate_claim", "prediction"]
+EntityType = Literal[
+    "tournament",
+    "group",
+    "stage",
+    "venue",
+    "team",
+    "match",
+    "finding",
+    "predictor",
+    "debate_claim",
+    "prediction",
+]
 
 
 @dataclass(frozen=True)
@@ -24,6 +36,7 @@ class Finding:
     cost: float
     citations: list[str] = field(default_factory=list)
     summary: str = ""
+    evidence_claims: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -105,12 +118,51 @@ class MatchContext:
 
 
 @dataclass(frozen=True)
+class KnowledgeView:
+    agent_id: str
+    access_tier: AccessTier
+    visible_findings: list[Finding]
+    market_home_probability: float
+    stats_home_signal: float
+    odds_home_signal: float
+    news_home_signal: float
+
+    def to_match_context(self, match: MatchContext) -> MatchContext:
+        return MatchContext(
+            round_id=match.round_id,
+            home_team=match.home_team,
+            away_team=match.away_team,
+            market_home_probability=self.market_home_probability,
+            stats_home_signal=self.stats_home_signal,
+            odds_home_signal=self.odds_home_signal,
+            news_home_signal=self.news_home_signal,
+            findings=self.visible_findings,
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "agent_id": self.agent_id,
+            "access_tier": self.access_tier,
+            "visible_findings": len(self.visible_findings),
+            "visible_finding_ids": [finding.finding_id for finding in self.visible_findings],
+            "source_probabilities": {
+                "market": self.market_home_probability,
+                "stats": self.stats_home_signal,
+                "odds": self.odds_home_signal,
+                "news": self.news_home_signal,
+            },
+        }
+
+
+@dataclass(frozen=True)
 class DebateClaim:
     round_id: str
     speaker_id: str
     speaker_name: str
     model: str
     persona: str
+    access_tier: AccessTier
+    visible_findings: int
     claim_type: str
     selection_reason: str
     stated_home_probability: float
@@ -126,6 +178,8 @@ class DebateClaim:
 @dataclass(frozen=True)
 class Forecast:
     agent_id: str
+    access_tier: AccessTier
+    visible_findings: int
     home_probability: float
     market_edge: float
     edge_threshold: float
@@ -157,6 +211,7 @@ class RoundResult:
     forecasts: list[Forecast]
     commitments: list[BetCommitment]
     findings: list[Finding]
+    knowledge_views: list[KnowledgeView]
     world_graph: WorldGraph
     summary: dict
 
@@ -164,6 +219,7 @@ class RoundResult:
         return {
             "round_id": self.round_id,
             "findings": [finding.to_dict() for finding in self.findings],
+            "knowledge_views": [view.to_dict() for view in self.knowledge_views],
             "world_graph": self.world_graph.to_dict(),
             "claims": [claim.to_dict() for claim in self.claims],
             "forecasts": [forecast.to_dict() for forecast in self.forecasts],

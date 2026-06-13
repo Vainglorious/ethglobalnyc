@@ -8,7 +8,7 @@ import secrets
 from dataclasses import dataclass
 
 from .genes import Genome
-from .models import BetCommitment, DebateClaim, Forecast, MatchContext, Side
+from .models import AccessTier, BetCommitment, DebateClaim, Forecast, MatchContext, Side
 from .voice import TemplateVoiceModel, VoiceModel
 
 
@@ -112,6 +112,8 @@ class AntAgent:
         rng: random.Random,
         voice_model: VoiceModel | None = None,
         selection_reason: str = "",
+        access_tier: AccessTier = "public",
+        visible_findings: int = 0,
     ) -> DebateClaim:
         probability = self.private_baseline_probability(match)
         edge = probability - match.market_home_probability
@@ -150,6 +152,8 @@ class AntAgent:
             speaker_name=self.name,
             model=self.genome.model,
             persona=self.genome.persona,
+            access_tier=access_tier,
+            visible_findings=visible_findings,
             claim_type=_claim_type_from_genome(self.genome),
             selection_reason=selection_reason,
             stated_home_probability=round(probability, 4),
@@ -159,7 +163,13 @@ class AntAgent:
             evidence_tags=tags,
         )
 
-    def forecast(self, match: MatchContext, debate_home_probability: float | None) -> Forecast:
+    def forecast(
+        self,
+        match: MatchContext,
+        debate_home_probability: float | None,
+        access_tier: AccessTier = "public",
+        visible_findings: int = 0,
+    ) -> Forecast:
         baseline_probability = self.private_baseline_probability(match)
         probability = self.listen(match, debate_home_probability)
         home_edge = probability - match.market_home_probability
@@ -192,6 +202,8 @@ class AntAgent:
         stake = 0.0 if side == "pass" else round(self.bankroll * self.genome.risk_appetite, 4)
         return Forecast(
             agent_id=self.agent_id,
+            access_tier=access_tier,
+            visible_findings=visible_findings,
             home_probability=round(probability, 4),
             market_edge=round(home_edge, 4),
             edge_threshold=self.genome.edge_threshold,

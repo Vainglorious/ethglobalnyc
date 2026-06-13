@@ -9,6 +9,7 @@ from pathlib import Path
 from .agent import AntAgent
 from .debate import DebateFeed
 from .genes import random_genome
+from .knowledge import build_knowledge_views
 from .models import MatchContext, RoundResult
 from .voice import TemplateVoiceModel, VoiceModel
 from .world_graph import build_world_graph
@@ -74,12 +75,35 @@ class ColonyHarness:
 
     def run_round(self, match: MatchContext) -> RoundResult:
         feed = DebateFeed()
+        knowledge_views_by_agent = build_knowledge_views(match, self.agents)
 
         for speaker, selection_reason in self.select_debaters():
-            feed.append(speaker.speak(match, self.rng, self.voice_model, selection_reason))
+            view = knowledge_views_by_agent[speaker.agent_id]
+            visible_match = view.to_match_context(match)
+            feed.append(
+                speaker.speak(
+                    visible_match,
+                    self.rng,
+                    self.voice_model,
+                    selection_reason,
+                    view.access_tier,
+                    len(view.visible_findings),
+                )
+            )
 
         debate_signal = feed.consensus_home_probability()
-        forecasts = [agent.forecast(match, debate_signal) for agent in self.agents]
+        forecasts = []
+        for agent in self.agents:
+            view = knowledge_views_by_agent[agent.agent_id]
+            visible_match = view.to_match_context(match)
+            forecasts.append(
+                agent.forecast(
+                    visible_match,
+                    debate_signal,
+                    view.access_tier,
+                    len(view.visible_findings),
+                )
+            )
         commitments = [
             agent.commit_bet(forecast, match.round_id)
             for agent, forecast in zip(self.agents, forecasts, strict=True)
@@ -99,6 +123,9 @@ class ColonyHarness:
             "public_findings": sum(1 for finding in match.findings if finding.access_level == "public"),
             "shared_findings": sum(1 for finding in match.findings if finding.access_level == "shared"),
             "private_findings": sum(1 for finding in match.findings if finding.access_level == "private"),
+            "public_views": sum(1 for view in knowledge_views_by_agent.values() if view.access_tier == "public"),
+            "shared_views": sum(1 for view in knowledge_views_by_agent.values() if view.access_tier == "shared"),
+            "private_views": sum(1 for view in knowledge_views_by_agent.values() if view.access_tier == "private"),
             "home_bets": home_bets,
             "away_bets": away_bets,
             "passes": passes,
@@ -112,6 +139,7 @@ class ColonyHarness:
             forecasts=forecasts,
             commitments=commitments,
             findings=match.findings,
+            knowledge_views=list(knowledge_views_by_agent.values()),
             world_graph=world_graph,
             summary=summary,
         )
@@ -122,6 +150,7 @@ class ColonyHarness:
         events = []
         events.append({"event_type": "round_summary", **result.summary})
         events.extend({"event_type": "finding", **finding.to_dict()} for finding in result.findings)
+        events.extend({"event_type": "knowledge_view", **view.to_dict()} for view in result.knowledge_views)
         events.append({"event_type": "world_graph", **result.world_graph.to_dict()})
         events.extend({"event_type": "debate_claim", **claim.to_dict()} for claim in result.claims)
         events.extend({"event_type": "forecast", **forecast.to_dict()} for forecast in result.forecasts)

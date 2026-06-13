@@ -2,7 +2,25 @@
 
 from __future__ import annotations
 
-from .models import Finding
+from .models import Finding, MatchContext
+
+
+TEAM_STRENGTHS = {
+    "Argentina": 0.78,
+    "Brazil": 0.77,
+    "France": 0.76,
+    "England": 0.74,
+    "Spain": 0.74,
+    "Portugal": 0.72,
+    "Netherlands": 0.71,
+    "Germany": 0.7,
+    "Morocco": 0.66,
+    "Switzerland": 0.64,
+    "Scotland": 0.58,
+    "Qatar": 0.5,
+    "Haiti": 0.46,
+    "Senegal": 0.63,
+}
 
 
 def mock_findings_from_config(data: dict) -> list[Finding]:
@@ -16,11 +34,73 @@ def mock_findings_from_config(data: dict) -> list[Finding]:
     odds = float(match["odds_home_signal"])
     news = float(match["news_home_signal"])
 
-    lineup = _clamp((stats + news) / 2.0 - 0.015)
-    social = _clamp((market + news) / 2.0 + 0.01)
-    weather = _clamp(market - 0.005)
+    return mock_findings_for_match(
+        round_id=round_id,
+        home_team=home_team,
+        away_team=away_team,
+        market=market,
+        stats=stats,
+        odds=odds,
+        news=news,
+        include_social=True,
+    )
 
-    return [
+
+def mock_match_context_from_tournament_match(match_entity: dict) -> MatchContext:
+    """Create a match context from a tournament KG match entity with no X/social findings."""
+    attrs = match_entity["attributes"]
+    home_team = str(attrs["team1"])
+    away_team = str(attrs["team2"])
+    market, stats, odds, news = synthetic_probabilities(home_team, away_team)
+    round_id = str(match_entity["entity_id"]).replace("match:", "round:")
+    return MatchContext(
+        round_id=round_id,
+        home_team=home_team,
+        away_team=away_team,
+        market_home_probability=market,
+        stats_home_signal=stats,
+        odds_home_signal=odds,
+        news_home_signal=news,
+        findings=mock_findings_for_match(
+            round_id=round_id,
+            home_team=home_team,
+            away_team=away_team,
+            market=market,
+            stats=stats,
+            odds=odds,
+            news=news,
+            include_social=False,
+        ),
+    )
+
+
+def synthetic_probabilities(home_team: str, away_team: str) -> tuple[float, float, float, float]:
+    """Derive deterministic mock market/stats/odds/news probabilities from team ratings."""
+    home_strength = _team_strength(home_team)
+    away_strength = _team_strength(away_team)
+    edge = (home_strength - away_strength) * 0.42
+    market = _clamp(0.5 + edge * 0.9)
+    stats = _clamp(0.5 + edge * 1.12)
+    odds = _clamp((market * 0.75) + (0.5 * 0.25))
+    news = _clamp(0.5 + edge * 0.72)
+    return tuple(round(value, 4) for value in (market, stats, odds, news))  # type: ignore[return-value]
+
+
+def mock_findings_for_match(
+    *,
+    round_id: str,
+    home_team: str,
+    away_team: str,
+    market: float,
+    stats: float,
+    odds: float,
+    news: float,
+    include_social: bool = True,
+) -> list[Finding]:
+    """Build deterministic match findings, optionally excluding social/X-like findings."""
+    lineup = _clamp((stats + news) / 2.0 - 0.015)
+    weather = _clamp(market - 0.005)
+    findings = [
         _finding(
             round_id=round_id,
             key="market",
@@ -37,18 +117,18 @@ def mock_findings_from_config(data: dict) -> list[Finding]:
         _finding(
             round_id=round_id,
             key="stats",
-            scout_name="ratings_scout",
+            scout_name="team_form_scout",
             access_level="public",
             source_type="stats",
-            finding_name="stats_home_signal",
+            finding_name="team_form_rating_read",
             home_probability=stats,
             market=market,
-            confidence=0.65,
+            confidence=0.68,
             summary=(
-                "Synthetic ratings scout combining team strength, recent form, and venue adjustment. "
-                "This is a placeholder for a real stats datasource."
+                f"Synthetic team-form scout comparing {home_team} and {away_team}. "
+                "No web or X/social data is used in this test."
             ),
-            citations=["mock://stats/team-strength-index", "mock://stats/recent-form"],
+            citations=[f"mock://ratings/{_slug(home_team)}", f"mock://ratings/{_slug(away_team)}"],
         ),
         _finding(
             round_id=round_id,
@@ -66,15 +146,18 @@ def mock_findings_from_config(data: dict) -> list[Finding]:
         _finding(
             round_id=round_id,
             key="news",
-            scout_name="news_scout",
+            scout_name="team_news_scout",
             access_level="public",
             source_type="news",
-            finding_name="news_home_signal",
+            finding_name="team_news_read",
             home_probability=news,
             market=market,
             confidence=0.55,
-            summary="Synthetic news scout standing in for CAMEL retrieval or ScrapeCreators summaries.",
-            citations=["mock://news/team-notes", "mock://news/press-roundup"],
+            summary=(
+                "Synthetic team-news scout placeholder for future ScrapeCreators web/news. "
+                "X/social is intentionally excluded from this run."
+            ),
+            citations=[f"mock://news/{_slug(home_team)}", f"mock://news/{_slug(away_team)}"],
         ),
         _finding(
             round_id=round_id,
@@ -86,21 +169,8 @@ def mock_findings_from_config(data: dict) -> list[Finding]:
             home_probability=lineup,
             market=market,
             confidence=0.5,
-            summary="Shared mock lineup read. It is logged but not yet access-controlled by predictor budgets.",
+            summary="Shared mock lineup read. This is the paid/premium placeholder, not an X/social scrape.",
             citations=["mock://lineup/projected-xi"],
-        ),
-        _finding(
-            round_id=round_id,
-            key="social",
-            scout_name="social_scout",
-            access_level="shared",
-            source_type="social",
-            finding_name="public_sentiment_read",
-            home_probability=social,
-            market=market,
-            confidence=0.42,
-            summary="Shared mock social sentiment read. Useful later for debate pressure and noise testing.",
-            citations=["mock://social/reddit-twitter-sample"],
         ),
         _finding(
             round_id=round_id,
@@ -113,10 +183,37 @@ def mock_findings_from_config(data: dict) -> list[Finding]:
             market=market,
             confidence=0.35,
             cost=0.02,
-            summary="Private mock weather read. This is a placeholder for paid scout data later.",
+            summary="Private mock weather read. This is a placeholder for a venue/date weather API later.",
             citations=["mock://weather/matchday-forecast"],
         ),
     ]
+
+    if include_social:
+        social = _clamp((market + news) / 2.0 + 0.01)
+        findings.insert(
+            -1,
+            _finding(
+                round_id=round_id,
+                key="social",
+                scout_name="social_scout",
+                access_level="shared",
+                source_type="social",
+                finding_name="public_sentiment_read",
+                home_probability=social,
+                market=market,
+                confidence=0.42,
+                summary="Shared mock social sentiment read. Useful later for debate pressure and noise testing.",
+                citations=["mock://social/reddit-twitter-sample"],
+            ),
+        )
+    return findings
+
+
+def _team_strength(team: str) -> float:
+    if team in TEAM_STRENGTHS:
+        return TEAM_STRENGTHS[team]
+    checksum = sum(ord(char) for char in team)
+    return 0.48 + (checksum % 24) / 100.0
 
 
 def _finding(
@@ -151,3 +248,7 @@ def _finding(
 
 def _clamp(value: float) -> float:
     return min(max(value, 0.01), 0.99)
+
+
+def _slug(value: str) -> str:
+    return "_".join(part for part in value.lower().split() if part)

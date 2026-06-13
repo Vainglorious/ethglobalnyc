@@ -622,6 +622,225 @@
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     }
 
+    .kg-board {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.55fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .kg-main {
+      padding: 18px;
+    }
+
+    .kg-flow {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .kg-step {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 12px;
+      min-height: 112px;
+      position: relative;
+    }
+
+    .kg-step:after {
+      content: "->";
+      position: absolute;
+      right: -10px;
+      top: 44%;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .kg-step:last-child:after {
+      content: "";
+    }
+
+    .kg-step h3 {
+      color: var(--ink);
+      text-transform: none;
+      font-size: 15px;
+      margin-bottom: 7px;
+    }
+
+    .kg-step p {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .kg-layer-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .kg-visual {
+      margin: 14px 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.9), rgba(251,250,247,0.94)),
+        repeating-linear-gradient(90deg, rgba(41,93,143,0.05) 0 1px, transparent 1px 52px);
+      overflow: hidden;
+    }
+
+    .kg-visual svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      min-height: 360px;
+    }
+
+    .graph-edge {
+      fill: none;
+      stroke: #8b94a3;
+      stroke-width: 2;
+      marker-end: url(#arrowHead);
+    }
+
+    .graph-edge.soft {
+      stroke-dasharray: 6 6;
+      opacity: 0.76;
+    }
+
+    .graph-node rect,
+    .graph-node circle {
+      stroke: #c7c1b8;
+      stroke-width: 1.4;
+      filter: drop-shadow(0 8px 14px rgba(22, 24, 29, 0.09));
+    }
+
+    .graph-node text {
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      fill: var(--ink);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .graph-node .subtext {
+      fill: var(--muted);
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .node-source rect { fill: #fff; }
+    .node-scout rect { fill: var(--blue-soft); stroke: rgba(41,93,143,0.3); }
+    .node-graph circle { fill: #111820; stroke: #111820; }
+    .node-graph text { fill: #fff; }
+    .node-graph .subtext { fill: #c9d2df; }
+    .node-public rect { fill: var(--green-soft); stroke: rgba(38,122,86,0.32); }
+    .node-premium rect { fill: var(--gold-soft); stroke: rgba(139,102,31,0.32); }
+    .node-private rect { fill: var(--red-soft); stroke: rgba(154,58,50,0.32); }
+    .node-view rect { fill: #fff; }
+    .node-debate rect { fill: #f0f4f9; stroke: rgba(41,93,143,0.28); }
+
+    .graph-caption {
+      padding: 0 14px 14px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .kg-layer {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: var(--panel-2);
+      display: grid;
+      gap: 10px;
+      min-height: 230px;
+    }
+
+    .kg-layer.public { border-top: 5px solid var(--green); }
+    .kg-layer.premium { border-top: 5px solid var(--gold); }
+    .kg-layer.private { border-top: 5px solid var(--red); }
+
+    .kg-layer h2 {
+      margin: 0;
+    }
+
+    .kg-layer p {
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 14px;
+    }
+
+    .kg-items {
+      display: grid;
+      gap: 7px;
+    }
+
+    .kg-item {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      padding: 9px 10px;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+
+    .kg-item strong {
+      color: var(--ink);
+      display: block;
+      margin-bottom: 3px;
+    }
+
+    .kg-side {
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .view-stack {
+      display: grid;
+      gap: 10px;
+    }
+
+    .view-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 13px;
+      background: var(--panel);
+      display: grid;
+      gap: 8px;
+    }
+
+    .view-card h3 {
+      color: var(--ink);
+      text-transform: none;
+      margin: 0;
+      font-size: 15px;
+    }
+
+    .view-card p {
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 13px;
+    }
+
+    .policy-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .policy-list div {
+      border-left: 3px solid var(--blue);
+      padding-left: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
     .footnote {
       margin-top: 18px;
       color: var(--muted);
@@ -635,6 +854,9 @@
       .control-board,
       .compare,
       .data-grid,
+      .kg-board,
+      .kg-flow,
+      .kg-layer-grid,
       .roles-board,
       .role-flow-grid,
       .log-levels {
@@ -660,6 +882,17 @@
         content: "";
       }
 
+      .kg-step:after {
+        content: "v";
+        right: 18px;
+        top: auto;
+        bottom: -13px;
+      }
+
+      .kg-step:last-child:after {
+        content: "";
+      }
+
       ul.clean li {
         grid-template-columns: 1fr;
         gap: 4px;
@@ -673,8 +906,8 @@
       <section class="panel intro">
         <h1>Colony Harness System Map</h1>
         <p class="lead">
-          A compact visual board for the current football forecasting harness: data collection,
-          mock scouts, structured findings, genome-based predictors, debaters, consensus, bets, and readable logs.
+          A compact visual board for the current football forecasting harness: World Cup knowledge graph,
+          scout ingestion, filtered predictor views, debaters, consensus, bets, and readable logs.
         </p>
         <div class="tag-row">
           <span class="tag green">default logs stay compact</span>
@@ -689,10 +922,10 @@
         <div class="metric-grid">
           <div class="metric"><span>Predictors</span><strong>40</strong></div>
           <div class="metric"><span>Debaters</span><strong>6</strong></div>
-          <div class="metric"><span>Market</span><strong>47.0%</strong></div>
-          <div class="metric"><span>Voice model</span><strong>DeepSeek</strong></div>
+          <div class="metric"><span>KG entities</span><strong>204</strong></div>
+          <div class="metric"><span>KG matches</span><strong>104</strong></div>
         </div>
-        <div class="code">python3 colony/run_demo.py --voice-mode llm</div>
+        <div class="code">python3 colony/build_kg.py --force-refresh</div>
       </aside>
     </header>
 
@@ -700,6 +933,7 @@
       <button class="tab" aria-selected="true" data-tab="flow">Interaction Flow</button>
       <button class="tab" aria-selected="false" data-tab="genome">Genome vs CAMEL</button>
       <button class="tab" aria-selected="false" data-tab="roles">Roles</button>
+      <button class="tab" aria-selected="false" data-tab="graph">Knowledge Graph</button>
       <button class="tab" aria-selected="false" data-tab="params">Parameter Board</button>
       <button class="tab" aria-selected="false" data-tab="data">Data Sources</button>
       <button class="tab" aria-selected="false" data-tab="logs">Logs</button>
@@ -711,44 +945,44 @@
           <h2>One Round Interaction</h2>
           <div class="flow-grid">
             <div class="flow-node">
-              <h3>1. Match Context</h3>
-              <p>Load match teams, market probability, and mock scout findings.</p>
+              <h3>1. Tournament KG</h3>
+              <p>Start from the World Cup graph: tournament, groups, teams, matches, venues.</p>
+              <div class="tag-row"><span class="tag">World Cup 2026</span></div>
+            </div>
+            <div class="flow-node">
+              <h3>2. Match Subgraph</h3>
+              <p>Select one match and attach fresh findings, odds, news, lineup, and weather reads.</p>
               <div class="tag-row"><span class="tag">France</span><span class="tag">Senegal</span></div>
             </div>
             <div class="flow-node">
-              <h3>2. Spawn Predictors</h3>
+              <h3>3. Spawn Predictors</h3>
               <p>Generate many cheap predictors with private genomes and public hashes.</p>
               <div class="tag-row"><span class="tag green">N = 40</span></div>
             </div>
             <div class="flow-node">
-              <h3>3. Private Forecast</h3>
-              <p>Each genome weights stats, odds, news, and later debate. Logs include a decision reason.</p>
+              <h3>4. Private Forecast</h3>
+              <p>Each predictor sees an allowed graph view, then logs a decision reason.</p>
               <div class="tag-row"><span class="tag gold">no LLM needed</span></div>
             </div>
             <div class="flow-node">
-              <h3>4. Debater Selection</h3>
+              <h3>5. Debater Selection</h3>
               <p>Only a bounded subset joins the public debate. Logs include a selection reason.</p>
               <div class="tag-row"><span class="tag red">6 debaters</span></div>
             </div>
             <div class="flow-node">
-              <h3>5. Voice Layer</h3>
+              <h3>6. Voice Layer</h3>
               <p>OpenRouter renders short public claims. Probabilities stay deterministic.</p>
               <div class="tag-row"><span class="tag">DeepSeek V4 Flash</span></div>
             </div>
             <div class="flow-node">
-              <h3>6. Debate Finding</h3>
-              <p>Debater claims become a weighted consensus probability.</p>
+              <h3>7. Debate Finding</h3>
+              <p>Debater claims publish selected knowledge back into the public layer.</p>
               <div class="tag-row"><span class="tag green">50.7%</span></div>
             </div>
             <div class="flow-node">
-              <h3>7. Listen and Decide</h3>
+              <h3>8. Listen and Decide</h3>
               <p>All predictors update using debate weight and herd bias, then bet or pass.</p>
               <div class="tag-row"><span class="tag gold">home / away / pass</span></div>
-            </div>
-            <div class="flow-node">
-              <h3>8. Save Outputs</h3>
-              <p>Default logs stay compact. Debug and trace are opt-in.</p>
-              <div class="tag-row"><span class="tag">summary</span><span class="tag">jsonl</span></div>
             </div>
           </div>
         </article>
@@ -758,10 +992,13 @@
           <div class="code">CAMEL scouts collect data
         |
         v
-structured findings with access levels
+World Cup KG
         |
         v
-genome predictors interpret differently
+match subgraph + access zones
+        |
+        v
+filtered predictor views
         |
         v
 debate + consensus + bets</div>
@@ -878,6 +1115,204 @@ All predictors decide.</div>
           <p class="footnote">
             This keeps the debate large enough to matter but small enough to read. It also prevents every predictor from scraping or paying for the same information.
           </p>
+        </aside>
+      </div>
+    </section>
+
+    <section id="graph" class="section">
+      <div class="kg-board">
+        <article class="panel kg-main">
+          <h2>World Cup Knowledge Graph And Access Zones</h2>
+          <div class="tag-row">
+            <span class="tag green">204 entities</span>
+            <span class="tag">104 matches</span>
+            <span class="tag">48 teams</span>
+            <span class="tag gold">588 relationships</span>
+          </div>
+          <div class="kg-flow">
+            <div class="kg-step">
+              <h3>Sources</h3>
+              <p>OpenFootball, ScrapeCreators, APIs, local files, and mock data.</p>
+            </div>
+            <div class="kg-step">
+              <h3>Scouts</h3>
+              <p>Normalize raw data into cited, confidence-scored findings.</p>
+            </div>
+            <div class="kg-step">
+              <h3>Tournament KG</h3>
+              <p>Stores the full competition: groups, teams, venues, and matches.</p>
+            </div>
+            <div class="kg-step">
+              <h3>Match Subgraph</h3>
+              <p>Extracts one match and attaches round-specific findings.</p>
+            </div>
+            <div class="kg-step">
+              <h3>Filtered View</h3>
+              <p>Each predictor sees only the findings it is allowed to use.</p>
+            </div>
+            <div class="kg-step">
+              <h3>Debate Release</h3>
+              <p>Selected debaters can turn private knowledge into public pressure.</p>
+            </div>
+          </div>
+
+          <div class="kg-visual" aria-label="World Cup knowledge graph diagram showing scouts, match subgraph, access zones, filtered predictor views, and debate release">
+            <svg viewBox="0 0 920 430" role="img">
+              <defs>
+                <marker id="arrowHead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                  <path d="M 0 0 L 10 4 L 0 8 z" fill="#8b94a3"></path>
+                </marker>
+              </defs>
+
+              <path class="graph-edge" d="M 135 78 C 185 78 195 95 236 116"></path>
+              <path class="graph-edge" d="M 135 148 C 184 148 198 138 236 132"></path>
+              <path class="graph-edge" d="M 135 218 C 185 218 195 173 236 149"></path>
+              <path class="graph-edge" d="M 135 288 C 186 288 198 204 236 164"></path>
+              <path class="graph-edge" d="M 356 140 C 397 140 414 150 445 176"></path>
+
+              <path class="graph-edge" d="M 540 160 C 579 105 604 76 650 74"></path>
+              <path class="graph-edge" d="M 556 212 C 596 212 608 212 650 212"></path>
+              <path class="graph-edge" d="M 540 264 C 582 318 607 354 650 354"></path>
+
+              <path class="graph-edge" d="M 770 74 C 818 91 833 117 842 154"></path>
+              <path class="graph-edge" d="M 770 212 C 818 212 830 206 842 196"></path>
+              <path class="graph-edge" d="M 770 354 C 818 333 833 273 842 230"></path>
+              <path class="graph-edge soft" d="M 842 190 C 742 158 665 132 548 174"></path>
+
+              <g class="graph-node node-source">
+                <rect x="32" y="45" width="118" height="48" rx="8"></rect>
+                <text x="48" y="68">OpenFootball</text>
+                <text class="subtext" x="48" y="83">schedule</text>
+              </g>
+              <g class="graph-node node-source">
+                <rect x="32" y="115" width="118" height="48" rx="8"></rect>
+                <text x="48" y="138">ScrapeCreators</text>
+                <text class="subtext" x="48" y="153">news/lineups</text>
+              </g>
+              <g class="graph-node node-source">
+                <rect x="32" y="185" width="118" height="48" rx="8"></rect>
+                <text x="48" y="208">APIs</text>
+                <text class="subtext" x="48" y="223">odds/weather</text>
+              </g>
+              <g class="graph-node node-source">
+                <rect x="32" y="255" width="118" height="48" rx="8"></rect>
+                <text x="48" y="278">Local Files</text>
+                <text class="subtext" x="48" y="293">ratings/csv</text>
+              </g>
+
+              <g class="graph-node node-scout">
+                <rect x="236" y="98" width="132" height="82" rx="10"></rect>
+                <text x="265" y="128">Scouts</text>
+                <text class="subtext" x="254" y="148">normalize raw data</text>
+                <text class="subtext" x="265" y="164">into findings</text>
+              </g>
+
+              <g class="graph-node node-graph">
+                <circle cx="500" cy="214" r="76"></circle>
+                <text x="462" y="203">World Cup</text>
+                <text x="485" y="221">KG</text>
+                <text class="subtext" x="455" y="242">tournament memory</text>
+              </g>
+
+              <g class="graph-node node-public">
+                <rect x="650" y="38" width="142" height="72" rx="10"></rect>
+                <text x="682" y="67">Public</text>
+                <text class="subtext" x="671" y="86">everyone sees</text>
+              </g>
+              <g class="graph-node node-premium">
+                <rect x="650" y="176" width="142" height="72" rx="10"></rect>
+                <text x="674" y="205">Premium</text>
+                <text class="subtext" x="672" y="224">budget gated</text>
+              </g>
+              <g class="graph-node node-private">
+                <rect x="650" y="318" width="142" height="72" rx="10"></rect>
+                <text x="681" y="347">Private</text>
+                <text class="subtext" x="669" y="366">buyer scoped</text>
+              </g>
+
+              <g class="graph-node node-view">
+                <rect x="815" y="132" width="90" height="112" rx="10"></rect>
+                <text x="833" y="162">Filtered</text>
+                <text x="841" y="180">View</text>
+                <text class="subtext" x="834" y="204">per predictor</text>
+                <text class="subtext" x="830" y="220">before forecast</text>
+              </g>
+
+              <g class="graph-node node-debate">
+                <rect x="388" y="332" width="220" height="58" rx="10"></rect>
+                <text x="431" y="358">Debate Release</text>
+                <text class="subtext" x="420" y="376">selected claims become public pressure</text>
+              </g>
+
+              <path class="graph-edge soft" d="M 815 208 C 730 286 648 334 608 354"></path>
+            </svg>
+            <p class="graph-caption">
+              The World Cup KG stores the whole tournament. Each round extracts a match subgraph, enriches it with scout findings, then gives each predictor a filtered view. Debate can leak a compressed version of premium or private knowledge back into the public layer.
+            </p>
+          </div>
+
+          <div class="kg-layer-grid">
+            <article class="kg-layer public">
+              <h2>Public Zone</h2>
+              <p>Free baseline memory from the tournament KG. Every predictor sees this layer.</p>
+              <div class="kg-items">
+                <div class="kg-item"><strong>Schedule</strong>OpenFootball fixtures, teams, date, group, ground.</div>
+                <div class="kg-item"><strong>Market Baseline</strong>Current implied home probability.</div>
+                <div class="kg-item"><strong>Basic Stats</strong>Public ratings and historical form snapshots.</div>
+              </div>
+            </article>
+
+            <article class="kg-layer premium">
+              <h2>Premium Zone</h2>
+              <p>Shared paid memory. Predictors need budget, privilege, or policy access.</p>
+              <div class="kg-items">
+                <div class="kg-item"><strong>News Summary</strong>ScrapeCreators or CAMEL summary with citations.</div>
+                <div class="kg-item"><strong>Lineup Risk</strong>Availability and uncertainty close to kickoff.</div>
+                <div class="kg-item"><strong>Odds Movement</strong>Freshness-gated movement and liquidity reads.</div>
+              </div>
+            </article>
+
+            <article class="kg-layer private">
+              <h2>Private Zone</h2>
+              <p>Purchased or lineage-specific memory. The graph stores it, but most predictors cannot see it.</p>
+              <div class="kg-items">
+                <div class="kg-item"><strong>Private Scout Report</strong>One predictor buys a finding with its budget.</div>
+                <div class="kg-item"><strong>LLM Analysis</strong>Costly reasoning attached to the buyer only.</div>
+                <div class="kg-item"><strong>Later</strong>Worldcoin or lineage privilege can unlock fresher data.</div>
+              </div>
+            </article>
+          </div>
+        </article>
+
+        <aside class="panel kg-side">
+          <div class="ring">
+            <h2>Core Rule</h2>
+            <p>The tournament graph can know the whole competition. A predictor only receives the filtered match subgraph for the current round.</p>
+          </div>
+
+          <div class="view-stack">
+            <article class="view-card">
+              <h3>Predictor A</h3>
+              <p>Public schedule, market, stats, and debate. No paid findings.</p>
+              <div class="tag-row"><span class="tag green">cheap</span><span class="tag">baseline</span></div>
+            </article>
+            <article class="view-card">
+              <h3>Predictor B</h3>
+              <p>Public layer plus premium news and lineup uncertainty.</p>
+              <div class="tag-row"><span class="tag gold">paid</span><span class="tag">freshness edge</span></div>
+            </article>
+            <article class="view-card">
+              <h3>Predictor C</h3>
+              <p>Public layer plus a private LLM analysis bought with query budget.</p>
+              <div class="tag-row"><span class="tag red">private</span><span class="tag">costly</span></div>
+            </article>
+          </div>
+
+          <div class="policy-list">
+            <div>Access policy filters findings before forecasting.</div>
+            <div>Debate can reveal a compressed version of private or premium information.</div>
+            <div>Genetic selection later rewards both good prediction genes and good data-buying strategy.</div>
+          </div>
         </aside>
       </div>
     </section>
