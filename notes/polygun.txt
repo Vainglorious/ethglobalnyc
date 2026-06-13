@@ -12,6 +12,12 @@ the thing that actually places bets on Polymarket on behalf of the ants.
 
 Access was via a referral link: t.me/PolyGunSniperBot?start=ref_vainglorious
 
+WHY POLYGUN (not just convenience): Polymarket's direct CLOB API GEOBLOCKS the US
+(verified 2026-06-13: a real signed order returned HTTP 403 "Trading restricted in
+your region"). PolyGun trades custodially via its own relayer, which sidesteps the
+geoblock. So for a US user PolyGun is the PATH TO ACCESS, and its custody model is
+the price of that access. See 2026-06-13-polymarketexecution.txt for the finding.
+
 
 CUSTODY MODEL — THE KEY THING TO UNDERSTAND
 -------------------------------------------
@@ -53,13 +59,53 @@ ADDRESSES (account #1, being retired)
 
 STATUS / TODO
 -------------
-[in progress] Withdraw $15 from PolyGun account #1 back to treasury 0xcc16…31eB.
-              (watch_treasury.py is polling the treasury for the inbound.)
-[pending]     Stand up a NEW PolyGun account (the old one had issues).
+[done]        Withdrew from PolyGun account #1 back to treasury 0xcc16…31eB.
+              Confirmed on-chain: +14.00 native USDC arrived (treasury 27 -> 41).
+              NOTE: deposited $15, withdrew $14 => ~$1 still stuck in PolyGun
+              account #1 (fee or leftover). Treating that $1 as written off.
+[done]        Stood up NEW PolyGun account #2 (via in-app "migration").
+              - Display/trading address: 0xe9E32Ca24aa1eF725F650b5489281FE621363AA9
+                (empty contract on-chain — custodial, same as before).
+              - Deposit address (NEW, differs from acct #1):
+                0xee61ea7a0a96ea9ed703cbbf83e028389139aad7
+              - Funded with $15 native USDC, tx 0x898857b3f7a93ebd2984839a13debd7f7058627f9faaff82eb0510f43c403468
+                (treasury 41 -> 26 native USDC).
+              - New account's SIGNING PRIVATE KEY: not yet provided -> still need
+                it for polymarket/.env (POLYGUN_EXECUTION_PRIVATE_KEY). Old 0xD400
+                key is retired.
+              - PolyGun pUSD balance after this: ~$15 (or ~$16 if migration moved
+                the leftover $1). Confirm in PolyGun UI.
 [pending]     Record new account's signing key (-> polymarket/.env) + addresses.
-[pending]     Get ONE real trade tx hash from PolyGun -> decode it to learn the
-              actual order path (which contract touches Polymarket's CTF Exchange,
-              how the order is formatted) so we can map ant Forecast -> order.
+[done]        Decoded first real PolyGun trade (see DECODED TRADE below).
+
+
+DECODED TRADE — $2 on "France to win the World Cup" (2026-06-13)
+---------------------------------------------------------------
+tx: 0x7698fe5d3f2a56807c114a1efe047e0a5399f9bbf192d02254e7ca95882b6321  (success)
+
+How PolyGun executes (the mechanics we needed):
+  - Tx SENT BY PolyGun relayer EOA 0xb2aadacf6040f96d95df00a5b6ab4c6e2e0d01ee
+    -> PolyGun pays gas; trading is GASLESS for us.
+  - Calls PolyGun router contract 0xe2222d279d744050d28e00520010520000310f59,
+    method selector 0x3c2b4399.
+  - Settlement token = pUSD "Polymarket USD" (0xc011a7e12a19f7b1f670d46f03b03f3342e82dfb,
+    6 decimals). PolyGun's own token — deposited USDC becomes pUSD in custody.
+  - Flow inside the tx:
+      our PolyGun addr 0xe9E3…3AA9 pays 1.999999 pUSD to maker 0xb687f00464e33934f5d591f224e71c3559ecaee5
+      + 0.070320 pUSD fee to 0x115f48dc2a731aa16251c6d6e1befc42f92accc9
+      = 2.070319 pUSD total
+      and RECEIVES 12.422359 "France-YES" shares as REAL Polymarket
+      ConditionalTokens (ERC1155 at 0x4d97dcd97ec945f40cf65f87097ace5ea0476045),
+      delivered to 0xe9E3…3AA9.
+  - Implied price 0.1610 => market ~16.1% for France to win the World Cup.
+  - pUSD balance after trade: 13.846281 (account had ~15.92 = $15 + ~$0.92 that
+    DID migrate from the old account; spent ~2.07).
+
+KEY LEARNING: PolyGun is a GASLESS BROKERAGE/WRAPPER over Polymarket. We hold
+REAL Polymarket outcome tokens at our PolyGun address, but settlement is in pUSD
+via PolyGun's relayer + router. To automate: use PolyGun's bot/API, or replicate
+calls to router 0xe2222…310f59 (needs their ABI + signed order params + the
+account signing key). Positions are real and resolve on Polymarket.
 
 OPERATING RULES (learned the hard way)
   - Don't fund a new PolyGun account until the previous withdrawal is CONFIRMED

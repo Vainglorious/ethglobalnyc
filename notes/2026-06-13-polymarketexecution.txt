@@ -13,6 +13,32 @@ Two roles for this integration:
                  (an ant's Forecast -> a real on-chain settled bet).
 
 
+*** HEADLINE FINDING (2026-06-13): DIRECT CLOB IS GEOBLOCKED IN THE US ***
+------------------------------------------------------------------------
+We took the direct py-clob-client path all the way to a live order. Our code
+worked: it built + signed + POSTED a real $2 "France to win the World Cup" order.
+Polymarket rejected it:
+
+  HTTP 403 — "Trading restricted in your region, please refer to available
+  regions" (docs.polymarket.com/developers/CLOB/geoblock)
+
+=> Polymarket's CLOB GEOBLOCKS the US. We're in NYC, so direct-API trading is a
+   dead end here regardless of funds/allowances. This is a hard block at their
+   API, not a bug in our setup.
+
+CONSEQUENCE: PolyGun (custodial, trades via its own relayer) is the right path
+for a US user — it sidesteps the geoblock. The custody trade-off is the PRICE OF
+ACCESS, not just convenience. To automate PolyGun: no API exists -> Telegram
+userbot scripting or copy-trading. (Running our CLOB bot from an allowed-region
+server would technically work but is subject to Polymarket's ToS/regional rules.)
+
+Leftover from the CLOB attempt: ~5.99 USDC.e now sits in treasury 0xcc16…31eB
+(swapped from 6 native USDC; the swap + router approval succeeded on-chain). It's
+unusable for direct CLOB from here; can swap back to native USDC or hold.
+
+------------------------------------------------------------------------
+
+
 TREASURY WALLET (Polymarket bets)
 ---------------------------------
 - Address:  0xcc16bEC342794f35a32d4Ba2c76BF9D759C131eB  (plain EOA, sig type 0)
