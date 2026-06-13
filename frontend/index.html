@@ -1,18 +1,125 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Colony — Living Intelligence</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
-    />
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Di-nasty — Living AI Ant Civilization</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/dinasty/styles.css">
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div id="atmos"></div>
+<div id="crosshair"></div>
+
+<div id="hud">
+  <!-- brand -->
+  <div id="brand">
+    <div class="mark"><span class="hex"></span></div>
+    <div class="brand-txt">
+      <h1>Di&#8209;nasty</h1>
+      <p>Living Colony Engine</p>
+    </div>
+  </div>
+
+  <!-- region selector -->
+  <div id="regions" class="panel"></div>
+
+  <!-- top stats (filled by hud) -->
+  <div id="stats" class="panel"></div>
+
+  <!-- inspector (right) -->
+  <div id="inspector" class="panel"></div>
+
+  <!-- exit (underground) -->
+  <div id="exitbtn" class="panel"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>Back to surface</div>
+
+  <!-- thoughts ticker -->
+  <div id="thoughts" class="panel">
+    <div class="think-orb"></div>
+    <div id="think-stream"></div>
+  </div>
+
+  <!-- transport -->
+  <div id="transport" class="panel">
+    <div class="play-btn" id="play-btn"><span id="play-icon"><svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></span></div>
+    <div class="timeline">
+      <div class="tl-top"><span class="gen" id="tl-gen">Generation 1</span><span class="clock" id="tl-clock">Sol 1 · 00:00</span></div>
+      <div class="tl-track" id="tl-track"><div class="tl-fill" id="tl-fill"></div><div class="tl-knob" id="tl-knob"></div></div>
+    </div>
+    <div class="speeds" id="speeds">
+      <div class="speed" data-s="0.5">.5&times;</div>
+      <div class="speed active" data-s="1">1&times;</div>
+      <div class="speed" data-s="2">2&times;</div>
+      <div class="speed" data-s="4">4&times;</div>
+    </div>
+  </div>
+
+  <!-- bottom hotbar (filled by hud) -->
+  <div id="hotbar" class="panel"></div>
+
+  <!-- left tool rail -->
+  <div id="tools" class="panel">
+    <div class="tool active" data-tool="inspect">
+      <svg viewBox="0 0 24 24"><path d="M4 4l7 16 2-7 7-2z"/></svg>
+      <span class="tip">Inspect &amp; select</span>
+    </div>
+    <div class="tool" data-tool="food">
+      <svg viewBox="0 0 24 24"><path d="M12 3c3 4 5 6 5 9a5 5 0 0 1-10 0c0-3 2-5 5-9z"/></svg>
+      <span class="tip">Drop forage cache &nbsp;<b>F</b></span>
+    </div>
+    <div class="tool" id="tool-recenter">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
+      <span class="tip">World overview</span>
+    </div>
+  </div>
+
+  <!-- camera mode -->
+  <div id="cammode" class="panel">
+    <div class="cm active" data-mode="cinematic"><svg viewBox="0 0 24 24"><path d="M3 8l4-3 14 5-4 3z"/><path d="M3 8v9l14 2V13"/></svg>Cinematic</div>
+    <div class="cm" data-mode="explore"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"/><path d="M6 21c0-4 3-6 6-6s6 2 6 6"/></svg>Explore</div>
+  </div>
+
+  <!-- explore controls hint -->
+  <div id="keys" class="panel"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>mouse</kbd> look · <kbd>shift</kbd> sprint · <kbd>esc</kbd> exit</div>
+
+  <!-- enter colony banner -->
+  <div id="enterbanner" class="panel"></div>
+
+  <!-- floating tooltip -->
+  <div id="tooltip" class="panel"></div>
+</div>
+
+<!-- dive fade -->
+<div id="fade"></div>
+
+<!-- intro -->
+<div id="intro">
+  <div class="iwrap">
+    <div class="iorb"></div>
+    <h1>Di&#8209;nasty</h1>
+    <p>Awakening the colonies&hellip;</p>
+  </div>
+</div>
+
+<script src="/vendor/three.min.js"></script>
+<script src="/vendor/OrbitControls.js"></script>
+<script src="/dinasty/noise.js"></script>
+<script src="/dinasty/core.js"></script>
+<script src="/dinasty/biomes.js"></script>
+<script src="/dinasty/world.js"></script>
+<script src="/dinasty/flora.js"></script>
+<script src="/dinasty/resources.js"></script>
+<script src="/dinasty/colony.js"></script>
+<script src="/dinasty/ants.js"></script>
+<script src="/dinasty/trails.js"></script>
+<script src="/dinasty/underground.js"></script>
+<script src="/dinasty/camera.js"></script>
+<script src="/dinasty/hud.js"></script>
+<script src="/dinasty/interactions.js"></script>
+<script src="/dinasty/main.js"></script>
+<script src="/dinasty/databridge.js"></script>
+</body>
 </html>
