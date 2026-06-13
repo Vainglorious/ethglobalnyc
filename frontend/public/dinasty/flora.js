@@ -218,6 +218,44 @@ DN.flora = (function () {
 
     // bushes removed — only conifer silhouettes per request
 
+    // ---- distant forest on the skirt: same banded buildTree('pine') silhouettes
+    // as the playable area, instanced in a few seed-varied batches so the
+    // horizon reads as a continuous endless conifer woodland. ----
+    {
+      const SKIRT_TREE_Y = -1.6; // matches world.js SKIRT_Y
+      const inner = DN.world.SIZE * 0.50;       // just outside terrain falloff
+      const outer = 2400;                       // visible horizon ring
+      const distantMat = makeTreeWindy(DN.util.voxelMat({ roughness: 0.78, flatShading: false }));
+      // Use a handful of seed-varied pine geometries so the ring of forest
+      // doesn't read as a hall of identical clones. Each variant is its own
+      // InstancedMesh (one draw call per variant).
+      const variants = 5;
+      const perVariant = 180;
+      const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sv = new THREE.Vector3(), pv = new THREE.Vector3();
+      for (let v = 0; v < variants; v++) {
+        const treeGeo = buildTree(9000 + v * 137 + b.id.length * 31, 'pine', fb);
+        const mesh = new THREE.InstancedMesh(treeGeo, distantMat, perVariant);
+        // Skip shadows on the distant ring — sun shadow camera is bounded
+        // to ~260 anyway, so casting here is wasted work and shimmers.
+        mesh.castShadow = false; mesh.receiveShadow = false; mesh.frustumCulled = false;
+        let placed = 0;
+        for (let i = 0; i < perVariant; i++) {
+          const a = Math.random() * 6.28;
+          // bias the density toward the inner ring; sparser at the horizon
+          const rr = inner + Math.pow(Math.random(), 1.4) * (outer - inner);
+          const jx = Math.cos(a) * rr + (Math.random() - 0.5) * 18;
+          const jz = Math.sin(a) * rr + (Math.random() - 0.5) * 18;
+          const sc = 0.85 + Math.random() * 0.7;
+          e.set(0, Math.random() * 6.28, 0); q.setFromEuler(e);
+          sv.set(sc, sc * (0.92 + Math.random() * 0.18), sc);
+          pv.set(jx, SKIRT_TREE_Y - 0.5, jz);
+          m.compose(pv, q, sv);
+          mesh.setMatrixAt(placed++, m);
+        }
+        mesh.count = placed; mesh.instanceMatrix.needsUpdate = true;
+        add(mesh);
+      }
+    }
 
     // rocks (low-poly icos/dodeca)
     const rockMat = DN.util.voxelMat({ roughness: 1.0, flatShading: true });
