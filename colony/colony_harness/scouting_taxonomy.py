@@ -4,7 +4,6 @@ from __future__ import annotations
 
 SCOUTING_REQUIRED_CLAIM_TYPES = (
     "team_profile",
-    "team_history",
     "recent_form",
     "player_form",
     "squad_roster",

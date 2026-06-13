@@ -154,6 +154,7 @@ def public_match_context_from_tournament_match(
     include_camel: bool = False,
     include_telegram: bool = False,
     include_polygun: bool = False,
+    include_deepseek_scout: bool = False,
     rescout_targets: list[dict] | None = None,
 ) -> MatchContext:
     """Create a match context from real public sources and optional research scouts."""
@@ -477,6 +478,29 @@ def public_match_context_from_tournament_match(
                 away_team=away_team,
                 market=market,
                 cache_dir=cache_path,
+            )
+        )
+    if include_deepseek_scout:
+        findings.extend(
+            deepseek_agent_findings_for_match(
+                round_id=round_id,
+                home_team=home_team,
+                away_team=away_team,
+                market=market,
+                stats=stats,
+                news=news,
+                cache_dir=cache_path,
+                refresh=refresh,
+                timeout_seconds=timeout_seconds,
+                source_items=_deepseek_source_items(
+                    match_news=match_news,
+                    recent_results_news=recent_results_news,
+                    team_scout_news=team_scout_news,
+                    availability_news=availability_news,
+                    official_squad_items=official_squad_items,
+                    match_history_items=match_history_items,
+                    tactical_items=all_tactical_items,
+                ),
             )
         )
     findings.extend(
@@ -1779,27 +1803,6 @@ def _team_profile_claims(home_profile: TeamProfile, away_profile: TeamProfile) -
                 ),
             )
         )
-        history_metrics = _claim_metrics("team_history", extract)
-        if history_metrics:
-            claims.append(
-                EvidenceClaim(
-                    claim_type="team_history",
-                    subject=profile.team,
-                    claim=_shorten(extract, limit=300),
-                    team=profile.team,
-                    player=None,
-                    impact=impact,
-                    confidence=round(max(min(confidence + 0.04, 0.76), 0.18), 2),
-                    source_title=profile.title,
-                    source_url=profile.page_url,
-                    **_source_metadata(
-                        source_title=profile.title,
-                        source_url=profile.page_url,
-                        extraction_method="wikipedia_history_summary",
-                    ),
-                    metrics=history_metrics,
-                )
-            )
     return _dedupe_claims(claims)
 
 
