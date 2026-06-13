@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from collections import Counter, defaultdict
+from typing import Any
 from urllib.parse import urlparse
 
 from .models import DebateClaim, Forecast, MatchContext, WorldEntity, WorldGraph, WorldRelationship
@@ -11,7 +12,10 @@ from .scouting_taxonomy import (
     SCOUTING_FRESHNESS_REQUIRED_CLAIM_TYPES,
     SCOUTING_REQUIRED_CLAIM_TYPES,
     SCOUTING_RESCOUT_RECIPES,
+    scouting_topic_quality,
 )
+
+KG_SCHEMA_VERSION = "scouting-kg-v1"
 
 
 def build_world_graph(
@@ -112,6 +116,10 @@ def build_world_graph(
 
     _append_scouting_topic_nodes(entities, relationships, match=match)
     _append_team_scouting_topic_nodes(entities, relationships, match=match)
+    _append_team_match_profile_nodes(entities, relationships, match=match)
+    _append_player_match_profile_nodes(entities, relationships, match=match)
+    _append_source_domain_profile_nodes(entities, relationships, match=match)
+    _append_scout_match_profile_nodes(entities, relationships, match=match)
 
     if forecasts is not None:
         for forecast in forecasts:
@@ -172,13 +180,27 @@ def build_world_graph(
             room = claim.room_id or "global"
             claim_id = f"debate_claim:{match.round_id}:{phase}:{room}:{claim.speaker_id}"
             genome_id = f"genome:{claim.genome_id}" if claim.genome_id else ""
-            entities.append(
-                WorldEntity(
-                    entity_id=claim_id,
-                    entity_type="debate_claim",
-                    name=f"{claim.speaker_name} claim",
-                    attributes=claim.to_dict(),
-                )
+            entities.extend(
+                [
+                    WorldEntity(
+                        entity_id=f"predictor:{claim.speaker_id}",
+                        entity_type="predictor",
+                        name=claim.speaker_name or claim.speaker_id,
+                        attributes={
+                            "speaker_id": claim.speaker_id,
+                            "model": claim.model,
+                            "persona": claim.persona,
+                            "access_tier": claim.access_tier,
+                            "genome_id": claim.genome_id,
+                        },
+                    ),
+                    WorldEntity(
+                        entity_id=claim_id,
+                        entity_type="debate_claim",
+                        name=f"{claim.speaker_name} claim",
+                        attributes=claim.to_dict(),
+                    ),
+                ]
             )
             relationships.extend(
                 [
@@ -241,7 +263,7 @@ def _append_evidence_claims(
     for index, evidence in enumerate(evidence_claims):
         if not _admissible_evidence(evidence):
             continue
-        claim_id = f"evidence_claim:{_stable_key(finding_key, str(index), evidence.get('claim', ''))}"
+        claim_id = _evidence_claim_id(finding_key, index, evidence)
         source_url = str(evidence.get("source_url") or "")
         source_title = str(evidence.get("source_title") or "Source")
         source_id = f"source:{_stable_key(source_url or source_title)}"
@@ -368,6 +390,13 @@ def _append_evidence_claims(
             entities,
             relationships,
             match=match,
+            claim_id=claim_id,
+            evidence=evidence,
+            confidence=confidence,
+        )
+        _append_claim_quality_nodes(
+            entities,
+            relationships,
             claim_id=claim_id,
             evidence=evidence,
             confidence=confidence,
@@ -585,6 +614,277 @@ def _append_match_metadata_nodes(
         )
 
 
+def _append_claim_quality_nodes(
+    entities: list[WorldEntity],
+    relationships: list[WorldRelationship],
+    *,
+    claim_id: str,
+    evidence: dict,
+    confidence: float,
+) -> None:
+    for tag in _claim_quality_tags(evidence, confidence=confidence):
+        quality_id = f"claim_quality:{_slug(tag)}"
+        entities.append(
+            WorldEntity(
+                entity_id=quality_id,
+                entity_type="claim_quality",
+                name=tag,
+                attributes=_claim_quality_attributes(tag),
+            )
+        )
+        relationships.append(
+            WorldRelationship(
+                source_id=claim_id,
+                relation_type="has_claim_quality",
+                target_id=quality_id,
+                weight=confidence,
+            )
+        )
+
+
+def _claim_quality_tags(evidence: dict, *, confidence: float) -> list[str]:
+    tags: list[str] = []
+    claim_type = _normal_text(evidence.get("claim_type"))
+    source_kind = _normal_text(evidence.get("source_kind")).lower()
+    source_quality = _normal_text(evidence.get("source_quality")).lower()
+    recency_bucket = _normal_text(evidence.get("source_recency_bucket")).lower()
+    metrics = evidence.get("metrics") if isinstance(evidence.get("metrics"), dict) else {}
+
+    if evidence.get("source_url"):
+        tags.append("source_locked")
+    if source_quality == "strong" or source_kind in {"official", "stats", "news", "reference"}:
+        tags.append("strong_or_official_source")
+    if recency_bucket in {"last_7_days", "last_30_days"}:
+        tags.append("fresh_source")
+    if _normal_text(evidence.get("source_published_date")):
+        tags.append("dated_source")
+    if metrics:
+        tags.append("metric_backed")
+    if _normal_text(evidence.get("team")):
+        tags.append("team_specific")
+    if _normal_text(evidence.get("player")):
+        tags.append("player_specific")
+    if metrics.get("verification_signal") in {"official", "reported"}:
+        tags.append("social_verified_signal")
+    if metrics.get("rumor_signal"):
+        tags.append("rumor_signal")
+    if any(key in metrics for key in ("telegram_views", "telegram_forwards", "telegram_reactions")):
+        tags.append("engagement_backed")
+    if claim_type == "market_snapshot" and source_kind == "market_snapshot":
+        tags.append("market_snapshot")
+    if claim_type == "market_snapshot" and any(
+        key in metrics
+        for key in (
+            "visible_price_probability",
+            "buy_yes_price_probability",
+            "buy_no_price_probability",
+        )
+    ):
+        tags.append("visible_market_price")
+    if claim_type in {"injury_availability", "lineup", "player_form", "tactical"} and (
+        "fresh_source" in tags or "metric_backed" in tags or "strong_or_official_source" in tags
+    ):
+        tags.append("match_actionable")
+    if claim_type == "injury_availability" and metrics.get("availability_status"):
+        tags.append("availability_status")
+    if claim_type == "match_history" and metrics.get("historical_result_signal") == "explicit_score":
+        tags.append("explicit_score")
+    if claim_type == "match_history" and metrics.get("historical_record_signal"):
+        tags.append("h2h_record")
+    if claim_type == "recent_form" and any(
+        key in metrics
+        for key in (
+            "recent_sample_matches",
+            "recent_wins",
+            "recent_draws",
+            "recent_losses",
+            "unbeaten_matches",
+            "winning_streak_matches",
+        )
+    ):
+        tags.append("recent_results_window")
+    if claim_type == "player_form" and any(
+        key in metrics
+        for key in (
+            "goals",
+            "assists",
+            "goal_contributions",
+            "appearances",
+            "minutes",
+            "starts",
+            "xg",
+            "xa",
+        )
+    ):
+        tags.append("season_output")
+    if claim_type == "tactical" and metrics.get("formation"):
+        tags.append("formation_signal")
+    if claim_type in {"lineup", "tactical"} and metrics.get("lineup_signal"):
+        tags.append("lineup_signal")
+    if _normal_text(evidence.get("extraction_method")) == "deepseek_agent":
+        tags.append("agent_extracted")
+    if confidence >= 0.6:
+        tags.append("higher_confidence")
+    return list(dict.fromkeys(tags))
+
+
+def _claim_quality_attributes(tag: str) -> dict:
+    categories = {
+        "source_locked": "provenance",
+        "strong_or_official_source": "provenance",
+        "fresh_source": "freshness",
+        "dated_source": "freshness",
+        "metric_backed": "specificity",
+        "team_specific": "specificity",
+        "player_specific": "specificity",
+        "social_verified_signal": "provenance",
+        "rumor_signal": "provenance",
+        "engagement_backed": "provenance",
+        "market_snapshot": "provenance",
+        "visible_market_price": "specificity",
+        "match_actionable": "actionability",
+        "availability_status": "actionability",
+        "explicit_score": "specificity",
+        "h2h_record": "specificity",
+        "recent_results_window": "specificity",
+        "season_output": "specificity",
+        "formation_signal": "specificity",
+        "lineup_signal": "specificity",
+        "agent_extracted": "producer",
+        "higher_confidence": "confidence",
+    }
+    descriptions = {
+        "source_locked": "Claim has a concrete source URL.",
+        "strong_or_official_source": "Claim comes from a strong, official, stats, news, or reference source.",
+        "fresh_source": "Claim source is within the freshness window tracked by the scout.",
+        "dated_source": "Claim has a normalized publication date.",
+        "metric_backed": "Claim carries parsed metrics that can become KG facts.",
+        "team_specific": "Claim is attached to one of the match teams.",
+        "player_specific": "Claim is attached to a named player.",
+        "social_verified_signal": "Social claim carries an official or reported-source signal.",
+        "rumor_signal": "Social claim is explicitly marked as unconfirmed or rumor-like.",
+        "engagement_backed": "Social claim includes visible engagement metadata.",
+        "market_snapshot": "Claim comes from a read-only market snapshot.",
+        "visible_market_price": "Claim carries visible market price information.",
+        "match_actionable": "Claim type and evidence quality make it useful for match scouting.",
+        "availability_status": "Claim carries an explicit availability status.",
+        "explicit_score": "Claim carries an explicit historical scoreline.",
+        "h2h_record": "Claim carries a concrete head-to-head record.",
+        "recent_results_window": "Claim carries a concrete recent-results window.",
+        "season_output": "Claim carries concrete player season output.",
+        "formation_signal": "Claim carries a concrete formation.",
+        "lineup_signal": "Claim carries a lineup, predicted XI, starting XI, or squad-depth signal.",
+        "agent_extracted": "Claim was extracted by a structured scouting agent.",
+        "higher_confidence": "Claim confidence is at least 0.60.",
+    }
+    return {
+        "category": categories.get(tag, "other"),
+        "description": descriptions.get(tag, tag.replace("_", " ")),
+    }
+
+
+def _counter_attributes(counter: Counter[str]) -> dict[str, int]:
+    return {key: counter[key] for key in sorted(counter)}
+
+
+def _season_stat_summary(performance_metrics: dict[str, set[str]]) -> dict[str, int | float]:
+    summary: dict[str, int | float] = {}
+    for metric_key in (
+        "goals",
+        "assists",
+        "goal_contributions",
+        "appearances",
+        "minutes",
+        "starts",
+        "clean_sheets",
+        "blocked_shots",
+        "chances_created",
+        "key_passes_per_game",
+        "shots_per_game",
+        "average_rating",
+        "pass_completion_pct",
+        "xg",
+        "xa",
+    ):
+        values = _numeric_metric_values(performance_metrics.get(metric_key) or set())
+        if values:
+            summary[f"{metric_key}_max"] = _compact_number(max(values))
+    goals = summary.get("goals_max")
+    assists = summary.get("assists_max")
+    explicit_contributions = summary.get("goal_contributions_max")
+    if explicit_contributions is None and isinstance(goals, (int, float)) and isinstance(assists, (int, float)):
+        summary["goal_contributions_max"] = _compact_number(float(goals) + float(assists))
+    if summary:
+        summary["metric_count"] = len(summary)
+    return summary
+
+
+def _team_recent_form_summary(recent_form_metrics: dict[str, set[str]]) -> dict[str, int | float]:
+    summary: dict[str, int | float] = {}
+    for metric_key in (
+        "recent_sample_matches",
+        "recent_wins",
+        "recent_draws",
+        "recent_losses",
+        "unbeaten_matches",
+        "winning_streak_matches",
+        "recent_goals_for",
+        "recent_goals_against",
+    ):
+        values = _numeric_metric_values(recent_form_metrics.get(metric_key) or set())
+        if values:
+            summary[f"{metric_key}_max"] = _compact_number(max(values))
+    if summary:
+        summary["metric_count"] = len(summary)
+    return summary
+
+
+def _team_match_history_summary(match_history_metrics: dict[str, set[str]]) -> dict[str, Any]:
+    summary: dict[str, Any] = {}
+    for metric_key in (
+        "historical_team_a_score",
+        "historical_team_b_score",
+        "historical_team_a_wins",
+        "historical_team_a_unbeaten",
+        "historical_meetings",
+        "h2h_recent_sample_matches",
+        "h2h_team_a_wins",
+        "h2h_draws",
+        "h2h_team_a_losses",
+        "h2h_team_a_goals_per_match",
+    ):
+        values = _numeric_metric_values(match_history_metrics.get(metric_key) or set())
+        if values:
+            summary[f"{metric_key}_max"] = _compact_number(max(values))
+    for metric_key in (
+        "historical_team_a",
+        "historical_team_b",
+        "historical_result_label",
+        "historical_result_signal",
+        "historical_record_signal",
+    ):
+        values = sorted(str(value) for value in match_history_metrics.get(metric_key) or set() if value)
+        if values:
+            summary[metric_key] = values[:6]
+    if summary:
+        summary["metric_count"] = len(summary)
+    return summary
+
+
+def _numeric_metric_values(values: set[str]) -> list[float]:
+    numeric_values: list[float] = []
+    for value in values:
+        try:
+            numeric_values.append(float(str(value).replace(",", "")))
+        except (TypeError, ValueError):
+            continue
+    return numeric_values
+
+
+def _compact_number(value: float) -> int | float:
+    return int(value) if value.is_integer() else round(value, 4)
+
+
 def _append_scouting_topic_nodes(
     entities: list[WorldEntity],
     relationships: list[WorldRelationship],
@@ -593,7 +893,13 @@ def _append_scouting_topic_nodes(
 ) -> None:
     claim_counts: Counter[str] = Counter()
     source_urls_by_type: dict[str, set[str]] = defaultdict(set)
+    players_by_type: dict[str, set[str]] = defaultdict(set)
     metric_counts: Counter[str] = Counter()
+    recent_counts: Counter[str] = Counter()
+    strong_or_official_counts: Counter[str] = Counter()
+    scouts_by_type: dict[str, set[str]] = defaultdict(set)
+    extraction_methods_by_type: dict[str, Counter[str]] = defaultdict(Counter)
+    quality_counts_by_type: dict[str, Counter[str]] = defaultdict(Counter)
     for finding in match.findings:
         for evidence in finding.evidence_claims:
             if not _admissible_evidence(evidence):
@@ -605,13 +911,37 @@ def _append_scouting_topic_nodes(
             source_url = _normal_text(evidence.get("source_url"))
             if source_url:
                 source_urls_by_type[claim_type].add(source_url)
+            player = _normal_text(evidence.get("player"))
+            if player:
+                players_by_type[claim_type].add(player)
             if evidence.get("metrics"):
                 metric_counts[claim_type] += 1
+            if _normal_text(evidence.get("source_recency_bucket")) in {"last_7_days", "last_30_days"}:
+                recent_counts[claim_type] += 1
+            if _normal_text(evidence.get("source_quality")).lower() == "strong" or _normal_text(
+                evidence.get("source_kind")
+            ).lower() in {"official", "stats", "news", "reference"}:
+                strong_or_official_counts[claim_type] += 1
+            scouts_by_type[claim_type].add(finding.scout_name)
+            extraction_method = _normal_text(evidence.get("extraction_method"))
+            if extraction_method:
+                extraction_methods_by_type[claim_type][extraction_method] += 1
+            confidence = _float_or_default(evidence.get("confidence"), finding.confidence)
+            quality_counts_by_type[claim_type].update(_claim_quality_tags(evidence, confidence=confidence))
 
     all_topics = sorted(set(SCOUTING_REQUIRED_CLAIM_TYPES) | set(claim_counts))
     for claim_type in all_topics:
         claim_count = claim_counts[claim_type]
-        coverage_status = "covered" if claim_count else "missing"
+        quality_status, quality_reasons = scouting_topic_quality(
+            claim_type,
+            claim_count=claim_count,
+            metric_claim_count=metric_counts[claim_type],
+            player_count=len(players_by_type.get(claim_type, set())),
+            recent_30d_claim_count=recent_counts[claim_type],
+            strong_or_official_claim_count=strong_or_official_counts[claim_type],
+            claim_quality_counts=_counter_attributes(quality_counts_by_type[claim_type]),
+        )
+        coverage_status = "covered" if quality_status == "usable" else quality_status
         topic_id = f"scouting_topic:{_stable_key(match.round_id, claim_type)}"
         claim_type_id = f"claim_type:{_slug(claim_type)}"
         entities.extend(
@@ -624,9 +954,15 @@ def _append_scouting_topic_nodes(
                         "claim_type": claim_type,
                         "required": claim_type in SCOUTING_REQUIRED_CLAIM_TYPES,
                         "coverage_status": coverage_status,
+                        "quality_status": quality_status,
+                        "quality_reasons": quality_reasons,
                         "claim_count": claim_count,
                         "unique_source_count": len(source_urls_by_type.get(claim_type, set())),
                         "metric_claim_count": metric_counts[claim_type],
+                        "scout_count": len(scouts_by_type.get(claim_type, set())),
+                        "scout_names": sorted(scouts_by_type.get(claim_type, set())),
+                        "extraction_methods": _counter_attributes(extraction_methods_by_type[claim_type]),
+                        "claim_quality_counts": _counter_attributes(quality_counts_by_type[claim_type]),
                     },
                 ),
                 WorldEntity(
@@ -637,6 +973,15 @@ def _append_scouting_topic_nodes(
                 ),
             ]
         )
+        for scout_name in sorted(scouts_by_type.get(claim_type, set())):
+            relationships.append(
+                WorldRelationship(
+                    source_id=topic_id,
+                    relation_type="covered_by_scout",
+                    target_id=f"scout:{_slug(scout_name)}",
+                    weight=1.0,
+                )
+            )
         relationships.extend(
             [
                 WorldRelationship(
@@ -669,6 +1014,9 @@ def _append_team_scouting_topic_nodes(
     strong_or_official_counts: Counter[tuple[str, str]] = Counter()
     source_urls_by_team_type: dict[tuple[str, str], set[str]] = defaultdict(set)
     players_by_team_type: dict[tuple[str, str], set[str]] = defaultdict(set)
+    scouts_by_team_type: dict[tuple[str, str], set[str]] = defaultdict(set)
+    extraction_methods_by_team_type: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
+    quality_counts_by_team_type: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
     observed_topics: set[str] = set()
 
     for finding in match.findings:
@@ -696,8 +1044,14 @@ def _append_team_scouting_topic_nodes(
                 recent_counts[key] += 1
             if _normal_text(evidence.get("source_quality")).lower() == "strong" or _normal_text(
                 evidence.get("source_kind")
-            ).lower() in {"official", "stats", "news"}:
+            ).lower() in {"official", "stats", "news", "reference"}:
                 strong_or_official_counts[key] += 1
+            scouts_by_team_type[key].add(finding.scout_name)
+            extraction_method = _normal_text(evidence.get("extraction_method"))
+            if extraction_method:
+                extraction_methods_by_team_type[key][extraction_method] += 1
+            confidence = _float_or_default(evidence.get("confidence"), finding.confidence)
+            quality_counts_by_team_type[key].update(_claim_quality_tags(evidence, confidence=confidence))
 
     all_topics = sorted(set(SCOUTING_REQUIRED_CLAIM_TYPES) | observed_topics)
     for team in team_names:
@@ -706,7 +1060,6 @@ def _append_team_scouting_topic_nodes(
         for claim_type in all_topics:
             key = (team, claim_type)
             claim_count = claim_counts[key]
-            coverage_status = "covered" if claim_count else "missing"
             fresh_required = claim_type in SCOUTING_FRESHNESS_REQUIRED_CLAIM_TYPES
             freshness_status = _topic_freshness_status(
                 claim_count=claim_count,
@@ -716,6 +1069,16 @@ def _append_team_scouting_topic_nodes(
             source_strength_status = (
                 "strong_or_official" if strong_or_official_counts[key] else ("missing" if not claim_count else "needs_stronger_source")
             )
+            quality_status, quality_reasons = scouting_topic_quality(
+                claim_type,
+                claim_count=claim_count,
+                metric_claim_count=metric_counts[key],
+                player_count=len(players_by_team_type.get(key, set())),
+                recent_30d_claim_count=recent_counts[key],
+                strong_or_official_claim_count=strong_or_official_counts[key],
+                claim_quality_counts=_counter_attributes(quality_counts_by_team_type[key]),
+            )
+            coverage_status = "covered" if quality_status == "usable" else quality_status
             topic_id = f"team_scouting_topic:{_stable_key(match.round_id, team, claim_type)}"
             claim_type_id = f"claim_type:{_slug(claim_type)}"
             entities.extend(
@@ -730,6 +1093,8 @@ def _append_team_scouting_topic_nodes(
                             "claim_type": claim_type,
                             "required": claim_type in SCOUTING_REQUIRED_CLAIM_TYPES,
                             "coverage_status": coverage_status,
+                            "quality_status": quality_status,
+                            "quality_reasons": quality_reasons,
                             "claim_count": claim_count,
                             "unique_source_count": len(source_urls_by_team_type.get(key, set())),
                             "metric_claim_count": metric_counts[key],
@@ -740,6 +1105,10 @@ def _append_team_scouting_topic_nodes(
                             "recent_30d_claim_count": recent_counts[key],
                             "strong_or_official_claim_count": strong_or_official_counts[key],
                             "source_strength_status": source_strength_status,
+                            "scout_count": len(scouts_by_team_type.get(key, set())),
+                            "scout_names": sorted(scouts_by_team_type.get(key, set())),
+                            "extraction_methods": _counter_attributes(extraction_methods_by_team_type[key]),
+                            "claim_quality_counts": _counter_attributes(quality_counts_by_team_type[key]),
                         },
                     ),
                     WorldEntity(
@@ -772,7 +1141,16 @@ def _append_team_scouting_topic_nodes(
                     ),
                 ]
             )
-            if claim_type in SCOUTING_REQUIRED_CLAIM_TYPES and not claim_count:
+            for scout_name in sorted(scouts_by_team_type.get(key, set())):
+                relationships.append(
+                    WorldRelationship(
+                        source_id=topic_id,
+                        relation_type="covered_by_scout",
+                        target_id=f"scout:{_slug(scout_name)}",
+                        weight=1.0,
+                    )
+                )
+            if claim_type in SCOUTING_REQUIRED_CLAIM_TYPES and quality_status != "usable":
                 _append_scouting_gap_node(
                     entities,
                     relationships,
@@ -783,6 +1161,10 @@ def _append_team_scouting_topic_nodes(
                     claim_type=claim_type,
                     topic_id=topic_id,
                     claim_type_id=claim_type_id,
+                    status="needs_fresh_rescout" if freshness_status == "needs_fresh_source" else "needs_rescout",
+                    gap_reason="missing_required_topic" if quality_status == "missing" else "needs_better_evidence",
+                    quality_status=quality_status,
+                    quality_reasons=quality_reasons,
                 )
             elif claim_type in SCOUTING_REQUIRED_CLAIM_TYPES and freshness_status == "needs_fresh_source":
                 _append_scouting_gap_node(
@@ -797,6 +1179,8 @@ def _append_team_scouting_topic_nodes(
                     claim_type_id=claim_type_id,
                     status="needs_fresh_rescout",
                     gap_reason="covered_topic_without_recent_source",
+                    quality_status=quality_status,
+                    quality_reasons=quality_reasons,
                 )
 
 
@@ -813,6 +1197,8 @@ def _append_scouting_gap_node(
     claim_type_id: str,
     status: str = "needs_rescout",
     gap_reason: str = "missing_required_topic",
+    quality_status: str = "",
+    quality_reasons: list[str] | None = None,
 ) -> None:
     recipe = SCOUTING_RESCOUT_RECIPES.get(claim_type, {})
     gap_id = f"scouting_gap:{_stable_key(match.round_id, team, claim_type, status)}"
@@ -824,6 +1210,8 @@ def _append_scouting_gap_node(
             attributes={
                 "status": status,
                 "gap_reason": gap_reason,
+                "quality_status": quality_status,
+                "quality_reasons": list(quality_reasons or []),
                 "team": team,
                 "side": side,
                 "claim_type": claim_type,
@@ -864,6 +1252,728 @@ def _append_scouting_gap_node(
             ),
         ]
     )
+
+
+def _append_team_match_profile_nodes(
+    entities: list[WorldEntity],
+    relationships: list[WorldRelationship],
+    *,
+    match: MatchContext,
+) -> None:
+    profiles: dict[str, dict] = {}
+    for team in (match.home_team, match.away_team):
+        profiles[team] = {
+            "claim_count": 0,
+            "claim_types": Counter(),
+            "metric_keys": Counter(),
+            "claim_quality_counts": Counter(),
+            "source_quality": Counter(),
+            "source_kind": Counter(),
+            "source_recency": Counter(),
+            "source_urls": set(),
+            "scout_names": set(),
+            "players": set(),
+            "availability_statuses": set(),
+            "availability_status_counts": Counter(),
+            "availability_by_player": defaultdict(set),
+            "formations": set(),
+            "clubs": set(),
+            "positions": set(),
+            "recent_form_metrics": defaultdict(set),
+            "match_history_metrics": defaultdict(set),
+            "claim_ids": set(),
+            "highest_confidence": 0.0,
+        }
+
+    for finding in match.findings:
+        for index, evidence in enumerate(finding.evidence_claims):
+            if not _admissible_evidence(evidence):
+                continue
+            team = _evidence_match_team(evidence, match)
+            if not team:
+                continue
+            profile = profiles[team]
+            claim_id = _evidence_claim_id(finding.finding_id, index, evidence)
+            claim_type = _normal_text(evidence.get("claim_type"))
+            confidence = _float_or_default(evidence.get("confidence"), finding.confidence)
+            profile["claim_count"] += 1
+            profile["highest_confidence"] = max(profile["highest_confidence"], confidence)
+            profile["scout_names"].add(finding.scout_name)
+            profile["claim_ids"].add(claim_id)
+            if claim_type:
+                profile["claim_types"][claim_type] += 1
+            player = _normal_text(evidence.get("player"))
+            if player:
+                profile["players"].add(player)
+            source_url = _normal_text(evidence.get("source_url"))
+            if source_url:
+                profile["source_urls"].add(source_url)
+            for source_field, counter_name in (
+                ("source_quality", "source_quality"),
+                ("source_kind", "source_kind"),
+                ("source_recency_bucket", "source_recency"),
+            ):
+                value = _normal_text(evidence.get(source_field))
+                if value:
+                    profile[counter_name][value] += 1
+            profile["claim_quality_counts"].update(_claim_quality_tags(evidence, confidence=confidence))
+            metrics = evidence.get("metrics") or {}
+            if not isinstance(metrics, dict):
+                continue
+            for metric_key, metric_value in metrics.items():
+                if metric_value in {None, ""}:
+                    continue
+                metric_key = str(metric_key)
+                profile["metric_keys"][metric_key] += 1
+                if metric_key == "availability_status":
+                    profile["availability_statuses"].add(str(metric_value))
+                    profile["availability_status_counts"][str(metric_value)] += 1
+                    if player:
+                        profile["availability_by_player"][player].add(str(metric_value))
+                elif metric_key == "formation":
+                    profile["formations"].add(str(metric_value))
+                elif metric_key == "club":
+                    profile["clubs"].add(str(metric_value))
+                elif metric_key == "position":
+                    profile["positions"].add(str(metric_value))
+                if claim_type == "recent_form" and metric_key in {
+                    "recent_sample_matches",
+                    "recent_wins",
+                    "recent_draws",
+                    "recent_losses",
+                    "unbeaten_matches",
+                    "winning_streak_matches",
+                    "recent_goals_for",
+                    "recent_goals_against",
+                }:
+                    profile["recent_form_metrics"][metric_key].add(str(metric_value))
+                if claim_type == "match_history" and metric_key in {
+                    "historical_team_a",
+                    "historical_team_b",
+                    "historical_team_a_score",
+                    "historical_team_b_score",
+                    "historical_team_a_wins",
+                    "historical_team_a_unbeaten",
+                    "historical_meetings",
+                    "h2h_recent_sample_matches",
+                    "h2h_team_a_wins",
+                    "h2h_draws",
+                    "h2h_team_a_losses",
+                    "h2h_team_a_goals_per_match",
+                    "historical_result_label",
+                    "historical_result_signal",
+                    "historical_record_signal",
+                }:
+                    profile["match_history_metrics"][metric_key].add(str(metric_value))
+
+    for team, profile in profiles.items():
+        side = "home" if team == match.home_team else "away"
+        profile_id = f"team_match_profile:{_stable_key(match.round_id, team)}"
+        team_id = f"team:{_slug(team)}"
+        entities.append(
+            WorldEntity(
+                entity_id=profile_id,
+                entity_type="team_match_profile",
+                name=f"{team} match profile",
+                attributes={
+                    "team": team,
+                    "side": side,
+                    "match_id": f"match:{match.round_id}",
+                    "claim_count": profile["claim_count"],
+                    "claim_types": _counter_attributes(profile["claim_types"]),
+                    "metric_keys": _counter_attributes(profile["metric_keys"]),
+                    "claim_quality_counts": _counter_attributes(profile["claim_quality_counts"]),
+                    "source_quality": _counter_attributes(profile["source_quality"]),
+                    "source_kind": _counter_attributes(profile["source_kind"]),
+                    "source_recency": _counter_attributes(profile["source_recency"]),
+                    "unique_source_count": len(profile["source_urls"]),
+                    "source_urls": sorted(profile["source_urls"])[:12],
+                    "scout_names": sorted(profile["scout_names"]),
+                    "players": sorted(profile["players"])[:40],
+                    "player_count": len(profile["players"]),
+                    "availability_statuses": sorted(profile["availability_statuses"]),
+                    "availability_status_counts": _counter_attributes(profile["availability_status_counts"]),
+                    "availability_conflict_players": sorted(
+                        player
+                        for player, statuses in profile["availability_by_player"].items()
+                        if len(statuses) > 1
+                    ),
+                    "formations": sorted(profile["formations"]),
+                    "clubs": sorted(profile["clubs"])[:40],
+                    "positions": sorted(profile["positions"]),
+                    "recent_form_summary": _team_recent_form_summary(profile["recent_form_metrics"]),
+                    "match_history_summary": _team_match_history_summary(profile["match_history_metrics"]),
+                    "evidence_claim_ids": sorted(profile["claim_ids"])[:80],
+                    "highest_confidence": round(profile["highest_confidence"], 3),
+                },
+            )
+        )
+        relationships.extend(
+            [
+                WorldRelationship(
+                    source_id=f"match:{match.round_id}",
+                    relation_type="has_team_match_profile",
+                    target_id=profile_id,
+                    weight=profile["highest_confidence"] or 1.0,
+                ),
+                WorldRelationship(
+                    source_id=team_id,
+                    relation_type="has_match_profile",
+                    target_id=profile_id,
+                    weight=profile["highest_confidence"] or 1.0,
+                ),
+            ]
+        )
+        for scout_name in sorted(profile["scout_names"]):
+            relationships.append(
+                WorldRelationship(
+                    source_id=profile_id,
+                    relation_type="covered_by_scout",
+                    target_id=f"scout:{_slug(scout_name)}",
+                    weight=1.0,
+                )
+            )
+        for claim_type in sorted(profile["claim_types"]):
+            relationships.append(
+                WorldRelationship(
+                    source_id=profile_id,
+                    relation_type="supports_team_scouting_topic",
+                    target_id=f"team_scouting_topic:{_stable_key(match.round_id, team, claim_type)}",
+                    weight=1.0,
+                )
+            )
+        for player in sorted(profile["players"]):
+            relationships.append(
+                WorldRelationship(
+                    source_id=profile_id,
+                    relation_type="summarizes_player_match_profile",
+                    target_id=f"player_match_profile:{_stable_key(match.round_id, team, player)}",
+                    weight=1.0,
+                )
+            )
+        for claim_id in sorted(profile["claim_ids"]):
+            relationships.append(
+                WorldRelationship(
+                    source_id=profile_id,
+                    relation_type="summarizes_evidence_claim",
+                    target_id=claim_id,
+                    weight=1.0,
+                )
+            )
+
+
+def _append_source_domain_profile_nodes(
+    entities: list[WorldEntity],
+    relationships: list[WorldRelationship],
+    *,
+    match: MatchContext,
+) -> None:
+    profiles: dict[str, dict] = {}
+    for finding in match.findings:
+        for index, evidence in enumerate(finding.evidence_claims):
+            if not _admissible_evidence(evidence):
+                continue
+            source_url = _normal_text(evidence.get("source_url"))
+            source_title = _normal_text(evidence.get("source_title"))
+            domain = _domain(source_url)
+            if not domain:
+                continue
+            profile = profiles.setdefault(
+                domain,
+                {
+                    "claim_count": 0,
+                    "claim_types": Counter(),
+                    "teams": set(),
+                    "team_claim_types": set(),
+                    "players": set(),
+                    "source_urls": set(),
+                    "source_titles": set(),
+                    "source_quality": Counter(),
+                    "source_kind": Counter(),
+                    "source_recency": Counter(),
+                    "scout_names": set(),
+                    "claim_quality_counts": Counter(),
+                    "claim_ids": set(),
+                    "highest_confidence": 0.0,
+                },
+            )
+            claim_id = _evidence_claim_id(finding.finding_id, index, evidence)
+            claim_type = _normal_text(evidence.get("claim_type"))
+            confidence = _float_or_default(evidence.get("confidence"), finding.confidence)
+            profile["claim_count"] += 1
+            profile["highest_confidence"] = max(profile["highest_confidence"], confidence)
+            profile["claim_ids"].add(claim_id)
+            if claim_type:
+                profile["claim_types"][claim_type] += 1
+            team = _evidence_match_team(evidence, match) or _normal_text(evidence.get("team"))
+            if team:
+                profile["teams"].add(team)
+                if claim_type:
+                    profile["team_claim_types"].add((team, claim_type))
+            player = _normal_text(evidence.get("player"))
+            if player:
+                profile["players"].add(player)
+            profile["source_urls"].add(source_url)
+            if source_title:
+                profile["source_titles"].add(source_title)
+            profile["scout_names"].add(finding.scout_name)
+            for source_field, counter_name in (
+                ("source_quality", "source_quality"),
+                ("source_kind", "source_kind"),
+                ("source_recency_bucket", "source_recency"),
+            ):
+                value = _normal_text(evidence.get(source_field))
+                if value:
+                    profile[counter_name][value] += 1
+            profile["claim_quality_counts"].update(_claim_quality_tags(evidence, confidence=confidence))
+
+    for domain, profile in profiles.items():
+        profile_id = f"source_domain_profile:{_stable_key(match.round_id, domain)}"
+        domain_id = f"source_domain:{_slug(domain)}"
+        entities.append(
+            WorldEntity(
+                entity_id=profile_id,
+                entity_type="source_domain_profile",
+                name=f"{domain} source profile",
+                attributes={
+                    "domain": domain,
+                    "match_id": f"match:{match.round_id}",
+                    "claim_count": profile["claim_count"],
+                    "claim_types": _counter_attributes(profile["claim_types"]),
+                    "teams": sorted(profile["teams"]),
+                    "players": sorted(profile["players"])[:40],
+                    "player_count": len(profile["players"]),
+                    "unique_source_count": len(profile["source_urls"]),
+                    "source_urls": sorted(profile["source_urls"])[:12],
+                    "source_titles": sorted(profile["source_titles"])[:12],
+                    "source_quality": _counter_attributes(profile["source_quality"]),
+                    "source_kind": _counter_attributes(profile["source_kind"]),
+                    "source_recency": _counter_attributes(profile["source_recency"]),
+                    "scout_names": sorted(profile["scout_names"]),
+                    "claim_quality_counts": _counter_attributes(profile["claim_quality_counts"]),
+                    "evidence_claim_ids": sorted(profile["claim_ids"])[:80],
+                    "highest_confidence": round(profile["highest_confidence"], 3),
+                },
+            )
+        )
+        relationships.extend(
+            [
+                WorldRelationship(
+                    source_id=f"match:{match.round_id}",
+                    relation_type="has_source_domain_profile",
+                    target_id=profile_id,
+                    weight=profile["highest_confidence"] or 1.0,
+                ),
+                WorldRelationship(
+                    source_id=profile_id,
+                    relation_type="profiles_domain",
+                    target_id=domain_id,
+                    weight=profile["highest_confidence"] or 1.0,
+                ),
+            ]
+        )
+        for scout_name in sorted(profile["scout_names"]):
+            relationships.append(
+                WorldRelationship(
+                    source_id=profile_id,
+                    relation_type="covered_by_scout",
+                    target_id=f"scout:{_slug(scout_name)}",
+                    weight=1.0,
+                )
+            )
+        for claim_type in sorted(profile["claim_types"]):
+            relationships.append(
+                WorldRelationship(
+                    source_id=profile_id,
+                    relation_type="supports_scouting_topic",
+                    target_id=f"scouting_topic:{_stable_key(match.round_id, claim_type)}",
+                    weight=1.0,
+                )
+            )
+            for team, team_claim_type in sorted(profile["team_claim_types"]):
+                if team_claim_type != claim_type:
+                    continue
+                relationships.append(
+                    WorldRelationship(
+                        source_id=profile_id,
+                        relation_type="supports_team_scouting_topic",
+                        target_id=f"team_scouting_topic:{_stable_key(match.round_id, team, claim_type)}",
+                        weight=1.0,
+                    )
+                )
+        for claim_id in sorted(profile["claim_ids"]):
+            relationships.append(
+                WorldRelationship(
+                    source_id=profile_id,
+                    relation_type="summarizes_evidence_claim",
+                    target_id=claim_id,
+                    weight=1.0,
+                )
+            )
+
+
+def _append_scout_match_profile_nodes(
+    entities: list[WorldEntity],
+    relationships: list[WorldRelationship],
+    *,
+    match: MatchContext,
+) -> None:
+    profiles: dict[str, dict] = {}
+    for finding in match.findings:
+        scout_name = _normal_text(finding.scout_name)
+        if not scout_name:
+            continue
+        profile = profiles.setdefault(
+            scout_name,
+            {
+                "finding_ids": set(),
+                "finding_names": set(),
+                "access_levels": Counter(),
+                "source_types": Counter(),
+                "claim_count": 0,
+                "claim_types": Counter(),
+                "teams": set(),
+                "players": set(),
+                "source_urls": set(),
+                "source_domains": Counter(),
+                "source_quality": Counter(),
+                "source_kind": Counter(),
+                "source_recency": Counter(),
+                "extraction_methods": Counter(),
+                "claim_quality_counts": Counter(),
+                "metric_keys": Counter(),
+                "claim_ids": set(),
+                "highest_confidence": 0.0,
+            },
+        )
+        profile["finding_ids"].add(f"finding:{finding.finding_id}")
+        profile["finding_names"].add(finding.finding_name)
+        profile["access_levels"][finding.access_level] += 1
+        profile["source_types"][finding.source_type] += 1
+        profile["highest_confidence"] = max(profile["highest_confidence"], finding.confidence)
+        for index, evidence in enumerate(finding.evidence_claims):
+            if not _admissible_evidence(evidence):
+                continue
+            claim_id = _evidence_claim_id(finding.finding_id, index, evidence)
+            claim_type = _normal_text(evidence.get("claim_type"))
+            confidence = _float_or_default(evidence.get("confidence"), finding.confidence)
+            profile["claim_count"] += 1
+            profile["highest_confidence"] = max(profile["highest_confidence"], confidence)
+            profile["claim_ids"].add(claim_id)
+            if claim_type:
+                profile["claim_types"][claim_type] += 1
+            team = _evidence_match_team(evidence, match) or _normal_text(evidence.get("team"))
+            if team:
+                profile["teams"].add(team)
+            player = _normal_text(evidence.get("player"))
+            if player:
+                profile["players"].add(player)
+            source_url = _normal_text(evidence.get("source_url"))
+            if source_url:
+                profile["source_urls"].add(source_url)
+                domain = _domain(source_url)
+                if domain:
+                    profile["source_domains"][domain] += 1
+            for source_field, counter_name in (
+                ("source_quality", "source_quality"),
+                ("source_kind", "source_kind"),
+                ("source_recency_bucket", "source_recency"),
+                ("extraction_method", "extraction_methods"),
+            ):
+                value = _normal_text(evidence.get(source_field))
+                if value:
+                    profile[counter_name][value] += 1
+            metrics = evidence.get("metrics") if isinstance(evidence.get("metrics"), dict) else {}
+            for metric_key in metrics:
+                profile["metric_keys"][str(metric_key)] += 1
+            profile["claim_quality_counts"].update(_claim_quality_tags(evidence, confidence=confidence))
+
+    for scout_name, profile in profiles.items():
+        if not profile["claim_count"]:
+            continue
+        profile_id = f"scout_match_profile:{_stable_key(match.round_id, scout_name)}"
+        scout_id = f"scout:{_slug(scout_name)}"
+        entities.append(
+            WorldEntity(
+                entity_id=profile_id,
+                entity_type="scout_match_profile",
+                name=f"{scout_name} match profile",
+                attributes={
+                    "scout_name": scout_name,
+                    "match_id": f"match:{match.round_id}",
+                    "finding_ids": sorted(profile["finding_ids"]),
+                    "finding_names": sorted(profile["finding_names"]),
+                    "access_levels": _counter_attributes(profile["access_levels"]),
+                    "source_types": _counter_attributes(profile["source_types"]),
+                    "claim_count": profile["claim_count"],
+                    "claim_types": _counter_attributes(profile["claim_types"]),
+                    "teams": sorted(profile["teams"]),
+                    "players": sorted(profile["players"])[:40],
+                    "player_count": len(profile["players"]),
+                    "unique_source_count": len(profile["source_urls"]),
+                    "source_urls": sorted(profile["source_urls"])[:12],
+                    "source_domains": _counter_attributes(profile["source_domains"]),
+                    "source_quality": _counter_attributes(profile["source_quality"]),
+                    "source_kind": _counter_attributes(profile["source_kind"]),
+                    "source_recency": _counter_attributes(profile["source_recency"]),
+                    "extraction_methods": _counter_attributes(profile["extraction_methods"]),
+                    "metric_keys": _counter_attributes(profile["metric_keys"]),
+                    "claim_quality_counts": _counter_attributes(profile["claim_quality_counts"]),
+                    "evidence_claim_ids": sorted(profile["claim_ids"])[:120],
+                    "highest_confidence": round(profile["highest_confidence"], 3),
+                },
+            )
+        )
+        relationships.extend(
+            [
+                WorldRelationship(
+                    source_id=f"match:{match.round_id}",
+                    relation_type="has_scout_match_profile",
+                    target_id=profile_id,
+                    weight=profile["highest_confidence"] or 1.0,
+                ),
+                WorldRelationship(
+                    source_id=scout_id,
+                    relation_type="has_match_profile",
+                    target_id=profile_id,
+                    weight=profile["highest_confidence"] or 1.0,
+                ),
+                WorldRelationship(
+                    source_id=profile_id,
+                    relation_type="profiles_scout",
+                    target_id=scout_id,
+                    weight=profile["highest_confidence"] or 1.0,
+                ),
+            ]
+        )
+        for finding_id in sorted(profile["finding_ids"]):
+            relationships.append(
+                WorldRelationship(
+                    source_id=profile_id,
+                    relation_type="summarizes_finding",
+                    target_id=finding_id,
+                    weight=1.0,
+                )
+            )
+        for claim_type in sorted(profile["claim_types"]):
+            relationships.append(
+                WorldRelationship(
+                    source_id=profile_id,
+                    relation_type="supports_scouting_topic",
+                    target_id=f"scouting_topic:{_stable_key(match.round_id, claim_type)}",
+                    weight=1.0,
+                )
+            )
+        for claim_id in sorted(profile["claim_ids"]):
+            relationships.append(
+                WorldRelationship(
+                    source_id=profile_id,
+                    relation_type="summarizes_evidence_claim",
+                    target_id=claim_id,
+                    weight=1.0,
+                )
+            )
+
+
+def _append_player_match_profile_nodes(
+    entities: list[WorldEntity],
+    relationships: list[WorldRelationship],
+    *,
+    match: MatchContext,
+) -> None:
+    profiles: dict[tuple[str, str], dict] = {}
+    for finding in match.findings:
+        for index, evidence in enumerate(finding.evidence_claims):
+            if not _admissible_evidence(evidence):
+                continue
+            player = _normal_text(evidence.get("player"))
+            if not player:
+                continue
+            team = _evidence_match_team(evidence, match) or _normal_text(evidence.get("team"))
+            if not team:
+                continue
+            key = (team, player)
+            profile = profiles.setdefault(
+                key,
+                {
+                    "claim_count": 0,
+                    "claim_types": Counter(),
+                    "metric_keys": Counter(),
+                    "claim_quality_counts": Counter(),
+                    "source_quality": Counter(),
+                    "source_kind": Counter(),
+                    "source_recency": Counter(),
+                    "source_urls": set(),
+                    "scout_names": set(),
+                    "clubs": set(),
+                    "positions": set(),
+                    "availability_statuses": set(),
+                    "availability_status_counts": Counter(),
+                    "injury_body_parts": set(),
+                    "season_labels": set(),
+                    "performance_metrics": defaultdict(set),
+                    "claim_ids": set(),
+                    "highest_confidence": 0.0,
+                },
+            )
+            claim_id = _evidence_claim_id(finding.finding_id, index, evidence)
+            claim_type = _normal_text(evidence.get("claim_type"))
+            confidence = _float_or_default(evidence.get("confidence"), finding.confidence)
+            profile["claim_count"] += 1
+            profile["highest_confidence"] = max(profile["highest_confidence"], confidence)
+            profile["claim_ids"].add(claim_id)
+            if claim_type:
+                profile["claim_types"][claim_type] += 1
+            profile["scout_names"].add(finding.scout_name)
+            source_url = _normal_text(evidence.get("source_url"))
+            if source_url:
+                profile["source_urls"].add(source_url)
+            for source_field, counter_name in (
+                ("source_quality", "source_quality"),
+                ("source_kind", "source_kind"),
+                ("source_recency_bucket", "source_recency"),
+            ):
+                value = _normal_text(evidence.get(source_field))
+                if value:
+                    profile[counter_name][value] += 1
+            profile["claim_quality_counts"].update(_claim_quality_tags(evidence, confidence=confidence))
+            metrics = evidence.get("metrics") or {}
+            if not isinstance(metrics, dict):
+                continue
+            for metric_key, metric_value in metrics.items():
+                if metric_value in {None, ""}:
+                    continue
+                metric_key = str(metric_key)
+                profile["metric_keys"][metric_key] += 1
+                if metric_key == "club":
+                    profile["clubs"].add(str(metric_value))
+                elif metric_key == "position":
+                    profile["positions"].add(str(metric_value))
+                elif metric_key == "availability_status":
+                    profile["availability_statuses"].add(str(metric_value))
+                    profile["availability_status_counts"][str(metric_value)] += 1
+                elif metric_key == "injury_body_part":
+                    profile["injury_body_parts"].add(str(metric_value))
+                elif metric_key == "season_label":
+                    profile["season_labels"].add(str(metric_value))
+                elif metric_key in {
+                    "goals",
+                    "assists",
+                    "goal_contributions",
+                    "appearances",
+                    "minutes",
+                    "starts",
+                    "clean_sheets",
+                    "blocked_shots",
+                    "chances_created",
+                    "key_passes_per_game",
+                    "shots_per_game",
+                    "average_rating",
+                    "pass_completion_pct",
+                    "xg",
+                    "xa",
+                }:
+                    profile["performance_metrics"][metric_key].add(str(metric_value))
+
+    for (team, player), profile in profiles.items():
+        side = "home" if team == match.home_team else ("away" if team == match.away_team else "")
+        profile_id = f"player_match_profile:{_stable_key(match.round_id, team, player)}"
+        player_id = f"player:{_slug(player)}"
+        team_id = f"team:{_slug(team)}"
+        entities.extend(
+            [
+                WorldEntity(
+                    entity_id=player_id,
+                    entity_type="player",
+                    name=player,
+                    attributes={"team": team},
+                ),
+                WorldEntity(
+                    entity_id=profile_id,
+                    entity_type="player_match_profile",
+                    name=f"{player} match profile",
+                    attributes={
+                        "player": player,
+                        "team": team,
+                        "side": side,
+                        "match_id": f"match:{match.round_id}",
+                        "claim_count": profile["claim_count"],
+                        "claim_types": _counter_attributes(profile["claim_types"]),
+                        "metric_keys": _counter_attributes(profile["metric_keys"]),
+                        "claim_quality_counts": _counter_attributes(profile["claim_quality_counts"]),
+                        "source_quality": _counter_attributes(profile["source_quality"]),
+                        "source_kind": _counter_attributes(profile["source_kind"]),
+                        "source_recency": _counter_attributes(profile["source_recency"]),
+                        "unique_source_count": len(profile["source_urls"]),
+                        "source_urls": sorted(profile["source_urls"])[:8],
+                        "scout_names": sorted(profile["scout_names"]),
+                        "clubs": sorted(profile["clubs"]),
+                        "positions": sorted(profile["positions"]),
+                        "season_labels": sorted(profile["season_labels"]),
+                        "availability_statuses": sorted(profile["availability_statuses"]),
+                        "availability_status_counts": _counter_attributes(profile["availability_status_counts"]),
+                        "availability_conflict": len(profile["availability_statuses"]) > 1,
+                        "injury_body_parts": sorted(profile["injury_body_parts"]),
+                        "performance_metrics": {
+                            key: sorted(values)
+                            for key, values in sorted(profile["performance_metrics"].items())
+                        },
+                        "season_stat_summary": _season_stat_summary(profile["performance_metrics"]),
+                        "evidence_claim_ids": sorted(profile["claim_ids"])[:80],
+                        "highest_confidence": round(profile["highest_confidence"], 3),
+                    },
+                ),
+            ]
+        )
+        relationships.extend(
+            [
+                WorldRelationship(
+                    source_id=f"match:{match.round_id}",
+                    relation_type="has_player_match_profile",
+                    target_id=profile_id,
+                    weight=profile["highest_confidence"] or 1.0,
+                ),
+                WorldRelationship(
+                    source_id=team_id,
+                    relation_type="has_player_match_profile",
+                    target_id=profile_id,
+                    weight=profile["highest_confidence"] or 1.0,
+                ),
+                WorldRelationship(
+                    source_id=player_id,
+                    relation_type="has_match_profile",
+                    target_id=profile_id,
+                    weight=profile["highest_confidence"] or 1.0,
+                ),
+            ]
+        )
+        for scout_name in sorted(profile["scout_names"]):
+            relationships.append(
+                WorldRelationship(
+                    source_id=profile_id,
+                    relation_type="covered_by_scout",
+                    target_id=f"scout:{_slug(scout_name)}",
+                    weight=1.0,
+                )
+            )
+        for claim_id in sorted(profile["claim_ids"]):
+            relationships.append(
+                WorldRelationship(
+                    source_id=profile_id,
+                    relation_type="summarizes_evidence_claim",
+                    target_id=claim_id,
+                    weight=1.0,
+                )
+            )
+        for claim_type in sorted(profile["claim_types"]):
+            relationships.append(
+                WorldRelationship(
+                    source_id=profile_id,
+                    relation_type="supports_team_scouting_topic",
+                    target_id=f"team_scouting_topic:{_stable_key(match.round_id, team, claim_type)}",
+                    weight=1.0,
+                )
+            )
 
 
 def _topic_freshness_status(*, claim_count: int, fresh_required: bool, recent_claim_count: int) -> str:
@@ -972,15 +2082,20 @@ def _append_player_stat_line_node(
     performance_keys = {
         "goals",
         "assists",
+        "goal_contributions",
         "appearances",
+        "starts",
         "clean_sheets",
         "blocked_shots",
+        "chances_created",
         "key_passes_per_game",
+        "shots_per_game",
+        "average_rating",
         "pass_completion_pct",
         "xg",
         "xa",
     }
-    stat_keys = {*performance_keys, "minutes"}
+    stat_keys = {*performance_keys, "minutes", "season_label"}
     stat_metrics = {
         key: value
         for key, value in metrics.items()
@@ -1248,19 +2363,48 @@ def _metric_unit(metric_key: str) -> str:
         return "year"
     if metric_key.endswith("_pct"):
         return "percent"
+    if metric_key.endswith("_probability"):
+        return "probability"
     if metric_key in {
         "goals",
         "assists",
+        "goal_contributions",
         "appearances",
         "minutes",
+        "starts",
         "clean_sheets",
         "blocked_shots",
+        "chances_created",
         "international_caps",
         "international_goals",
+        "recent_sample_matches",
+        "recent_wins",
+        "recent_draws",
+        "recent_losses",
+        "unbeaten_matches",
+        "winning_streak_matches",
+        "recent_goals_for",
+        "recent_goals_against",
+        "historical_team_a_wins",
+        "historical_team_a_unbeaten",
+        "historical_meetings",
+        "h2h_recent_sample_matches",
+        "h2h_team_a_wins",
+        "h2h_draws",
+        "h2h_team_a_losses",
+        "telegram_views",
+        "telegram_forwards",
+        "telegram_replies",
+        "telegram_reactions",
+        "visible_button_count",
     }:
         return "count"
     if metric_key.endswith("_per_game"):
         return "per_game"
+    if metric_key.endswith("_per_match"):
+        return "per_match"
+    if metric_key == "average_rating":
+        return "rating"
     if metric_key.endswith("_signal"):
         return "label"
     if metric_key.endswith("_score"):
@@ -1273,17 +2417,29 @@ def _metric_unit(metric_key: str) -> str:
 
 
 def _admissible_evidence(evidence: dict) -> bool:
-    if not evidence.get("claim_type") or not evidence.get("claim"):
-        return False
+    return not _evidence_rejection_reasons(evidence)
+
+
+def _evidence_rejection_reasons(evidence: dict) -> list[str]:
+    reasons: list[str] = []
+    if not evidence.get("claim_type"):
+        reasons.append("missing_claim_type")
+    if not evidence.get("claim"):
+        reasons.append("missing_claim")
     if not evidence.get("source_url") and not evidence.get("source_title"):
-        return False
-    if str(evidence.get("source_quality") or "").lower() == "weak":
-        return False
-    if str(evidence.get("source_kind") or "").lower() == "search" and str(
-        evidence.get("source_quality") or ""
-    ).lower() != "strong":
-        return False
-    return True
+        reasons.append("missing_source")
+    source_quality = str(evidence.get("source_quality") or "").lower()
+    source_kind = str(evidence.get("source_kind") or "").lower()
+    if source_quality == "weak":
+        reasons.append("weak_source")
+    if source_kind == "search" and source_quality != "strong":
+        reasons.append("weak_search_aggregate")
+    impact = str(evidence.get("impact") or "").strip().lower()
+    if not impact:
+        reasons.append("missing_impact")
+    elif impact == "unknown":
+        reasons.append("unknown_impact")
+    return reasons
 
 
 def _evidence_match_team(evidence: dict, match: MatchContext) -> str:
@@ -1361,6 +2517,10 @@ def _claim_name(evidence: dict) -> str:
     subject = _normal_text(evidence.get("subject")) or _normal_text(evidence.get("team")) or "Evidence"
     claim_type = _normal_text(evidence.get("claim_type")) or "claim"
     return f"{subject} {claim_type}".replace("_", " ")
+
+
+def _evidence_claim_id(finding_key: str, index: int, evidence: dict) -> str:
+    return f"evidence_claim:{_stable_key(finding_key, str(index), str(evidence.get('claim') or ''))}"
 
 
 def _dedupe_entities(entities: list[WorldEntity]) -> list[WorldEntity]:

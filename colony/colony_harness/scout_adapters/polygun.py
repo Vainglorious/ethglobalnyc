@@ -106,6 +106,7 @@ def _claims_from_snapshot(snapshot: dict, *, home_team: str, away_team: str) -> 
                     impact="context_home" if team == home_team else "context_away",
                     confidence=0.4,
                     source_url=source_url,
+                    message=message,
                 )
             )
         if any(token in lowered for token in ("buy yes", "buy no", "price", "odds", "market")) and (
@@ -121,6 +122,7 @@ def _claims_from_snapshot(snapshot: dict, *, home_team: str, away_team: str) -> 
                     impact="context_home" if team == home_team else "context_away",
                     confidence=0.34,
                     source_url=source_url,
+                    message=message,
                 )
             )
     return _dedupe_claims(claims)[:10]
@@ -162,6 +164,7 @@ def _claim(
     impact: str,
     confidence: float,
     source_url: str,
+    message: dict | None = None,
 ) -> dict:
     return {
         "claim_type": claim_type,
@@ -178,13 +181,20 @@ def _claim(
         "source_kind": "market_snapshot",
         "source_quality": "medium",
         "extraction_method": "polygun_snapshot_parse",
-        "metrics": _claim_metrics(claim),
+        "metrics": _claim_metrics(claim, message=message or {}),
     }
 
 
-def _claim_metrics(text: str) -> dict:
+def _claim_metrics(text: str, *, message: dict | None = None) -> dict:
     lowered = text.lower()
-    metrics: dict[str, object] = {}
+    message = message or {}
+    buttons = [button for button in message.get("buttons") or [] if isinstance(button, dict)]
+    button_texts = [str(button.get("text") or "") for button in buttons if str(button.get("text") or "").strip()]
+    metrics: dict[str, object] = {
+        "polygun_message_id": str(message.get("id") or message.get("message_id") or ""),
+        "visible_button_count": len(button_texts),
+        "has_callback_buttons": any(bool(button.get("callback")) for button in buttons),
+    }
     match = re.search(r"\b(\d+(?:\.\d+)?)\s+pusd\b", lowered)
     if match:
         metrics["pusd_amount"] = float(match.group(1))
@@ -195,7 +205,19 @@ def _claim_metrics(text: str) -> dict:
     probability = _price_probability(lowered)
     if probability is not None:
         metrics["visible_price_probability"] = probability
-    return metrics
+    yes_probability = _side_probability("yes", text, button_texts)
+    no_probability = _side_probability("no", text, button_texts)
+    if yes_probability is not None:
+        metrics["buy_yes_price_probability"] = yes_probability
+    if no_probability is not None:
+        metrics["buy_no_price_probability"] = no_probability
+    market_id = _market_id(text, button_texts)
+    if market_id:
+        metrics["polygun_market_id"] = market_id
+    question = _market_question(text)
+    if question:
+        metrics["market_question"] = question
+    return {key: value for key, value in metrics.items() if value not in {None, ""}}
 
 
 def _price_probability(text: str) -> float | None:
@@ -216,6 +238,53 @@ def _price_probability(text: str) -> float | None:
         if 0.01 <= value <= 0.99:
             return round(value, 4)
     return None
+
+
+def _side_probability(side: str, text: str, button_texts: list[str]) -> float | None:
+    haystacks = [text, *button_texts]
+    side_pattern = "yes" if side == "yes" else "no"
+    for value in haystacks:
+        lowered = value.lower()
+        if side_pattern not in lowered:
+            continue
+        pct = re.search(rf"\b(?:buy\s+)?{side_pattern}\b\D{{0,18}}(\d+(?:\.\d+)?)\s*%", lowered)
+        if pct:
+            probability = float(pct.group(1)) / 100.0
+            if 0.01 <= probability <= 0.99:
+                return round(probability, 4)
+        cents = re.search(rf"\b(?:buy\s+)?{side_pattern}\b\D{{0,18}}(\d{{1,2}})\s*(?:c(?:ents?)?|¢)", lowered)
+        if cents:
+            probability = float(cents.group(1)) / 100.0
+            if 0.01 <= probability <= 0.99:
+                return round(probability, 4)
+        decimal = re.search(rf"\b(?:buy\s+)?{side_pattern}\b\D{{0,18}}(0?\.\d{{1,4}})\b", lowered)
+        if decimal:
+            probability = float(decimal.group(1))
+            if 0.01 <= probability <= 0.99:
+                return round(probability, 4)
+    return None
+
+
+def _market_id(text: str, button_texts: list[str]) -> str:
+    combined = " ".join([text, *button_texts])
+    for pattern in (r"\bm[_-]?(\d{3,})\b", r"\bmarket(?:\s+id)?\D{0,8}(\d{3,})\b"):
+        match = re.search(pattern, combined.lower())
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _market_question(text: str) -> str:
+    question_match = re.search(r"\b((?:will|can|does|do|is|are|who|which)\b.{8,160}\?)", text, flags=re.IGNORECASE)
+    if question_match:
+        return _clean_text(question_match.group(1))
+    for line in text.splitlines():
+        cleaned = _clean_text(line.strip(" -•"))
+        if not cleaned:
+            continue
+        if "?" in cleaned and len(cleaned) <= 180:
+            return cleaned
+    return ""
 
 
 def _finding(
@@ -267,11 +336,19 @@ def _dedupe_claims(claims: list[dict]) -> list[dict]:
     seen: set[tuple[str, str, str]] = set()
     deduped: list[dict] = []
     for claim in claims:
-        key = (
-            str(claim.get("claim_type") or ""),
-            str(claim.get("subject") or "").lower(),
-            str(claim.get("claim") or "").lower()[:120],
-        )
+        metrics = claim.get("metrics") if isinstance(claim.get("metrics"), dict) else {}
+        if metrics.get("polygun_message_id"):
+            key = (
+                str(claim.get("claim_type") or ""),
+                str(claim.get("team") or "").lower(),
+                str(metrics.get("polygun_message_id") or ""),
+            )
+        else:
+            key = (
+                str(claim.get("claim_type") or ""),
+                str(claim.get("subject") or "").lower(),
+                str(claim.get("claim") or "").lower()[:120],
+            )
         if key in seen:
             continue
         seen.add(key)

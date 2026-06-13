@@ -16,7 +16,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -70,6 +70,53 @@ STAR_PLAYERS = {
     "Qatar": ["akram afif", "afif", "almoez ali", "al-haydos", "barsham"],
     "Switzerland": ["xhaka", "granit xhaka", "akanji", "embolo", "sommer", "ndoye", "zakaria"],
 }
+
+
+@dataclass(frozen=True)
+class DeepSeekScoutRole:
+    role_id: str
+    scout_name: str
+    finding_name: str
+    source_type: SourceType
+    allowed_claim_types: tuple[str, ...]
+    focus: str
+
+
+DEEPSEEK_SCOUT_ROLES = (
+    DeepSeekScoutRole(
+        role_id="availability_lineup",
+        scout_name="deepseek_availability_agent",
+        finding_name="deepseek_availability_lineup_read",
+        source_type="lineup",
+        allowed_claim_types=("injury_availability", "lineup"),
+        focus=(
+            "availability, suspensions, injury status, expected starters, roles, and likely XI details. "
+            "Prefer dated match-week information."
+        ),
+    ),
+    DeepSeekScoutRole(
+        role_id="form_players",
+        scout_name="deepseek_form_player_agent",
+        finding_name="deepseek_form_player_read",
+        source_type="stats",
+        allowed_claim_types=("recent_form", "player_form", "match_history"),
+        focus=(
+            "recent team results, player season output, key player form, and concrete head-to-head or match-result history. "
+            "Prefer claims with scores, goals, assists, appearances, or recent fixture context."
+        ),
+    ),
+    DeepSeekScoutRole(
+        role_id="tactical_matchup",
+        scout_name="deepseek_tactical_agent",
+        finding_name="deepseek_tactical_matchup_read",
+        source_type="stats",
+        allowed_claim_types=("tactical", "lineup"),
+        focus=(
+            "formations, pressing/build-up patterns, matchup details, role usage, tactical weaknesses, and shape changes. "
+            "Avoid generic squad descriptions unless they explain match usage."
+        ),
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -580,6 +627,7 @@ def _focused_rescout_findings(
     for target in targets:
         team = _match_team_name(str(target.get("team") or ""), home_team=home_team, away_team=away_team)
         claim_type = _clean_text(str(target.get("claim_type") or ""))
+        quality_reasons = [str(reason) for reason in target.get("quality_reasons") or [] if str(reason)]
         if not team or not claim_type:
             continue
         claims = _focused_claims_for_target(
@@ -604,6 +652,7 @@ def _focused_rescout_findings(
             cache_dir=cache_dir,
             refresh=refresh,
             timeout_seconds=timeout_seconds,
+            quality_reasons=quality_reasons,
         )
         claim_dicts = _admissible_evidence_claims([claim.to_dict() for claim in _dedupe_claims(claims)])
         if not claim_dicts:
@@ -654,6 +703,7 @@ def _focused_claims_for_target(
     cache_dir: Path,
     refresh: bool,
     timeout_seconds: int,
+    quality_reasons: list[str] | None = None,
 ) -> list[EvidenceClaim]:
     claims: list[EvidenceClaim] = []
     focused_items = _fetch_focused_rescout_items(
@@ -665,8 +715,9 @@ def _focused_claims_for_target(
         refresh=refresh,
         timeout_seconds=timeout_seconds,
         known_players=known_players,
+        quality_reasons=quality_reasons or [],
     )
-    if claim_type in {"team_profile", "team_history"}:
+    if claim_type == "team_profile":
         claims.extend(_team_profile_claims(home_profile, away_profile))
     elif claim_type == "recent_form":
         claims.extend(team_form_claims)
@@ -746,8 +797,9 @@ def _fetch_focused_rescout_items(
     refresh: bool,
     timeout_seconds: int,
     known_players: dict[str, list[str]],
+    quality_reasons: list[str] | None = None,
 ) -> list[NewsItem]:
-    queries = _focused_rescout_queries(team=team, claim_type=claim_type)
+    queries = _focused_rescout_queries(team=team, claim_type=claim_type, quality_reasons=quality_reasons or [])
     if not queries:
         return []
     items: list[NewsItem] = []
@@ -779,44 +831,76 @@ def _fetch_focused_rescout_items(
     return items[:8]
 
 
-def _focused_rescout_queries(*, team: str, claim_type: str) -> list[str]:
+def _focused_rescout_queries(*, team: str, claim_type: str, quality_reasons: list[str] | None = None) -> list[str]:
     common_suffix = "-prediction -predictions -odds -picks -betting"
+    reasons = set(quality_reasons or [])
     if claim_type == "recent_form":
-        return [
+        queries = [
             f"{team} national football team recent results fixtures last matches 2025 2026 {common_suffix}",
             f"{team} football results archive fixtures scores form 2026 {common_suffix}",
         ]
+        if "needs_recent_results_window" in reasons:
+            queries = [
+                f"{team} national football team last 5 results W D L goals for against 2026 {common_suffix}",
+                f"{team} football form guide last five matches wins draws losses goals 2026 {common_suffix}",
+                *queries,
+            ]
+        return queries
     if claim_type == "player_form":
-        return [
+        queries = [
             f"{team} football key players season stats goals assists appearances 2025 2026",
             f"{team} national team player form club season stats FBref SofaScore Transfermarkt",
         ]
+        if "needs_player" in reasons:
+            queries.insert(0, f"{team} national football team key players goals assists season stats 2025 2026")
+        if "needs_player_season_metric" in reasons:
+            queries.insert(0, f"{team} player stats goals assists appearances 2025-26 season club form")
+        return queries
     if claim_type == "injury_availability":
-        return [
+        queries = [
             f"{team} national football team injury report squad availability suspension 2026",
             f"{team} World Cup team news injuries doubtful ruled out squad",
         ]
+        if "needs_recent_source" in reasons:
+            queries.insert(0, f"{team} latest injury report today squad availability suspension World Cup 2026")
+        if "needs_availability_status" in reasons:
+            queries.insert(0, f"{team} ruled out doubtful injured suspended unavailable World Cup squad news")
+        return queries
     if claim_type == "lineup":
-        return [
+        queries = [
             f"{team} predicted lineup starting XI squad depth World Cup 2026",
             f"{team} football lineup squad roles key players 2026",
         ]
+        if "needs_lineup_or_role_signal" in reasons:
+            queries.insert(0, f"{team} predicted XI starting lineup probable lineup squad depth roles World Cup 2026")
+        if "needs_recent_source" in reasons:
+            queries.insert(0, f"{team} latest predicted lineup starting XI today World Cup 2026")
+        return queries
     if claim_type == "match_history":
-        return [
+        queries = [
             f"{team} national football team results fixtures scores 2025 2026 {common_suffix}",
             f"{team} national football team last 10 matches results form archive {common_suffix}",
             f"{team} football results archive match history fixtures scores {common_suffix}",
         ]
+        if "needs_match_history_metric" in reasons:
+            queries.insert(0, f"{team} last 10 matches results scores wins draws losses 2026 {common_suffix}")
+        return queries
     if claim_type == "tactical":
-        return [
+        queries = [
             f"{team} football tactics formation pressing transition set pieces 2026",
             f"{team} national football team tactical analysis formation key players",
         ]
+        if "needs_tactical_detail" in reasons:
+            queries.insert(0, f"{team} tactical analysis formation pressing set pieces build-up 2026")
+        return queries
     if claim_type == "squad_roster":
-        return [
+        queries = [
             f"{team} national football team current squad roster players clubs positions 2026",
             f"{team} football federation squad players official roster",
         ]
+        if "needs_roster_player" in reasons:
+            queries.insert(0, f"{team} current squad players positions clubs official roster 2026")
+        return queries
     return []
 
 
@@ -835,11 +919,290 @@ def _match_team_name(value: str, *, home_team: str, away_team: str) -> str:
 
 
 def _focused_source_type(claim_type: str) -> SourceType:
-    if claim_type in {"recent_form", "player_form", "match_history", "tactical", "team_history"}:
+    if claim_type in {"recent_form", "player_form", "match_history", "tactical"}:
         return "stats"
     if claim_type in {"squad_roster", "injury_availability", "lineup"}:
         return "lineup"
     return "news"
+
+
+def _deepseek_source_items(
+    *,
+    match_news: list[NewsItem],
+    recent_results_news: dict[str, list[NewsItem]],
+    team_scout_news: dict[str, dict[str, list[NewsItem]]],
+    availability_news: list[NewsItem],
+    official_squad_items: dict[str, list[NewsItem]],
+    match_history_items: list[NewsItem],
+    tactical_items: list[NewsItem],
+) -> list[NewsItem]:
+    items: list[NewsItem] = []
+    items.extend(match_news)
+    for team_items in recent_results_news.values():
+        items.extend(team_items)
+    for topic_items in team_scout_news.values():
+        for topic in ("recent_form", "player_form", "squad_depth"):
+            items.extend(topic_items.get(topic, []))
+    items.extend(availability_news)
+    for team_items in official_squad_items.values():
+        items.extend(team_items)
+    items.extend(match_history_items)
+    items.extend(tactical_items)
+    return _dedupe_items(items)[:24]
+
+
+def deepseek_agent_findings_for_match(
+    *,
+    round_id: str,
+    home_team: str,
+    away_team: str,
+    market: float,
+    stats: float,
+    news: float,
+    cache_dir: Path,
+    refresh: bool,
+    timeout_seconds: int,
+    source_items: list[NewsItem],
+) -> list[Finding]:
+    findings: list[Finding] = []
+    for role in DEEPSEEK_SCOUT_ROLES:
+        claims = fetch_deepseek_agent_claims(
+            home_team=home_team,
+            away_team=away_team,
+            source_items=source_items,
+            cache_dir=cache_dir,
+            refresh=refresh,
+            timeout_seconds=timeout_seconds,
+            role=role,
+        )
+        claim_dicts = _admissible_evidence_claims([claim.to_dict() for claim in claims])
+        if not claim_dicts:
+            continue
+        findings.append(
+            _finding(
+                round_id=round_id,
+                key=role.scout_name,
+                scout_name=role.scout_name,
+                access_level="shared",
+                source_type=role.source_type,
+                finding_name=role.finding_name,
+                home_probability=(
+                    stats
+                    if any(claim.get("claim_type") in {"recent_form", "player_form", "tactical"} for claim in claim_dicts)
+                    else news
+                ),
+                market=market,
+                confidence=0.52,
+                summary=(
+                    f"DeepSeek {role.scout_name} read the collected public source cards for {role.focus} "
+                    "Claims without a provided source URL are rejected."
+                ),
+                citations=list(
+                    dict.fromkeys(str(claim.get("source_url") or "") for claim in claim_dicts if claim.get("source_url"))
+                )[:8],
+                evidence_claims=claim_dicts,
+            )
+        )
+    return findings
+
+
+def fetch_deepseek_agent_claims(
+    *,
+    home_team: str,
+    away_team: str,
+    source_items: list[NewsItem],
+    cache_dir: Path,
+    refresh: bool,
+    timeout_seconds: int,
+    role: DeepSeekScoutRole | None = None,
+) -> list[EvidenceClaim]:
+    role = role or DEEPSEEK_SCOUT_ROLES[0]
+    source_items = [item for item in source_items if item.link and item.title][:24]
+    if not source_items:
+        return []
+    cache_file = cache_dir / f"deepseek_agent_claims_{role.role_id}_{_slug(home_team)}_{_slug(away_team)}.json"
+    if cache_file.exists() and not refresh:
+        try:
+            payload = json.loads(cache_file.read_text(encoding="utf-8"))
+        except Exception:
+            payload = []
+        return _deepseek_claims_from_payload(
+            payload,
+            home_team=home_team,
+            away_team=away_team,
+            source_items=source_items,
+            allowed_claim_types=set(role.allowed_claim_types),
+        )
+
+    content = _call_deepseek_agent(
+        home_team=home_team,
+        away_team=away_team,
+        source_items=source_items,
+        timeout_seconds=timeout_seconds,
+        role=role,
+    )
+    if not content:
+        return []
+    payload = _json_payload_from_text(content)
+    cache_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    return _deepseek_claims_from_payload(
+        payload,
+        home_team=home_team,
+        away_team=away_team,
+        source_items=source_items,
+        allowed_claim_types=set(role.allowed_claim_types),
+    )
+
+
+def _call_deepseek_agent(
+    *,
+    home_team: str,
+    away_team: str,
+    source_items: list[NewsItem],
+    timeout_seconds: int,
+    role: DeepSeekScoutRole,
+) -> str:
+    api_key = (
+        os.environ.get("COLONY_DEEPSEEK_API_KEY", "").strip()
+        or os.environ.get("OPENROUTER_API_KEY", "").strip()
+        or os.environ.get("COLONY_LLM_API_KEY", "").strip()
+    )
+    if not api_key:
+        return ""
+    base_url = (
+        os.environ.get("COLONY_DEEPSEEK_BASE_URL", "").strip()
+        or os.environ.get("COLONY_LLM_BASE_URL", "").strip()
+        or "https://openrouter.ai/api/v1"
+    ).rstrip("/")
+    model = (
+        os.environ.get("COLONY_DEEPSEEK_MODEL", "").strip()
+        or os.environ.get("COLONY_LLM_MODEL", "").strip()
+        or "deepseek/deepseek-v4-flash"
+    )
+    cards = [
+        {
+            "id": index,
+            "title": item.title,
+            "source": item.source,
+            "url": item.link,
+            "published": item.published,
+        }
+        for index, item in enumerate(source_items, start=1)
+    ]
+    prompt = (
+        f"You are {role.scout_name}, a football scouting agent building a match knowledge graph. "
+        "Use only the source cards below. Do not browse. Do not invent facts. "
+        "Return JSON only: an array of up to 8 objects. "
+        f"Allowed claim_type values for this agent: {', '.join(role.allowed_claim_types)}. "
+        "Each object must have claim_type, team, player, claim, source_url. "
+        "Optional metrics may be a small object with numeric or label values. "
+        f"Focus: {role.focus} "
+        "Do not output federation membership years, generic history, odds, betting tips, or unsourced opinions.\n\n"
+        f"Match: {home_team} vs {away_team}\n"
+        f"Source cards:\n{json.dumps(cards, ensure_ascii=False)}"
+    )
+    request = urllib.request.Request(
+        url=f"{base_url}/chat/completions",
+        data=json.dumps(
+            {
+                "model": model,
+                "temperature": 0,
+                "messages": [
+                    {"role": "system", "content": "Return strict JSON only. No prose."},
+                    {"role": "user", "content": prompt},
+                ],
+            }
+        ).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": os.environ.get("OPENROUTER_HTTP_REFERER", ""),
+            "X-OpenRouter-Title": os.environ.get("OPENROUTER_APP_TITLE", "Colony Harness"),
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310 - user-configured API endpoint.
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return ""
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        return ""
+    return content.strip() if isinstance(content, str) else ""
+
+
+def _json_payload_from_text(content: str) -> list[dict]:
+    text = content.strip()
+    match = re.search(r"\[[\s\S]*\]", text)
+    if match:
+        text = match.group(0)
+    try:
+        payload = json.loads(text)
+    except Exception:
+        return []
+    return payload if isinstance(payload, list) else []
+
+
+def _deepseek_claims_from_payload(
+    payload: list[dict],
+    *,
+    home_team: str,
+    away_team: str,
+    source_items: list[NewsItem],
+    allowed_claim_types: set[str] | None = None,
+) -> list[EvidenceClaim]:
+    source_by_url = {item.link: item for item in source_items if item.link}
+    allowed_claim_types = allowed_claim_types or {
+        claim_type
+        for role in DEEPSEEK_SCOUT_ROLES
+        for claim_type in role.allowed_claim_types
+    }
+    claims: list[EvidenceClaim] = []
+    for row in payload[:12]:
+        if not isinstance(row, dict):
+            continue
+        claim_type = _clean_text(str(row.get("claim_type") or ""))
+        if claim_type not in allowed_claim_types:
+            continue
+        source_url = str(row.get("source_url") or "").strip()
+        item = source_by_url.get(source_url)
+        if item is None:
+            continue
+        team = _match_team_name(str(row.get("team") or ""), home_team=home_team, away_team=away_team)
+        if not team:
+            continue
+        claim_text = _clean_text(str(row.get("claim") or ""))
+        if not claim_text or any(noisy in claim_text.lower() for noisy in ("fifa since", "confederation since", "founded")):
+            continue
+        player = _clean_text(str(row.get("player") or "")) or None
+        metrics = _claim_metrics_for_match(claim_type, claim_text, home_team=home_team, away_team=away_team)
+        if isinstance(row.get("metrics"), dict):
+            for key, value in row["metrics"].items():
+                if isinstance(key, str) and value not in {None, ""}:
+                    metrics.setdefault(key, value)
+        claims.append(
+            EvidenceClaim(
+                claim_type=claim_type,
+                subject=player or team,
+                claim=_shorten(claim_text, limit=280),
+                team=team,
+                player=player,
+                impact=_claim_impact(claim_type, team=team, home_team=home_team, away_team=away_team),
+                confidence=round(max(min(_claim_confidence(claim_type, claim_text.lower(), source_title=item.title, source_url=item.link) + 0.03, 0.82), 0.2), 2),
+                source_title=item.title,
+                source_url=item.link,
+                **_source_metadata(
+                    source_title=item.title,
+                    source_url=item.link,
+                    source_published=item.published,
+                    extraction_method="deepseek_agent",
+                ),
+                metrics=metrics,
+            )
+        )
+    return _dedupe_claims(claims)[:8]
 
 
 def fetch_team_profile(
@@ -2416,34 +2779,46 @@ def _extract_claims_from_text(
             continue
         if claim_type == "player_form" and not _has_player_form_signal(lowered):
             continue
-        claims.append(
-            EvidenceClaim(
-                claim_type=claim_type,
-                subject=subject,
-                claim=_shorten(
-                    _trim_claim_sentence(sentence, claim_type=claim_type, team=team),
-                    limit=260,
-                ),
-                team=team,
-                player=player,
-                impact=_claim_impact(claim_type, team=team, home_team=home_team, away_team=away_team),
-                confidence=_claim_confidence(claim_type, lowered, source_title=source_title, source_url=source_url),
-                source_title=source_title,
-                source_url=source_url,
-                **_source_metadata(
+        claim_types = [claim_type]
+        if claim_type == "injury_availability" and _has_lineup_signal(lowered):
+            claim_types.append("lineup")
+        for typed_claim in claim_types:
+            metric_text = sentence
+            if (
+                typed_claim in {"match_history", "recent_form"}
+                and source_title
+                and source_title not in sentence
+                and _sentence_matches_source_title(sentence, source_title)
+            ):
+                metric_text = f"{sentence} {source_title}"
+            claims.append(
+                EvidenceClaim(
+                    claim_type=typed_claim,
+                    subject=subject,
+                    claim=_shorten(
+                        _trim_claim_sentence(sentence, claim_type=typed_claim, team=team),
+                        limit=260,
+                    ),
+                    team=team,
+                    player=player,
+                    impact=_claim_impact(typed_claim, team=team, home_team=home_team, away_team=away_team),
+                    confidence=_claim_confidence(typed_claim, lowered, source_title=source_title, source_url=source_url),
                     source_title=source_title,
                     source_url=source_url,
-                    source_published=source_published,
-                    extraction_method="heuristic_sentence",
-                ),
-                metrics=_claim_metrics_for_match(
-                    claim_type,
-                    sentence,
-                    home_team=home_team,
-                    away_team=away_team,
-                ),
+                    **_source_metadata(
+                        source_title=source_title,
+                        source_url=source_url,
+                        source_published=source_published,
+                        extraction_method="heuristic_sentence",
+                    ),
+                    metrics=_claim_metrics_for_match(
+                        typed_claim,
+                        metric_text,
+                        home_team=home_team,
+                        away_team=away_team,
+                    ),
+                )
             )
-        )
     return claims
 
 
@@ -2464,6 +2839,14 @@ def _sentences(text: str) -> list[str]:
     cleaned = _clean_text(text)
     chunks = re.split(r"(?<=[.!?])\s+|;\s+", cleaned)
     return [chunk.strip(" -") for chunk in chunks if 35 <= len(chunk.strip()) <= 420]
+
+
+def _sentence_matches_source_title(sentence: str, source_title: str) -> bool:
+    folded_sentence = _fold_text(_clean_text(sentence))
+    folded_title = _fold_text(_clean_text(source_title))
+    if not folded_sentence or not folded_title:
+        return False
+    return folded_sentence in folded_title or folded_title in folded_sentence
 
 
 def _claim_type(lowered_sentence: str) -> str | None:
@@ -2518,11 +2901,18 @@ def _claim_type(lowered_sentence: str) -> str | None:
         )
     ):
         return "tactical"
-    if any(word in lowered_sentence for word in ("lineup", "line-up", "starting 11", "starting xi", "predicted xi", "bench", "formation")):
+    if _has_lineup_signal(lowered_sentence):
         return "lineup"
     if any(word in lowered_sentence for word in ("prediction", "preview", "odds", "pick", "favorite", "favourite")):
         return "market_preview"
     return None
+
+
+def _has_lineup_signal(lowered_sentence: str) -> bool:
+    return any(
+        word in lowered_sentence
+        for word in ("lineup", "line-up", "starting 11", "starting xi", "predicted xi", "bench", "formation")
+    )
 
 
 def _claim_subject(
@@ -2671,7 +3061,6 @@ def _claim_impact(claim_type: str, *, team: str | None, home_team: str, away_tea
         "squad_roster",
         "match_history",
         "team_profile",
-        "team_history",
     }:
         return "context_home" if team == home_team else "context_away"
     return "unknown"
@@ -2690,21 +3079,36 @@ def _claim_metrics(claim_type: str, text: str) -> dict[str, Any]:
     if claim_type in {"player_form", "recent_form"}:
         for key, pattern in (
             ("goals", r"\b(\d+(?:\.\d+)?)\s+goals?\b"),
+            ("goals", r"\bscored\s+(\d+(?:\.\d+)?)\s+(?:times|goals?)\b"),
             ("assists", r"\b(\d+(?:\.\d+)?)\s+assists?\b"),
+            ("assists", r"\b(?:provided|recorded)\s+(\d+(?:\.\d+)?)\s+assists?\b"),
+            ("goal_contributions", r"\b(\d+(?:\.\d+)?)\s+goal contributions?\b"),
+            ("goal_contributions", r"\b(\d+(?:\.\d+)?)\s+g/a\b"),
             ("appearances", r"\b(\d+(?:\.\d+)?)\s+(?:appearances?|matches|games)\b"),
             ("minutes", r"\b(\d+(?:,\d{3})*(?:\.\d+)?)\s+minutes?\b"),
+            ("starts", r"\b(\d+(?:\.\d+)?)\s+starts?\b"),
+            ("starts", r"\bstarted\s+(\d+(?:\.\d+)?)\s+(?:matches|games)\b"),
             ("clean_sheets", r"\b(\d+(?:\.\d+)?)\s+clean sheets?\b"),
             ("blocked_shots", r"\b(\d+(?:\.\d+)?)\s+blocked shots?\b"),
+            ("chances_created", r"\b(?:created|creating)\s+(\d+(?:\.\d+)?)\s+chances?\b"),
+            ("chances_created", r"\b(\d+(?:\.\d+)?)\s+chances created\b"),
             ("key_passes_per_game", r"\b(\d+(?:\.\d+)?)\s+key passes?\s+(?:each|per)\s+game\b"),
+            ("shots_per_game", r"\b(\d+(?:\.\d+)?)\s+shots?\s+(?:each|per)\s+game\b"),
             ("pass_completion_pct", r"\b(\d+(?:\.\d+)?)%\s+pass completion\b"),
+            ("average_rating", r"\b(?:average rating|rating)\s*(?:of|is|=|:)?\s*(\d+(?:\.\d+)?)\b"),
             ("xg", r"\bxg\s*(?:of|output is|=|:)?\s*(\d+(?:\.\d+)?)\b"),
             ("xa", r"\bxa\s*(?:of|output is|=|:)?\s*(\d+(?:\.\d+)?)\b"),
         ):
             value = _metric_number(pattern, lowered)
             if value is not None:
                 metrics[key] = value
+        season_label = _season_label(lowered)
+        if season_label:
+            metrics["season_label"] = season_label
         if "top scorer" in lowered or "leading goalscorer" in lowered:
             metrics["role_signal"] = "top_scorer"
+    if claim_type == "recent_form":
+        metrics.update(_recent_form_metrics(lowered))
     if claim_type == "match_history":
         value = _metric_number(r"\blast\s+(\d+)\b", lowered)
         if value is not None:
@@ -2718,8 +3122,11 @@ def _claim_metrics(claim_type: str, text: str) -> dict[str, Any]:
         formation = _formation_pattern(lowered)
         if formation:
             metrics["formation"] = formation
+        lineup_signal = _lineup_signal(lowered)
+        if lineup_signal:
+            metrics["lineup_signal"] = lineup_signal
     if claim_type == "tactical":
-        if any(marker in lowered for marker in ("lineup", "line-up", "predicted xi", "starting xi")):
+        if metrics.get("lineup_signal"):
             metrics["tactical_signal"] = "lineup"
         elif "formation" in lowered:
             metrics["tactical_signal"] = "formation"
@@ -2727,19 +3134,21 @@ def _claim_metrics(claim_type: str, text: str) -> dict[str, Any]:
             metrics["tactical_signal"] = "tactics"
         elif "key players" in lowered:
             metrics["tactical_signal"] = "key_players"
-    if claim_type == "team_history":
-        fifa_year = _metric_number(r"\bfifa since\s+(\d{4})\b", lowered)
-        if fifa_year is not None:
-            metrics["fifa_member_since_year"] = int(fifa_year)
-        confederation_year = _metric_number(
-            r"\b(?:conmebol|confederation of african football|caf)\s+since\s+(\d{4})\b",
-            lowered,
-        )
-        if confederation_year is None:
-            confederation_year = _metric_number(r"\bfounding member of [a-z ,]+ in\s+(\d{4})\b", lowered)
-        if confederation_year is not None:
-            metrics["confederation_member_since_year"] = int(confederation_year)
     return metrics
+
+
+def _lineup_signal(lowered_text: str) -> str:
+    if any(marker in lowered_text for marker in ("predicted line-ups", "predicted lineups", "predicted line-up", "predicted lineup")):
+        return "predicted_lineups"
+    if any(marker in lowered_text for marker in ("predicted xi", "projected xi", "probable xi")):
+        return "predicted_xi"
+    if any(marker in lowered_text for marker in ("starting xi", "starting 11", "starting eleven")):
+        return "starting_xi"
+    if any(marker in lowered_text for marker in ("lineups", "line-ups", "lineup", "line-up")):
+        return "lineup"
+    if any(marker in lowered_text for marker in ("squad depth", "role depth")):
+        return "squad_depth"
+    return ""
 
 
 def _claim_metrics_for_match(
@@ -2752,6 +3161,45 @@ def _claim_metrics_for_match(
     metrics = _claim_metrics(claim_type, text)
     if claim_type == "match_history":
         metrics.update(_historical_score_metrics(text, home_team=home_team, away_team=away_team))
+        metrics.update(_historical_record_metrics(text, home_team=home_team, away_team=away_team))
+    return metrics
+
+
+def _recent_form_metrics(lowered_text: str) -> dict[str, Any]:
+    metrics: dict[str, Any] = {}
+    for pattern in (
+        r"\blast\s+(\d+)\s+(?:matches|games|fixtures)\b",
+        r"\bpast\s+(\d+)\s+(?:matches|games|fixtures)\b",
+    ):
+        sample = _metric_number(pattern, lowered_text)
+        if sample is not None:
+            metrics["recent_sample_matches"] = int(sample)
+            break
+    won_of = re.search(r"\b(?:won|winning)\s+(\d+)\s+of\s+(?:their\s+)?last\s+(\d+)\b", lowered_text)
+    if won_of:
+        metrics["recent_wins"] = int(won_of.group(1))
+        metrics["recent_sample_matches"] = int(won_of.group(2))
+    record = re.search(r"\bw\s*(\d+)\s*[- ]?d\s*(\d+)\s*[- ]?l\s*(\d+)\b", lowered_text)
+    if record:
+        wins, draws, losses = (int(record.group(index)) for index in (1, 2, 3))
+        metrics["recent_wins"] = wins
+        metrics["recent_draws"] = draws
+        metrics["recent_losses"] = losses
+        metrics["recent_sample_matches"] = wins + draws + losses
+    unbeaten = _metric_number(r"\bunbeaten\s+in\s+(?:their\s+)?last\s+(\d+)\b", lowered_text)
+    if unbeaten is not None:
+        metrics["unbeaten_matches"] = int(unbeaten)
+    streak = _metric_number(r"\b(\d+)[ -]?(?:match|game)\s+winning streak\b", lowered_text)
+    if streak is not None:
+        metrics["winning_streak_matches"] = int(streak)
+    goals_for = re.search(r"\b(?:scored|score)\s+(\d+)\s+goals?\s+in\s+(?:their\s+)?last\s+(\d+)\b", lowered_text)
+    if goals_for:
+        metrics["recent_goals_for"] = int(goals_for.group(1))
+        metrics.setdefault("recent_sample_matches", int(goals_for.group(2)))
+    goals_against = re.search(r"\b(?:conceded|allowed)\s+(\d+)\s+goals?\s+in\s+(?:their\s+)?last\s+(\d+)\b", lowered_text)
+    if goals_against:
+        metrics["recent_goals_against"] = int(goals_against.group(1))
+        metrics.setdefault("recent_sample_matches", int(goals_against.group(2)))
     return metrics
 
 
@@ -2779,6 +3227,64 @@ def _historical_score_metrics(text: str, *, home_team: str, away_team: str) -> d
             "historical_team_b_score": score_b,
             "historical_result_label": f"{team_a} {score_a}-{score_b} {team_b}",
             "historical_result_signal": "explicit_score",
+        }
+    return {}
+
+
+def _historical_record_metrics(text: str, *, home_team: str, away_team: str) -> dict[str, Any]:
+    folded = _fold_text(_clean_text(text))
+    for team_a, team_b in ((home_team, away_team), (away_team, home_team)):
+        team_a_key = _fold_text(team_a)
+        team_b_key = _fold_text(team_b)
+        last_record = re.search(
+            rf"\blast\s+(\d+)\D{{0,30}}\b{re.escape(team_a_key)}\s+won\s+(\d+)\D{{0,30}}\bdraw\s+(\d+)\D{{0,30}}\b(?:lose|lost)\s+(\d+)\b",
+            folded,
+        )
+        if last_record and team_b_key in folded:
+            metrics = {
+                "historical_team_a": team_a,
+                "historical_team_b": team_b,
+                "h2h_recent_sample_matches": int(last_record.group(1)),
+                "h2h_team_a_wins": int(last_record.group(2)),
+                "h2h_draws": int(last_record.group(3)),
+                "h2h_team_a_losses": int(last_record.group(4)),
+                "historical_record_signal": "h2h_recent_record",
+            }
+            goals_per_match = _metric_number(r"\b(\d+(?:\.\d+)?)\s+goals?\s+per\s+match\b", folded)
+            if goals_per_match is not None:
+                metrics["h2h_team_a_goals_per_match"] = goals_per_match
+            return metrics
+        won_of = re.search(
+            rf"\b{re.escape(team_a_key)}\b\D{{0,80}}\b(?:won|beaten|beat|defeated)\s+(\d+)\s+of\s+(?:their\s+)?(?:last\s+)?(\d+)\s+(?:previous\s+)?(?:meetings|matches|games|head-to-heads?)\b",
+            folded,
+        )
+        if won_of and team_b_key in folded:
+            return {
+                "historical_team_a": team_a,
+                "historical_team_b": team_b,
+                "historical_team_a_wins": int(won_of.group(1)),
+                "historical_meetings": int(won_of.group(2)),
+                "historical_record_signal": "h2h_record",
+            }
+        unbeaten = re.search(
+            rf"\b{re.escape(team_a_key)}\b\D{{0,80}}\bunbeaten\s+in\s+(?:their\s+)?last\s+(\d+)\s+(?:previous\s+)?(?:meetings|matches|games|head-to-heads?)\b",
+            folded,
+        )
+        if unbeaten and team_b_key in folded:
+            return {
+                "historical_team_a": team_a,
+                "historical_team_b": team_b,
+                "historical_team_a_unbeaten": int(unbeaten.group(1)),
+                "historical_meetings": int(unbeaten.group(1)),
+                "historical_record_signal": "h2h_record",
+            }
+    meetings = _metric_number(r"\b(\d+)\s+(?:previous\s+)?(?:meetings|head-to-heads?)\b", folded)
+    if meetings is not None and _fold_text(home_team) in folded and _fold_text(away_team) in folded:
+        return {
+            "historical_team_a": home_team,
+            "historical_team_b": away_team,
+            "historical_meetings": int(meetings),
+            "historical_record_signal": "h2h_meetings",
         }
     return {}
 
@@ -2822,6 +3328,20 @@ def _formation_pattern(lowered_text: str) -> str:
     if not 8 <= sum(parts) <= 11:
         return ""
     return match.group(1)
+
+
+def _season_label(lowered_text: str) -> str:
+    full_years = re.search(r"\b(20\d{2})\s*[-/]\s*(20\d{2})\b", lowered_text)
+    if full_years:
+        return f"{full_years.group(1)}-{full_years.group(2)}"
+    season = re.search(r"\b(20\d{2})\s*[-/]\s*(\d{2})\b", lowered_text)
+    if season:
+        return f"{season.group(1)}-{season.group(2)}"
+    if "this season" in lowered_text:
+        return "this_season"
+    if "club season" in lowered_text:
+        return "club_season"
+    return ""
 
 
 def _metric_number(pattern: str, lowered_text: str) -> float | int | None:
@@ -2961,7 +3481,6 @@ def _claim_confidence(claim_type: str, lowered_sentence: str, *, source_title: s
         "tactical": 0.45,
         "market_preview": 0.35,
         "team_profile": 0.46,
-        "team_history": 0.5,
     }.get(claim_type, 0.3)
     if "confirmed" in lowered_sentence:
         confidence += 0.08
@@ -3014,7 +3533,7 @@ def _source_metadata(
     extraction_method: str,
 ) -> dict[str, Any]:
     domain = _source_domain(source_url)
-    recency = _source_recency_metadata(source_published)
+    recency = _source_recency_metadata(source_published, source_context=source_title)
     return {
         "source_published": source_published,
         **recency,
@@ -3025,15 +3544,22 @@ def _source_metadata(
     }
 
 
-def _source_recency_metadata(source_published: str, *, today: date | None = None) -> dict[str, Any]:
+def _source_recency_metadata(
+    source_published: str,
+    *,
+    source_context: str = "",
+    today: date | None = None,
+) -> dict[str, Any]:
+    today_value = today or date.today()
     published_date = _parse_source_date(source_published)
+    if published_date is None and source_context:
+        published_date = _parse_relative_source_date(source_context, today=today_value) or _parse_source_date(source_context)
     if published_date is None:
         return {
             "source_published_date": "",
             "source_recency_days": None,
             "source_recency_bucket": "",
         }
-    today_value = today or date.today()
     recency_days = max((today_value - published_date).days, 0)
     return {
         "source_published_date": published_date.isoformat(),
@@ -3065,6 +3591,26 @@ def _parse_source_date(source_published: str) -> date | None:
             return date(int(iso_match.group(1)), int(iso_match.group(2)), int(iso_match.group(3)))
         except ValueError:
             return None
+    return None
+
+
+def _parse_relative_source_date(source_context: str, *, today: date) -> date | None:
+    lowered = _clean_text(source_context).lower()
+    if not lowered:
+        return None
+    if re.search(r"\b(?:today|just now)\b", lowered):
+        return today
+    if re.search(r"\byesterday\b", lowered):
+        return today - timedelta(days=1)
+    match = re.search(r"\b(\d{1,3})\s*(?:min|mins|minute|minutes|hr|hrs|hour|hours)\s+ago\b", lowered)
+    if match:
+        return today
+    match = re.search(r"\b(\d{1,3})\s*(?:day|days)\s+ago\b", lowered)
+    if match:
+        return today - timedelta(days=int(match.group(1)))
+    match = re.search(r"\b(\d{1,2})\s*(?:week|weeks)\s+ago\b", lowered)
+    if match:
+        return today - timedelta(days=7 * int(match.group(1)))
     return None
 
 
@@ -3435,7 +3981,8 @@ def _admissible_evidence_claims(claims: list[dict]) -> list[dict]:
             claim.get("source_quality") or ""
         ).lower() != "strong":
             continue
-        if str(claim.get("impact") or "").lower() == "unknown":
+        impact = str(claim.get("impact") or "").strip().lower()
+        if not impact or impact == "unknown":
             continue
         admissible.append(claim)
     return admissible

@@ -26,6 +26,10 @@ class TelegramItem:
     message_id: str
     link: str
     published: str
+    views: int | None = None
+    forwards: int | None = None
+    replies: int | None = None
+    reactions: int | None = None
 
 
 def telegram_findings_for_match(
@@ -149,6 +153,8 @@ async def _fetch_live_telegram_payload(*, home_team: str, away_team: str, timeou
                         "message_id": str(getattr(message, "id", "")),
                         "published": str(getattr(message, "date", "")),
                         "link": f"telegram://{chat}/{getattr(message, 'id', '')}",
+                        "views": getattr(message, "views", None),
+                        "forwards": getattr(message, "forwards", None),
                     }
                 )
         return payload
@@ -185,7 +191,19 @@ def _items_from_payload(payload: Any, home_team: str, away_team: str) -> list[Te
         message_id = str(raw.get("message_id") or raw.get("id") or "")
         link = str(raw.get("link") or raw.get("url") or f"telegram://{chat}/{message_id}")
         published = str(raw.get("published") or raw.get("date") or raw.get("created_at") or "")
-        items.append(TelegramItem(text=text, chat=chat, message_id=message_id, link=link, published=published))
+        items.append(
+            TelegramItem(
+                text=text,
+                chat=chat,
+                message_id=message_id,
+                link=link,
+                published=published,
+                views=_int_or_none(raw.get("views") or raw.get("view_count")),
+                forwards=_int_or_none(raw.get("forwards") or raw.get("forward_count")),
+                replies=_int_or_none(raw.get("replies") or raw.get("reply_count")),
+                reactions=_reaction_count(raw.get("reactions") or raw.get("reaction_count")),
+            )
+        )
     return _dedupe(items)[:20]
 
 
@@ -200,12 +218,13 @@ def _claims_from_items(items: list[TelegramItem], *, home_team: str, away_team: 
             team = _team_from_sentence(sentence, home_team=home_team, away_team=away_team)
             if not team:
                 continue
+            player = _player_from_sentence(sentence, team=team, home_team=home_team, away_team=away_team)
             claims.append(
                 {
                     "claim_type": claim_type,
-                    "subject": team,
+                    "subject": player or team,
                     "team": team,
-                    "player": "",
+                    "player": player,
                     "claim": _shorten(sentence, 260),
                     "impact": _claim_impact(claim_type, team=team, home_team=home_team),
                     "confidence": _claim_confidence(claim_type, lowered),
@@ -216,7 +235,10 @@ def _claims_from_items(items: list[TelegramItem], *, home_team: str, away_team: 
                     "source_kind": "social",
                     "source_quality": "medium",
                     "extraction_method": "telegram_message_heuristic",
-                    "metrics": _claim_metrics(claim_type, sentence),
+                    "metrics": {
+                        **_claim_metrics(claim_type, sentence),
+                        **_telegram_item_metrics(item, sentence),
+                    },
                 }
             )
     return _dedupe_claims(claims)[:12]
@@ -297,6 +319,31 @@ def _claim_metrics(claim_type: str, text: str) -> dict:
     return metrics
 
 
+def _telegram_item_metrics(item: TelegramItem, sentence: str) -> dict:
+    lowered = sentence.lower()
+    metrics: dict[str, object] = {
+        "telegram_chat": item.chat,
+        "telegram_message_id": item.message_id,
+    }
+    for key, value in (
+        ("telegram_views", item.views),
+        ("telegram_forwards", item.forwards),
+        ("telegram_replies", item.replies),
+        ("telegram_reactions", item.reactions),
+    ):
+        if value is not None:
+            metrics[key] = value
+    if any(marker in lowered for marker in ("official", "confirmed", "club statement", "federation statement")):
+        metrics["verification_signal"] = "official"
+    elif any(marker in lowered for marker in ("reported", "according to", "sources say")):
+        metrics["verification_signal"] = "reported"
+    if any(marker in lowered for marker in ("rumor", "rumour", "unconfirmed", "maybe", "could miss")):
+        metrics["rumor_signal"] = "unconfirmed"
+    if any(marker in lowered for marker in ("fan reaction", "fans", "supporters", "sentiment")):
+        metrics["social_context"] = "crowd_reaction"
+    return {key: value for key, value in metrics.items() if value not in {None, ""}}
+
+
 def _mentions_match(text: str, *, home_team: str, away_team: str) -> bool:
     lowered = text.lower()
     return home_team.lower() in lowered or away_team.lower() in lowered
@@ -313,6 +360,56 @@ def _team_from_sentence(sentence: str, *, home_team: str, away_team: str) -> str
     if away_index >= 0:
         return away_team
     return ""
+
+
+def _player_from_sentence(sentence: str, *, team: str, home_team: str, away_team: str) -> str:
+    ignored = {
+        team.lower(),
+        home_team.lower(),
+        away_team.lower(),
+        "world cup",
+        "team news",
+        "breaking",
+        "official",
+        "reported",
+    }
+    patterns = [
+        r"\b(?:official|confirmed|reported|breaking)[:\s-]+([A-Z][A-Za-zÀ-ÖØ-öø-ÿ'’-]+(?:\s+[A-Z][A-Za-zÀ-ÖØ-öø-ÿ'’-]+){0,2})\s+(?:is|has|was|will|could)",
+        r"\b([A-Z][A-Za-zÀ-ÖØ-öø-ÿ'’-]+(?:\s+[A-Z][A-Za-zÀ-ÖØ-öø-ÿ'’-]+){0,2})\s+(?:is|has|was|will|could)\s+(?:ruled out|injured|unavailable|doubtful|miss|misses|start|starts|bench)",
+        r"\b([A-Z][A-Za-zÀ-ÖØ-öø-ÿ'’-]+(?:\s+[A-Z][A-Za-zÀ-ÖØ-öø-ÿ'’-]+){0,2})\s+(?:out|doubtful|injured)\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, sentence)
+        if not match:
+            continue
+        candidate = match.group(1).strip(" :,-")
+        key = candidate.lower()
+        if key not in ignored and not any(word in key for word in ("injury", "news", "lineup", "squad")):
+            return candidate
+    return ""
+
+
+def _int_or_none(value: Any) -> int | None:
+    if value in {None, ""}:
+        return None
+    try:
+        return int(float(str(value).replace(",", "")))
+    except (TypeError, ValueError):
+        return None
+
+
+def _reaction_count(value: Any) -> int | None:
+    if isinstance(value, list):
+        total = 0
+        for item in value:
+            if isinstance(item, dict):
+                total += _int_or_none(item.get("count")) or 0
+            else:
+                total += 1
+        return total or None
+    if isinstance(value, dict):
+        return sum(_int_or_none(count) or 0 for count in value.values()) or None
+    return _int_or_none(value)
 
 
 def _finding(

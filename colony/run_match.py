@@ -66,6 +66,11 @@ def parse_args() -> argparse.Namespace:
         help="Add the optional read-only PolyGun match-market snapshot scout to public data mode.",
     )
     parser.add_argument(
+        "--include-deepseek-scout",
+        action="store_true",
+        help="Add the optional DeepSeek/OpenRouter structured scouting agent to public data mode.",
+    )
+    parser.add_argument(
         "--scout-focus",
         action="append",
         default=[],
@@ -203,6 +208,7 @@ def main() -> None:
             include_camel=args.include_camel,
             include_telegram=args.include_telegram,
             include_polygun=args.include_polygun,
+            include_deepseek_scout=args.include_deepseek_scout,
             rescout_targets=rescout_targets,
         )
     else:
@@ -246,7 +252,8 @@ def main() -> None:
         f"x={'enabled' if args.include_x else 'disabled'} "
         f"camel={'enabled' if args.include_camel else 'disabled'} "
         f"telegram={'enabled' if args.include_telegram else 'disabled'} "
-        f"polygun={'enabled' if args.include_polygun else 'disabled'}"
+        f"polygun={'enabled' if args.include_polygun else 'disabled'} "
+        f"deepseek={'enabled' if args.include_deepseek_scout else 'disabled'}"
     )
     if rescout_targets:
         print(
@@ -340,7 +347,7 @@ def _rescout_targets_from_args(args: argparse.Namespace) -> list[dict]:
             raise SystemExit(f"Scouting audit not found: {audit_path}")
         audit = json.loads(audit_path.read_text(encoding="utf-8"))
         for item in audit.get("scouting_backlog", {}).get("items", []):
-            if item.get("status") != "needs_rescout":
+            if item.get("status") not in {"needs_rescout", "needs_fresh_rescout"}:
                 continue
             team = str(item.get("team") or "").strip()
             claim_type = str(item.get("claim_type") or "").strip()
@@ -351,6 +358,9 @@ def _rescout_targets_from_args(args: argparse.Namespace) -> list[dict]:
                         "claim_type": claim_type,
                         "source": str(audit_path),
                         "target_entity_id": str(item.get("target_entity_id") or ""),
+                        "status": str(item.get("status") or ""),
+                        "quality_status": str(item.get("quality_status") or ""),
+                        "quality_reasons": list(item.get("quality_reasons") or []),
                     }
                 )
     for spec in args.scout_focus or []:

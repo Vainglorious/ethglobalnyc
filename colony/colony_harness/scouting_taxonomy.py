@@ -28,15 +28,6 @@ SCOUTING_RESCOUT_RECIPES = {
             "claim names the team explicitly",
         ],
     },
-    "team_history": {
-        "priority": 55,
-        "recommended_scout": "team_profile_scout",
-        "query_focus": "team history, FIFA membership, confederation history, tournament record",
-        "acceptance_criteria": [
-            "source is official or reference-quality",
-            "claim contains a concrete year, competition record, or affiliation fact",
-        ],
-    },
     "recent_form": {
         "priority": 70,
         "recommended_scout": "recent_form_scout",
@@ -101,3 +92,62 @@ SCOUTING_RESCOUT_RECIPES = {
         ],
     },
 }
+
+
+def scouting_topic_quality(
+    claim_type: str,
+    *,
+    claim_count: int,
+    metric_claim_count: int = 0,
+    player_count: int = 0,
+    recent_30d_claim_count: int = 0,
+    strong_or_official_claim_count: int = 0,
+    claim_quality_counts: dict | None = None,
+) -> tuple[str, list[str]]:
+    """Return whether a topic has useful evidence for KG coverage."""
+
+    if claim_count <= 0:
+        return "missing", ["missing_claim"]
+
+    qualities = claim_quality_counts or {}
+    reasons: list[str] = []
+    if claim_type in SCOUTING_REQUIRED_CLAIM_TYPES and strong_or_official_claim_count <= 0:
+        reasons.append("needs_stronger_source")
+
+    if claim_type == "recent_form":
+        if metric_claim_count <= 0 and int(qualities.get("recent_results_window") or 0) <= 0:
+            reasons.append("needs_recent_results_window")
+    elif claim_type == "player_form":
+        if player_count <= 0:
+            reasons.append("needs_player")
+        if metric_claim_count <= 0 and int(qualities.get("season_output") or 0) <= 0:
+            reasons.append("needs_player_season_metric")
+    elif claim_type == "squad_roster":
+        if player_count <= 0:
+            reasons.append("needs_roster_player")
+    elif claim_type == "injury_availability":
+        if int(qualities.get("availability_status") or 0) <= 0:
+            reasons.append("needs_availability_status")
+        if recent_30d_claim_count <= 0:
+            reasons.append("needs_recent_source")
+    elif claim_type == "lineup":
+        if (
+            metric_claim_count <= 0
+            and int(qualities.get("formation_signal") or 0) <= 0
+            and int(qualities.get("lineup_signal") or 0) <= 0
+        ):
+            reasons.append("needs_lineup_or_role_signal")
+        if recent_30d_claim_count <= 0:
+            reasons.append("needs_recent_source")
+    elif claim_type == "match_history":
+        if (
+            metric_claim_count <= 0
+            and int(qualities.get("explicit_score") or 0) <= 0
+            and int(qualities.get("h2h_record") or 0) <= 0
+        ):
+            reasons.append("needs_match_history_metric")
+    elif claim_type == "tactical":
+        if metric_claim_count <= 0 and int(qualities.get("formation_signal") or 0) <= 0:
+            reasons.append("needs_tactical_detail")
+
+    return ("needs_better_evidence", reasons) if reasons else ("usable", [])

@@ -11,6 +11,8 @@ Subcommands:
   whoami                 confirm the logged-in account
   dump [--n N]           print the last N messages from the bot + their buttons,
                          each labeled with [row,col] so you can click them
+  snapshot [--n N]       write the last N bot messages + buttons as JSON for
+                         read-only Colony KG enrichment
   send "TEXT"            send a text message to the bot, then show its reply
   click MSG_ID ROW COL   tap the inline button at [ROW,COL] of message MSG_ID,
                          then show the bot's reply
@@ -26,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -90,6 +93,31 @@ def _buttons(msg):
     return ", ".join(out) or "(no buttons)"
 
 
+def _message_to_dict(m) -> dict:
+    buttons = []
+    markup = getattr(m, "reply_markup", None)
+    rows = getattr(markup, "rows", None) if markup else None
+    if rows:
+        for r, row in enumerate(rows):
+            for c, btn in enumerate(row.buttons):
+                buttons.append(
+                    {
+                        "row": r,
+                        "col": c,
+                        "text": btn.text,
+                        "url": getattr(btn, "url", None),
+                        "callback": bool(getattr(btn, "data", None)),
+                    }
+                )
+    return {
+        "id": m.id,
+        "out": bool(m.out),
+        "text": m.text or "",
+        "date": str(getattr(m, "date", "") or ""),
+        "buttons": buttons,
+    }
+
+
 def _find_button(msg, keywords):
     """Return (row, col, label) of the first inline button whose text contains
     any keyword (case-insensitive)."""
@@ -129,6 +157,26 @@ async def cmd_dump(args) -> None:
     client, bot = make_client()
     await client.connect()
     await _dump(client, bot, args.n)
+    await client.disconnect()
+
+
+async def cmd_snapshot(args) -> None:
+    """Write recent bot messages and inline buttons as JSON for read-only scouts."""
+    client, bot = make_client()
+    await client.connect()
+    msgs = await client.get_messages(bot, limit=args.n)
+    payload = {
+        "bot": bot,
+        "messages": [_message_to_dict(m) for m in reversed(msgs)],
+    }
+    text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    if args.out:
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text, encoding="utf-8")
+        print(f"wrote snapshot: {out}")
+    else:
+        print(text, end="")
     await client.disconnect()
 
 
@@ -222,6 +270,9 @@ def main() -> int:
     sub.add_parser("login")
     sub.add_parser("whoami")
     d = sub.add_parser("dump"); d.add_argument("--n", type=int, default=5)
+    snap = sub.add_parser("snapshot")
+    snap.add_argument("--n", type=int, default=8)
+    snap.add_argument("--out", default="polygun/snapshots/latest.json")
     s = sub.add_parser("send"); s.add_argument("text"); s.add_argument("--wait", type=float, default=3.0)
     c = sub.add_parser("click")
     c.add_argument("msg_id", type=int); c.add_argument("row", type=int); c.add_argument("col", type=int)
@@ -235,7 +286,7 @@ def main() -> int:
     b.add_argument("--wait", type=float, default=3.5)
     args = ap.parse_args()
 
-    handler = {"login": cmd_login, "whoami": cmd_whoami, "dump": cmd_dump,
+    handler = {"login": cmd_login, "whoami": cmd_whoami, "dump": cmd_dump, "snapshot": cmd_snapshot,
                "send": cmd_send, "click": cmd_click, "buy": cmd_buy}[args.cmd]
     asyncio.run(handler(args))
     return 0

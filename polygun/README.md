@@ -41,6 +41,19 @@ Each `dump`/`send`/`click` prints the bot's latest messages with every inline
 button labeled `[row,col]`, so we can follow: Buy → paste/choose market → amount →
 confirm. Once we know the exact sequence, we add a `buy` subcommand that replays it.
 
+For Colony KG enrichment, export a read-only snapshot instead of driving the bot
+during a simulation:
+
+```
+polygun/.venv/bin/python polygun/pg.py snapshot --out polygun/snapshots/latest.json
+python3 colony/run_match.py --data-mode public --include-polygun
+```
+
+`snapshot` only reads recent bot messages and inline buttons. It does not send
+text, click buttons, or place trades. The Colony scout consumes that JSON only
+when it contains match-specific market panel text for the teams being scouted;
+balance/account state is ignored.
+
 ## Safety
 
 - This logs in as YOU. Keep `.env` and `pg.session` secret (both gitignored).
@@ -51,6 +64,6 @@ confirm. Once we know the exact sequence, we add a `buy` subcommand that replays
 ## Status
 
 - [done] Telethon controller (`pg.py`: login / whoami / dump / send / click).
+- [done] Read-only `snapshot` export for Colony KG enrichment.
 - [you]  Create the my.telegram.org app + fill `.env` + run `pg.py login`.
 - [next] Map the buy flow together, then add an automated `buy` subcommand.
-- Fallback: if the flow is too brittle, trade manually in the PolyGun app.
