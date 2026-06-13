@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from .genes import Genome
-from .models import MatchContext, Side
+from .models import DebateClaim, MatchContext, Side
 
 
 def _text_from_openai_message(data: dict) -> str:
@@ -62,6 +62,141 @@ def _format_llm_claim(
     return f"{agent_name}: {stance} {cleaned}"
 
 
+def _format_evidence_line(evidence: dict) -> str:
+    claim_type = str(evidence.get("claim_type") or "claim").replace("_", " ")
+    subject = str(evidence.get("subject") or evidence.get("team") or "unknown")
+    claim = str(evidence.get("claim") or "").strip()
+    source = str(evidence.get("source_title") or evidence.get("scout_name") or "source")
+    confidence = evidence.get("confidence")
+    confidence_text = f", confidence {float(confidence):.2f}" if isinstance(confidence, int | float) else ""
+    return f"- {claim_type}: {subject}: {claim} ({source}{confidence_text})"
+
+
+def _compact_evidence(evidence_claims: list[dict], limit: int = 3) -> str:
+    if not evidence_claims:
+        return "- no structured evidence claims visible"
+    return "\n".join(_format_evidence_line(evidence) for evidence in evidence_claims[:limit])
+
+
+def _compact_prior_claims(prior_claims: list[DebateClaim], limit: int = 2) -> str:
+    if not prior_claims:
+        return "- no previous public claims"
+    compact = []
+    for claim in prior_claims[-limit:]:
+        compact.append(f"- {claim.speaker_name}: {claim.stated_home_probability:.1%} home; {claim.message}")
+    return "\n".join(compact)
+
+
+def _build_rationale_prompt(
+    *,
+    agent_name: str,
+    genome: Genome,
+    match: MatchContext,
+    probability: float,
+    direction: Side,
+    evidence_claims: list[dict],
+    prior_claims: list[DebateClaim],
+    debate_role: str,
+    debate_phase: str,
+) -> str:
+    return (
+        "Write only a short rationale for a forecasting predictor in an agent debate.\n"
+        "You may mention injuries, players, lineups, tactics, or source disagreement only if present in the allowed evidence below.\n"
+        "Do not invent facts. Do not add new sources. Do not include the agent name.\n"
+        "Do not repeat the match name. Do not include percentages or probabilities.\n"
+        "Make it sound like a real debate move: cite one concrete fact, and if useful, respond to the previous claim.\n"
+        "Keep it under 45 words. Write in English. Return one or two sentences.\n\n"
+        f"Agent name: {agent_name}\n"
+        f"Persona: {genome.persona}\n"
+        f"Model species: {genome.model}\n"
+        f"Match: {match.home_team} vs {match.away_team}\n"
+        f"Market home probability: {match.market_home_probability:.3f}\n"
+        f"Agent home probability: {probability:.3f}\n"
+        f"Direction: {direction}\n\n"
+        f"Debate phase: {debate_phase or 'final'}\n"
+        f"Debate role: {debate_role or 'speaker'}\n\n"
+        "Allowed evidence claims:\n"
+        f"{_compact_evidence(evidence_claims)}\n\n"
+        "Previous public claims:\n"
+        f"{_compact_prior_claims(prior_claims)}\n"
+    )
+
+
+def _template_evidence_sentence(evidence_claims: list[dict], *, direction: Side) -> str:
+    if not evidence_claims:
+        return "I do not have a clean player-level claim, so I am leaning on my weighted signal mix."
+    primary = evidence_claims[0]
+    subject = str(primary.get("subject") or primary.get("team") or "the key subject")
+    claim = str(primary.get("claim") or "").strip().rstrip(".")
+    impact = str(primary.get("impact") or "")
+    if claim:
+        lead = f"The evidence I care about is {subject}: {claim}."
+    else:
+        lead = f"The evidence I care about is the {subject} availability signal."
+
+    if len(evidence_claims) < 2:
+        return lead
+
+    counter = evidence_claims[1]
+    counter_subject = str(counter.get("subject") or counter.get("team") or "the other side")
+    counter_impact = str(counter.get("impact") or "")
+    if direction == "away" and counter_impact == "negative_away":
+        return f"{lead} I am not ignoring {counter_subject} risk, but the home-side concern prices larger for me."
+    if direction == "home" and counter_impact == "negative_home":
+        return f"{lead} I am not ignoring {counter_subject} risk, but the away-side concern prices larger for me."
+    if impact.startswith("negative"):
+        return f"{lead} That is a concrete availability drag, not just a narrative lean."
+    return lead
+
+
+def _short_source_name(source: str) -> str:
+    cleaned = " ".join(source.split())
+    if " - " in cleaned:
+        tail = cleaned.rsplit(" - ", 1)[1].strip()
+        if 2 <= len(tail) <= 32:
+            return tail
+    if " | " in cleaned:
+        tail = cleaned.rsplit(" | ", 1)[1].strip()
+        if 2 <= len(tail) <= 32:
+            return tail
+    return cleaned[:44].rstrip()
+
+
+def _template_prior_sentence(
+    prior_claims: list[DebateClaim],
+    probability: float,
+    evidence_claims: list[dict],
+) -> str:
+    if not prior_claims:
+        return ""
+    previous = prior_claims[-1]
+    gap = probability - previous.stated_home_probability
+    if abs(gap) < 0.006:
+        if evidence_claims:
+            source = str(evidence_claims[0].get("source_title") or evidence_claims[0].get("scout_name") or "another source")
+            short_source = _short_source_name(source)
+            return f"I mostly agree with {previous.speaker_name}; my added value is a separate {short_source} read."
+        return f"I mostly agree with {previous.speaker_name}; I am not moving the price without a sharper source."
+    if gap > 0:
+        return f"I am pushing above {previous.speaker_name}'s number because my visible evidence is less damaging to the home side."
+    return f"I am below {previous.speaker_name}'s number because the availability risk matters more in my weighting."
+
+
+def _template_role_sentence(debate_role: str, *, direction: Side, match: MatchContext) -> str:
+    if debate_role == "advocate":
+        side = match.home_team if direction == "home" else match.away_team
+        return f"I am carrying the room's strongest {side} case."
+    if debate_role == "challenger":
+        return "My job is to pressure-test the previous claim, not just echo it."
+    if debate_role == "source_auditor":
+        return "I am weighting source quality and source disagreement first."
+    if debate_role == "skeptic":
+        return "I would widen uncertainty rather than treat the edge as clean."
+    if debate_role == "room_representative":
+        return "I am bringing my room's strongest unresolved point into the final chamber."
+    return ""
+
+
 class VoiceModel(Protocol):
     def render_claim(
         self,
@@ -71,6 +206,10 @@ class VoiceModel(Protocol):
         match: MatchContext,
         probability: float,
         direction: Side,
+        evidence_claims: list[dict] | None = None,
+        prior_claims: list[DebateClaim] | None = None,
+        debate_role: str = "",
+        debate_phase: str = "final",
     ) -> str:
         """Render the public debate message for a speaker."""
 
@@ -87,17 +226,26 @@ class TemplateVoiceModel:
         match: MatchContext,
         probability: float,
         direction: Side,
+        evidence_claims: list[dict] | None = None,
+        prior_claims: list[DebateClaim] | None = None,
+        debate_role: str = "",
+        debate_phase: str = "final",
     ) -> str:
+        evidence_sentence = _template_evidence_sentence(evidence_claims or [], direction=direction)
+        prior_sentence = _template_prior_sentence(prior_claims or [], probability, evidence_claims or [])
+        role_sentence = _template_role_sentence(debate_role, direction=direction, match=match)
         if direction == "home":
             return (
                 f"{agent_name}: I price {match.home_team} above the market. "
-                f"My {genome.persona} read is {probability:.1%} home win probability."
+                f"My {genome.persona} read is {probability:.1%} home win probability. "
+                f"{role_sentence} {evidence_sentence} {prior_sentence}".strip()
             )
 
         away_probability = 1.0 - probability
         return (
             f"{agent_name}: I am fading {match.home_team}. "
-            f"My {genome.persona} read gives {match.away_team} about {away_probability:.1%}."
+            f"My {genome.persona} read gives {match.away_team} about {away_probability:.1%}. "
+            f"{role_sentence} {evidence_sentence} {prior_sentence}".strip()
         )
 
 
@@ -166,20 +314,21 @@ class OpenAICompatibleVoiceModel:
         match: MatchContext,
         probability: float,
         direction: Side,
+        evidence_claims: list[dict] | None = None,
+        prior_claims: list[DebateClaim] | None = None,
+        debate_role: str = "",
+        debate_phase: str = "final",
     ) -> str:
-        prompt = (
-            "Write only a short rationale clause for a forecasting predictor.\n"
-            "Do not include the ant name, match name, team names, numbers, probabilities, or percentages.\n"
-            "Do not invent external facts. Do not mention team quality, injuries, tactics, recent form, players, or defensive gaps.\n"
-            "Only refer to the persona or internal weighted findings.\n"
-            "Keep it under 18 words. Write in English. Return one sentence fragment or sentence.\n\n"
-            f"Ant name: {agent_name}\n"
-            f"Persona: {genome.persona}\n"
-            f"Model species: {genome.model}\n"
-            f"Match: {match.home_team} vs {match.away_team}\n"
-            f"Market home probability: {match.market_home_probability:.3f}\n"
-            f"Ant home probability: {probability:.3f}\n"
-            f"Direction: {direction}\n"
+        prompt = _build_rationale_prompt(
+            agent_name=agent_name,
+            genome=genome,
+            match=match,
+            probability=probability,
+            direction=direction,
+            evidence_claims=evidence_claims or [],
+            prior_claims=prior_claims or [],
+            debate_role=debate_role,
+            debate_phase=debate_phase,
         )
 
         payload = {
@@ -273,20 +422,21 @@ class MiniMaxVoiceModel:
         match: MatchContext,
         probability: float,
         direction: Side,
+        evidence_claims: list[dict] | None = None,
+        prior_claims: list[DebateClaim] | None = None,
+        debate_role: str = "",
+        debate_phase: str = "final",
     ) -> str:
-        prompt = (
-            "Write only a short rationale clause for a forecasting predictor.\n"
-            "Do not include the ant name, match name, team names, numbers, probabilities, or percentages.\n"
-            "Do not invent external facts. Do not mention team quality, injuries, tactics, recent form, players, or defensive gaps.\n"
-            "Only refer to the persona or internal weighted findings.\n"
-            "Keep it under 18 words. Write in English. Return one sentence fragment or sentence.\n\n"
-            f"Ant name: {agent_name}\n"
-            f"Persona: {genome.persona}\n"
-            f"Model species: {genome.model}\n"
-            f"Match: {match.home_team} vs {match.away_team}\n"
-            f"Market home probability: {match.market_home_probability:.3f}\n"
-            f"Ant home probability: {probability:.3f}\n"
-            f"Direction: {direction}\n"
+        prompt = _build_rationale_prompt(
+            agent_name=agent_name,
+            genome=genome,
+            match=match,
+            probability=probability,
+            direction=direction,
+            evidence_claims=evidence_claims or [],
+            prior_claims=prior_claims or [],
+            debate_role=debate_role,
+            debate_phase=debate_phase,
         )
 
         payload = {

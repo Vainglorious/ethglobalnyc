@@ -114,7 +114,9 @@ def build_world_graph(
 
     if claims is not None:
         for claim in claims:
-            claim_id = f"debate_claim:{match.round_id}:{claim.speaker_id}"
+            phase = claim.debate_phase or "final"
+            room = claim.room_id or "global"
+            claim_id = f"debate_claim:{match.round_id}:{phase}:{room}:{claim.speaker_id}"
             entities.append(
                 WorldEntity(
                     entity_id=claim_id,

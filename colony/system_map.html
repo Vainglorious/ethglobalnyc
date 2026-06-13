@@ -742,6 +742,8 @@
     .node-private rect { fill: var(--red-soft); stroke: rgba(154,58,50,0.32); }
     .node-view rect { fill: #fff; }
     .node-debate rect { fill: #f0f4f9; stroke: rgba(41,93,143,0.28); }
+    .node-claim rect { fill: #f7f1ff; stroke: rgba(102,72,150,0.32); }
+    .node-player rect { fill: #ecf8f6; stroke: rgba(38,122,112,0.32); }
 
     .graph-caption {
       padding: 0 14px 14px;
@@ -951,7 +953,7 @@
             </div>
             <div class="flow-node">
               <h3>2. Match Subgraph</h3>
-              <p>Select one match and attach fresh findings, odds, news, lineup, and weather reads.</p>
+              <p>Select one match and attach fresh findings: odds, news, recent form, player form, and lineup reads.</p>
               <div class="tag-row"><span class="tag">France</span><span class="tag">Senegal</span></div>
             </div>
             <div class="flow-node">
@@ -965,19 +967,19 @@
               <div class="tag-row"><span class="tag gold">no LLM needed</span></div>
             </div>
             <div class="flow-node">
-              <h3>5. Debater Selection</h3>
-              <p>Only a bounded subset joins the public debate. Logs include a selection reason.</p>
-              <div class="tag-row"><span class="tag red">6 debaters</span></div>
+              <h3>5. Debate Rooms</h3>
+              <p>Predictors move through topic rooms like availability, team form, player form, market pricing, and source audit.</p>
+              <div class="tag-row"><span class="tag red">topic venues</span></div>
             </div>
             <div class="flow-node">
-              <h3>6. Voice Layer</h3>
-              <p>OpenRouter renders short public claims. Probabilities stay deterministic.</p>
-              <div class="tag-row"><span class="tag">DeepSeek V4 Flash</span></div>
+              <h3>6. Room Roles</h3>
+              <p>Advocates, challengers, and source auditors publish bounded room claims.</p>
+              <div class="tag-row"><span class="tag">advocate</span><span class="tag">auditor</span></div>
             </div>
             <div class="flow-node">
-              <h3>7. Debate Finding</h3>
-              <p>Debater claims publish selected knowledge back into the public layer.</p>
-              <div class="tag-row"><span class="tag green">50.7%</span></div>
+              <h3>7. Final Chamber</h3>
+              <p>Room representatives compress local arguments into the public debate.</p>
+              <div class="tag-row"><span class="tag green">room syntheses</span></div>
             </div>
             <div class="flow-node">
               <h3>8. Listen and Decide</h3>
@@ -1001,7 +1003,10 @@ match subgraph + access zones
 filtered predictor views
         |
         v
-debate + consensus + bets</div>
+small rooms -> final chamber
+        |
+        v
+consensus + bets</div>
           <p class="footnote">
             The harness should not turn every colony member into a costly free-form LLM worker.
             CAMEL is best used for fewer, tool-using scouts. Genomes are best for many reproducible opinions.
@@ -1080,36 +1085,38 @@ debate + consensus + bets</div>
             <article class="role-card">
               <div class="role-number">4</div>
               <h2>Debater</h2>
-              <p>A predictor selected for this round to publish a compressed public claim.</p>
+              <p>A predictor selected inside a room to publish a compressed public claim.</p>
               <div class="role-details">
-                <div class="role-row"><strong>Why</strong><span>Elite score or wildcard exploration slot.</span></div>
-                <div class="role-row"><strong>Effect</strong><span>Claims become a debate finding that all predictors can react to.</span></div>
+                <div class="role-row"><strong>Role</strong><span>Advocate, challenger, source auditor, skeptic, or room representative.</span></div>
+                <div class="role-row"><strong>Effect</strong><span>Room syntheses feed the final chamber and public debate signal.</span></div>
               </div>
             </article>
           </div>
 
-          <div class="code">Scout -> Finding -> Predictor -> Debater -> Debate Finding -> Bet/Pass</div>
+          <div class="code">Scout -> Finding -> Predictor -> Debate Room -> Final Chamber -> Bet/Pass</div>
 
           <p class="footnote">
-            Shared paid access can come later. For now, the useful core is: collect findings, let predictors interpret them, then select a few debaters to make the social finding visible.
+            Shared paid access can come later. For now, the useful core is: collect findings, let predictors interpret them, cluster opinions into rooms, then let representatives make the social finding visible.
           </p>
         </article>
 
         <aside class="panel role-side">
           <div class="ring">
             <h2>Public Debate</h2>
-            <p>Debaters are not separate workers. They are selected predictors for this round.</p>
+            <p>Debaters are not separate workers. They are selected predictors speaking inside rooms or the final chamber.</p>
             <div class="mini-flow">
               <div>1. Scouts publish structured findings</div>
               <div>2. Predictors make private predictions</div>
-              <div>3. A few predictors become debaters</div>
-              <div>4. Debaters publish compressed claims</div>
-              <div>5. Everyone listens, updates, and bets/pass</div>
+              <div>3. Predictors cluster by stance and evidence focus</div>
+              <div>4. Room reps debate as advocate/challenger/auditor</div>
+              <div>5. Final chamber compresses the best room arguments</div>
+              <div>6. Everyone listens, updates, and bets/pass</div>
             </div>
           </div>
 
           <div class="code">All predictors think.
-Some predictors debate.
+Small rooms debate.
+Room reps meet.
 All predictors decide.</div>
 
           <p class="footnote">
@@ -1127,7 +1134,7 @@ All predictors decide.</div>
             <span class="tag green">204 entities</span>
             <span class="tag">104 matches</span>
             <span class="tag">48 teams</span>
-            <span class="tag gold">588 relationships</span>
+            <span class="tag gold">evidence nodes per run</span>
           </div>
           <div class="kg-flow">
             <div class="kg-step">
@@ -1136,7 +1143,7 @@ All predictors decide.</div>
             </div>
             <div class="kg-step">
               <h3>Scouts</h3>
-              <p>Normalize raw data into cited, confidence-scored findings.</p>
+              <p>Normalize raw data into cited, confidence-scored findings and evidence claims.</p>
             </div>
             <div class="kg-step">
               <h3>Tournament KG</h3>
@@ -1144,7 +1151,7 @@ All predictors decide.</div>
             </div>
             <div class="kg-step">
               <h3>Match Subgraph</h3>
-              <p>Extracts one match and attaches round-specific findings.</p>
+              <p>Extracts one match and attaches findings, claims, sources, players, and teams.</p>
             </div>
             <div class="kg-step">
               <h3>Filtered View</h3>
@@ -1156,7 +1163,7 @@ All predictors decide.</div>
             </div>
           </div>
 
-          <div class="kg-visual" aria-label="World Cup knowledge graph diagram showing scouts, match subgraph, access zones, filtered predictor views, and debate release">
+          <div class="kg-visual" aria-label="World Cup knowledge graph diagram showing scouts, evidence claims, player nodes, source nodes, access zones, filtered predictor views, and debate release">
             <svg viewBox="0 0 920 430" role="img">
               <defs>
                 <marker id="arrowHead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
@@ -1168,11 +1175,10 @@ All predictors decide.</div>
               <path class="graph-edge" d="M 135 148 C 184 148 198 138 236 132"></path>
               <path class="graph-edge" d="M 135 218 C 185 218 195 173 236 149"></path>
               <path class="graph-edge" d="M 135 288 C 186 288 198 204 236 164"></path>
-              <path class="graph-edge" d="M 356 140 C 397 140 414 150 445 176"></path>
-
-              <path class="graph-edge" d="M 540 160 C 579 105 604 76 650 74"></path>
-              <path class="graph-edge" d="M 556 212 C 596 212 608 212 650 212"></path>
-              <path class="graph-edge" d="M 540 264 C 582 318 607 354 650 354"></path>
+              <path class="graph-edge" d="M 356 140 C 392 140 410 154 438 184"></path>
+              <path class="graph-edge" d="M 560 184 C 596 138 614 96 650 74"></path>
+              <path class="graph-edge" d="M 562 214 C 596 214 613 213 650 212"></path>
+              <path class="graph-edge" d="M 560 244 C 596 291 616 335 650 354"></path>
 
               <path class="graph-edge" d="M 770 74 C 818 91 833 117 842 154"></path>
               <path class="graph-edge" d="M 770 212 C 818 212 830 206 842 196"></path>
@@ -1208,10 +1214,10 @@ All predictors decide.</div>
               </g>
 
               <g class="graph-node node-graph">
-                <circle cx="500" cy="214" r="76"></circle>
-                <text x="462" y="203">World Cup</text>
-                <text x="485" y="221">KG</text>
-                <text class="subtext" x="455" y="242">tournament memory</text>
+                <circle cx="500" cy="214" r="70"></circle>
+                <text x="462" y="203">Match</text>
+                <text x="472" y="221">Subgraph</text>
+                <text class="subtext" x="449" y="242">Brazil vs Morocco</text>
               </g>
 
               <g class="graph-node node-public">
@@ -1245,9 +1251,30 @@ All predictors decide.</div>
               </g>
 
               <path class="graph-edge soft" d="M 815 208 C 730 286 648 334 608 354"></path>
+
+              <path class="graph-edge" d="M 500 284 C 500 304 500 314 500 332"></path>
+              <path class="graph-edge soft" d="M 485 156 C 458 115 420 78 376 70"></path>
+              <path class="graph-edge soft" d="M 515 156 C 542 114 566 84 588 70"></path>
+              <path class="graph-edge soft" d="M 542 194 C 590 174 623 154 660 138"></path>
+
+              <g class="graph-node node-claim">
+                <rect x="372" y="36" width="132" height="68" rx="10"></rect>
+                <text x="397" y="63">Finding</text>
+                <text class="subtext" x="390" y="81">team/player form</text>
+              </g>
+              <g class="graph-node node-claim">
+                <rect x="506" y="36" width="132" height="68" rx="10"></rect>
+                <text x="526" y="63">Evidence Claim</text>
+                <text class="subtext" x="524" y="81">recent form / injury</text>
+              </g>
+              <g class="graph-node node-player">
+                <rect x="694" y="118" width="116" height="54" rx="10"></rect>
+                <text x="721" y="142">Player</text>
+                <text class="subtext" x="724" y="158">Neymar</text>
+              </g>
             </svg>
             <p class="graph-caption">
-              The World Cup KG stores the whole tournament. Each round extracts a match subgraph, enriches it with scout findings, then gives each predictor a filtered view. Debate can leak a compressed version of premium or private knowledge back into the public layer.
+              The World Cup KG stores the whole tournament. Each round extracts a match subgraph, enriches it with scout findings, then turns structured facts into evidence claim, source, player, and team nodes. Debate can leak a compressed version of premium or private knowledge back into the public layer.
             </p>
           </div>
 
@@ -1258,7 +1285,7 @@ All predictors decide.</div>
               <div class="kg-items">
                 <div class="kg-item"><strong>Schedule</strong>OpenFootball fixtures, teams, date, group, ground.</div>
                 <div class="kg-item"><strong>Market Baseline</strong>Current implied home probability.</div>
-                <div class="kg-item"><strong>Basic Stats</strong>Public ratings and historical form snapshots.</div>
+                <div class="kg-item"><strong>Public Claims</strong>Recent form, player form, squad, and news claims attached as cited evidence nodes.</div>
               </div>
             </article>
 
@@ -1266,8 +1293,9 @@ All predictors decide.</div>
               <h2>Premium Zone</h2>
               <p>Shared paid memory. Predictors need budget, privilege, or policy access.</p>
               <div class="kg-items">
-                <div class="kg-item"><strong>News Summary</strong>ScrapeCreators or CAMEL summary with citations.</div>
-                <div class="kg-item"><strong>Lineup Risk</strong>Availability and uncertainty close to kickoff.</div>
+                <div class="kg-item"><strong>News Summary</strong>CAMEL or web research with citations.</div>
+                <div class="kg-item"><strong>Lineup Risk</strong>Availability claims linked to player nodes.</div>
+                <div class="kg-item"><strong>Player Form</strong>Season-form claims linked to tracked player nodes.</div>
                 <div class="kg-item"><strong>Odds Movement</strong>Freshness-gated movement and liquidity reads.</div>
               </div>
             </article>
@@ -1277,7 +1305,7 @@ All predictors decide.</div>
               <p>Purchased or lineage-specific memory. The graph stores it, but most predictors cannot see it.</p>
               <div class="kg-items">
                 <div class="kg-item"><strong>Private Scout Report</strong>One predictor buys a finding with its budget.</div>
-                <div class="kg-item"><strong>LLM Analysis</strong>Costly reasoning attached to the buyer only.</div>
+                <div class="kg-item"><strong>Source Critique</strong>Costly reasoning attached to the buyer only.</div>
                 <div class="kg-item"><strong>Later</strong>Worldcoin or lineage privilege can unlock fresher data.</div>
               </div>
             </article>
@@ -1401,9 +1429,30 @@ All predictors decide.</div>
 
         <article class="data-card">
           <h2>Stats Scout</h2>
-          <p>Collects Elo, rankings, recent form, expected goals, or other numeric features. Prefer APIs or local CSVs first.</p>
+          <p>Collects Elo, rankings, expected goals, or other numeric features. Prefer APIs or local CSVs first.</p>
           <div class="tag-row"><span class="tag green">deterministic</span><span class="tag">CSV/API</span></div>
           <div class="schema">{ scout_name, finding_name, home_delta, confidence, citations[] }</div>
+        </article>
+
+        <article class="data-card">
+          <h2>Recent Form Scout</h2>
+          <p>Searches each national team separately for recent results, fixtures, and form pages, then emits compact `recent_form` claims.</p>
+          <div class="tag-row"><span class="tag green">DDGS</span><span class="tag">team scoped</span></div>
+          <div class="schema">{ team, recent_form_claims[], citations[], confidence }</div>
+        </article>
+
+        <article class="data-card">
+          <h2>Player Form Scout</h2>
+          <p>Runs team and player-specific searches for season form, goals, assists, minutes, and role signals.</p>
+          <div class="tag-row"><span class="tag green">DDGS</span><span class="tag gold">player nodes</span></div>
+          <div class="schema">{ player, player_form_claims[], source_url, confidence }</div>
+        </article>
+
+        <article class="data-card">
+          <h2>Squad Depth Scout</h2>
+          <p>Checks predicted XI, roster depth, absences, key roles, and formation context for both sides.</p>
+          <div class="tag-row"><span class="tag">web search</span><span class="tag red">source cited</span></div>
+          <div class="schema">{ lineup_claims[], tactical_claims[], availability_claims[] }</div>
         </article>
 
         <article class="data-card">

@@ -51,6 +51,7 @@ def write_compact_run_artifacts(
 
     _write_summary(path / "summary.md", match, result)
     _write_debate(path / "debate.md", result)
+    _write_rooms(path / "rooms.json", result)
     _write_forecasts(path / "forecasts.csv", result)
     _write_findings(path / "findings.json", result)
     _write_knowledge_views(path / "knowledge_views.json", result)
@@ -77,6 +78,7 @@ def _write_summary(path: Path, match: MatchContext, result: RoundResult) -> None
         "",
         f"- Predictors: {summary['population']}",
         f"- Debaters: {summary['speaker_slots']}",
+        f"- Debate rooms: {summary.get('room_count', 0)} rooms, {summary.get('room_claims', 0)} room claims, {summary.get('final_claims', 0)} final claims",
         f"- Findings: {summary['findings']} public={summary['public_findings']} shared={summary['shared_findings']} private={summary['private_findings']}",
         f"- Knowledge views: public={summary['public_views']} shared={summary['shared_views']} private={summary['private_views']}",
         "",
@@ -89,7 +91,8 @@ def _write_summary(path: Path, match: MatchContext, result: RoundResult) -> None
         "",
         "## Files",
         "",
-        "- `debate.md`: public debater claims.",
+        "- `debate.md`: room debates and final chamber claims.",
+        "- `rooms.json`: structured room membership, representatives, and syntheses.",
         "- `forecasts.csv`: final forecast and bet/pass decision for every predictor.",
         "- `findings.json`: normalized findings used by this run.",
         "- `knowledge_views.json`: filtered predictor views derived from the full graph.",
@@ -101,26 +104,68 @@ def _write_summary(path: Path, match: MatchContext, result: RoundResult) -> None
 
 def _write_debate(path: Path, result: RoundResult) -> None:
     lines = [f"# Debate Feed: {result.round_id}", ""]
+    if result.rooms:
+        lines.extend(["## Room Debates", ""])
+        for room in result.rooms:
+            lines.extend(
+                [
+                    f"### {room.room_id}: {room.stance} / {room.evidence_focus}",
+                    "",
+                    f"- Participants: {len(room.participant_ids)}",
+                    f"- Representatives: {', '.join(room.representative_ids) or 'none'}",
+                    f"- Room home probability: {_pct(room.synthesis_home_probability)}",
+                    f"- Room confidence: {room.synthesis_confidence:.3f}",
+                    f"- Synthesis: {room.synthesis}",
+                    "",
+                ]
+            )
+            for claim in room.claims:
+                _append_claim_lines(lines, claim, heading_level="####")
+        lines.extend(["## Final Chamber", ""])
     for claim in result.claims:
-        tags = ", ".join(claim.evidence_tags) if claim.evidence_tags else "no dominant source"
-        lines.extend(
-            [
-                f"## {claim.speaker_name}",
-                "",
-                f"- Model: `{claim.model}`",
-                f"- Persona: {claim.persona}",
-                f"- Knowledge access: {claim.access_tier} ({claim.visible_findings} findings)",
-                f"- Claim type: {claim.claim_type}",
-                f"- Selection reason: {claim.selection_reason}",
-                f"- Evidence tags: {tags}",
-                f"- Stated home probability: {_pct(claim.stated_home_probability)}",
-                f"- Confidence: {claim.confidence:.3f}",
-                "",
-                claim.message,
-                "",
-            ]
-        )
+        _append_claim_lines(lines, claim, heading_level="##" if not result.rooms else "###")
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _append_claim_lines(lines: list[str], claim, *, heading_level: str) -> None:
+    tags = ", ".join(claim.evidence_tags) if claim.evidence_tags else "no dominant source"
+    role = claim.debate_role or "speaker"
+    phase = claim.debate_phase or "final"
+    room = claim.room_id or "global"
+    lines.extend(
+        [
+            f"{heading_level} {claim.speaker_name}",
+            "",
+            f"- Phase: {phase}",
+            f"- Room: {room}",
+            f"- Debate role: {role}",
+            f"- Model: `{claim.model}`",
+            f"- Persona: {claim.persona}",
+            f"- Knowledge access: {claim.access_tier} ({claim.visible_findings} findings)",
+            f"- Claim type: {claim.claim_type}",
+            f"- Selection reason: {claim.selection_reason}",
+            f"- Evidence tags: {tags}",
+            f"- Stated home probability: {_pct(claim.stated_home_probability)}",
+            f"- Confidence: {claim.confidence:.3f}",
+            "",
+            claim.message,
+            "",
+        ]
+    )
+    if claim.referenced_evidence:
+        lines.extend(["Referenced evidence:", ""])
+        for evidence in claim.referenced_evidence[:4]:
+            subject = evidence.get("subject") or evidence.get("team") or "unknown"
+            claim_type = str(evidence.get("claim_type") or "claim").replace("_", " ")
+            source = evidence.get("source_title") or evidence.get("scout_name") or "source"
+            evidence_text = evidence.get("claim") or ""
+            lines.append(f"- `{claim_type}` {subject}: {evidence_text} ({source})")
+        lines.append("")
+
+
+def _write_rooms(path: Path, result: RoundResult) -> None:
+    rooms = [room.to_dict() for room in result.rooms]
+    path.write_text(json.dumps(rooms, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _write_forecasts(path: Path, result: RoundResult) -> None:
@@ -190,6 +235,7 @@ def _write_compact_events(path: Path, result: RoundResult) -> None:
             "entity_counts": entity_counts,
         }
     )
+    events.extend({"event_type": "debate_room", **room.to_dict()} for room in result.rooms)
     events.extend({"event_type": "debate_claim", **claim.to_dict()} for claim in result.claims)
     events.extend({"event_type": "forecast", **forecast.to_dict()} for forecast in result.forecasts)
 
@@ -259,6 +305,15 @@ def _write_debug_report(path: Path, match: MatchContext, result: RoundResult) ->
             continue
         avg_findings = sum(len(view.visible_findings) for view in tier_views) / len(tier_views)
         lines.append(f"- {tier}: predictors={len(tier_views)}, avg_visible_findings={avg_findings:.1f}")
+    lines.append("")
+
+    lines.extend(["## Debate Rooms", ""])
+    for room in result.rooms:
+        lines.append(
+            f"- {room.room_id}: stance={room.stance}, focus={room.evidence_focus}, "
+            f"participants={len(room.participant_ids)}, reps={len(room.representative_ids)}, "
+            f"p={_pct(room.synthesis_home_probability)}, confidence={room.synthesis_confidence:.3f}"
+        )
     lines.append("")
 
     lines.extend(["## Debaters", ""])

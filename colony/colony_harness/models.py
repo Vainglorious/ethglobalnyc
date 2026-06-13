@@ -172,10 +172,40 @@ class DebateClaim:
     confidence: float
     direction: Side
     message: str
+    debate_phase: str = "final"
+    room_id: str = ""
+    debate_role: str = ""
     evidence_tags: list[str] = field(default_factory=list)
+    referenced_evidence: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class DebateRoom:
+    room_id: str
+    stance: str
+    evidence_focus: str
+    participant_ids: list[str]
+    representative_ids: list[str]
+    claims: list[DebateClaim]
+    synthesis_home_probability: float | None
+    synthesis_confidence: float
+    synthesis: str
+
+    def to_dict(self) -> dict:
+        return {
+            "room_id": self.room_id,
+            "stance": self.stance,
+            "evidence_focus": self.evidence_focus,
+            "participant_ids": self.participant_ids,
+            "representative_ids": self.representative_ids,
+            "claims": [claim.to_dict() for claim in self.claims],
+            "synthesis_home_probability": self.synthesis_home_probability,
+            "synthesis_confidence": self.synthesis_confidence,
+            "synthesis": self.synthesis,
+        }
 
 
 @dataclass(frozen=True)
@@ -210,6 +240,7 @@ class BetCommitment:
 @dataclass(frozen=True)
 class RoundResult:
     round_id: str
+    rooms: list[DebateRoom]
     claims: list[DebateClaim]
     forecasts: list[Forecast]
     commitments: list[BetCommitment]
@@ -224,6 +255,7 @@ class RoundResult:
             "findings": [finding.to_dict() for finding in self.findings],
             "knowledge_views": [view.to_dict() for view in self.knowledge_views],
             "world_graph": self.world_graph.to_dict(),
+            "rooms": [room.to_dict() for room in self.rooms],
             "claims": [claim.to_dict() for claim in self.claims],
             "forecasts": [forecast.to_dict() for forecast in self.forecasts],
             "commitments": [commitment.to_dict() for commitment in self.commitments],
