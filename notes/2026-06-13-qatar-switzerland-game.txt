@@ -1,0 +1,83 @@
+================================================================================
+QATAR vs SWITZERLAND — GAME + MARKET RECORD (and UMA resolution watch)
+2026-06-13  (World Cup, Group B; kickoff 19:00 UTC / 3:00 PM ET)
+================================================================================
+
+PURPOSE
+-------
+Capture everything about the 3pm match's markets as it closes, and TRACK THE UMA
+RESOLUTION CYCLE in ClickHouse to learn how a Polymarket market settles (the basis
+for the Bet-3 "privileged info" arbitrage edge). Live market data from our
+ClickHouse instance (default_v3.polymarket_markets_all, near-live: refreshed ~21:07).
+
+SCORE
+-----
+User reported ~1-1 late. Market-implied state at ~21:07 UTC reads more like ~1 goal
+total with Switzerland ahead (see O/U ladder) — either a 1-0 Switzerland lead or the
+CH feed lags the live broadcast. Recorded as market-implied, not confirmed score.
+
+
+LIVE MARKET STATE (ClickHouse @ ~21:07 UTC, game in late/stoppage time)
+-----------------------------------------------------------------------
+WINNER (3 separate Polymarket markets):
+  Will Switzerland win on 2026-06-13?   Yes 0.955 / No 0.045
+  Will Qatar vs. Switzerland end in a draw?  Yes 0.035 / No 0.965
+  Will Qatar win on 2026-06-13?         Yes 0.002 / No 0.998
+
+TOTAL GOALS O/U ladder (Over / Under):
+  O/U 0.5  : 1.000 / 0.000   (>=1 goal certain)
+  O/U 1.5  : 0.360 / 0.640   (=> ~64% the game ends with 1 total goal)
+  O/U 2.5  : 0.060 / 0.940   (colony's pick = UNDER; now 0.94)
+  O/U 3.5  : 0.005 / 0.995
+  O/U 4.5  : 0.004 / 0.996
+  O/U 5.5+ : ~0 / ~1
+  (also exists: corners O/U, exact scores, 1st/2nd-half O/U, team O/U — all in
+   default_v3.polymarket_markets_all.)
+
+
+OUR POSITION (via PolyGun) — see predictions.json
+--------------------------------------------------
+  Pre-game Bet 1: Switzerland to win @ 0.84, 2.38095 shares, $2
+  Now ~0.955 => in profit (~+14% on price). Settles to 1.00 if Switzerland win.
+  tx 0x90413d805b0bd75b38b667a6e15a4b8cb300ae1ace32b5dbe20a8ff630b67eca.
+  Colony's mid-game UNDER 2.5 pick: 0.335 pre-game -> 0.94 now. NOT executable
+  (CLOB US-geoblocked, PolyGun doesn't index O/U) — discovery only.
+
+
+MARKET IDENTIFIERS (for resolution tracking + future trading)
+-------------------------------------------------------------
+  O/U 2.5 total goals  condition_id 0x22bc30327ba8ca5a6c7a15808b63c2a8c5e00ebfd7536b74d2689992f4ba8a67
+     Under token 806961490044622937807145878629353199231499772082061646712921630323183428570
+     Over  token 54614601139630243784954147924158345636800070313383972710283600656556101162488
+  Switzerland-to-win  token 66066640081366099233010777058886646300763486736056057848435195209438713673265
+  (Gamma match event slug: fifwc-qat-che-2026-06-13, event id 351719 — winner-only;
+   O/U markets are separate, found via ClickHouse not the event view.)
+
+
+UMA RESOLUTION CYCLE — WHAT TO WATCH (the learning goal)
+-------------------------------------------------------
+Polymarket settles via UMA Optimistic Oracle V2. Expected event sequence per market
+(table: umalabs.uma_oo_v2_events_decoded, event_name):
+  RequestPrice  -> Polymarket asks UMA to resolve (fires after the game/end_time)
+  ProposePrice  -> a proposer submits the outcome
+  DisputePrice  -> (optional) someone challenges within the liveness window
+  Settle        -> outcome finalized; market price -> 1.00 / 0.00, closed=true
+THE ARB EDGE (Bet 3): act in the gap between ProposePrice and Settle, once the
+proposed outcome is visible on-chain but before the market/UI fully reflects it.
+
+Status at start of watch (~21:10 UTC):
+  - Match NOT in umalabs.markets_current (resolution pipeline not tracking it).
+  - Winner/O/U markets still active=true, not resolved (Switzerland 0.955, not ~1.0).
+  - Existing UMA corpus: Settle 1177, ProposePrice 1177, RequestPrice 21,
+    DisputePrice 12; window 2026-05-29 -> 2026-06-12 (i.e. last ingested event is
+    from 06-12 — pipeline may lag; watch whether new events land for today).
+
+DATA FRESHNESS / CAVEATS
+  - polymarket_markets_all refreshed ~21:07 (near-live); market_snapshots ~20:41.
+  - ClickHouse cluster is under memory pressure (shared) -> intermittent
+    MEMORY_LIMIT_EXCEEDED; queries use retries + max_memory_usage/max_threads caps.
+  - umalabs.market_snapshots does NOT include this match (tracks a different ~2.2k set).
+
+WATCH LOG -> clickhouse/uma_cycle_log.tsv  (appended by clickhouse/track_uma.py)
+Findings get summarized back into this file after the watch.
+================================================================================

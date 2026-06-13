@@ -78,6 +78,30 @@
       "tx_hash": "0x90413d805b0bd75b38b667a6e15a4b8cb300ae1ace32b5dbe20a8ff630b67eca",
       "block": 88448257,
       "note": "3pm match Bet 1 of 3 (pre-game), colony consensus = Switzerland."
+    },
+    {
+      "id": 4,
+      "ts_utc": "2026-06-13T21:56:48Z",
+      "action": "buy",
+      "placed_by": "claude",
+      "method": "auto",
+      "bet_phase": "pregame",
+      "event": "Brazil vs. Morocco (Jun 13)",
+      "market_question": "Will Brazil win on 2026-06-13?",
+      "outcome": "Yes (Brazil)",
+      "side": "yes",
+      "polygun_market_id": 1897049,
+      "outcome_token_id": "105492577477219588134242978490999229511934661984574714868659540712157271273221",
+      "shares": 3.389829,
+      "avg_price": 0.59,
+      "pusd_to_maker": 1.999999,
+      "pusd_fee": 0.04458,
+      "pusd_total": 2.044579,
+      "status": "filled",
+      "block": 88455215,
+      "tx_hash": "0xc3878c734e43b9e6fbc6b08bab337a06d1483669f44a45f97e20e6beb12c5cd0",
+      "market_type": "neg-risk (multi-outcome)",
+      "note": "Colony consensus pick (pre-game). Consensus = 4 users role-playing as ants. Source: https://chatgpt.com/share/6a2dd1f5-8ca8-83e8-b151-47dbf87911e9"
     }
   ]
 }
