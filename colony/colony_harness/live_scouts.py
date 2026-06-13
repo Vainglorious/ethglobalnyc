@@ -822,11 +822,39 @@ def _claim_subject(sentence: str, *, home_team: str, away_team: str) -> tuple[st
         for player in players:
             if player in lowered:
                 return player.title(), team, player.title()
+    inferred_player = _infer_player_from_availability_sentence(sentence, home_team=home_team, away_team=away_team)
+    if inferred_player:
+        team = home_team if home_team.lower() in lowered else away_team if away_team.lower() in lowered else None
+        return inferred_player, team, inferred_player
     if home_team.lower() in lowered:
         return home_team, home_team, None
     if away_team.lower() in lowered:
         return away_team, away_team, None
     return "unknown", None, None
+
+
+def _infer_player_from_availability_sentence(sentence: str, *, home_team: str, away_team: str) -> str:
+    ignored = {
+        home_team.lower(),
+        away_team.lower(),
+        "world cup",
+        "team news",
+        "injury news",
+    }
+    patterns = [
+        r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\s+(?:is|has|was)\s+(?:listed|ruled|sidelined|injured|out|recovering|doubtful)",
+        r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\s+\([^)]*\)\s+is\s+out",
+        r"\bright-back\s+([A-Z][a-z]+)\s+has\s+been\s+ruled\s+out",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, sentence)
+        if not match:
+            continue
+        candidate = match.group(1).strip()
+        candidate_key = candidate.lower()
+        if candidate_key not in ignored and not any(word in candidate_key for word in ("injury", "news", "preview")):
+            return candidate
+    return ""
 
 
 def _claim_impact(claim_type: str, *, team: str | None, home_team: str, away_team: str) -> str:

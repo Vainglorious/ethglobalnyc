@@ -289,7 +289,8 @@ Each finding has:
 - `confidence`;
 - `cost`;
 - `citations`;
-- `summary`.
+- `summary`;
+- optional `evidence_claims` for player/team availability, lineup, tactical, or market-preview facts extracted from public sources.
 
 ### Tournament KG And Round Subgraph
 
@@ -312,6 +313,9 @@ Each current run writes a lightweight `world_graph.json`. Today this file is a r
 - `team` entities;
 - `match` entity;
 - `finding` entities;
+- `evidence_claim` entities for structured facts extracted from findings;
+- `source` entities for cited articles, feeds, or scraped pages;
+- `player` entities when a claim mentions a specific player;
 - `predictor` entities;
 - `prediction` entities;
 - `debate_claim` entities.
@@ -320,9 +324,17 @@ Relations include:
 
 - team `plays_home_in` / `plays_away_in` match;
 - finding `concerns` match;
+- finding `has_evidence_claim`;
+- evidence claim `concerns` match;
+- evidence claim `about_team`;
+- evidence claim `about_player`;
+- evidence claim `evidenced_by` source;
+- player `member_of` team;
 - predictor `made_prediction`;
 - predictor `published_claim`;
 - claim `concerns` match.
+
+This keeps the graph small while making repeated player facts navigable. For example, several sources can point to separate Neymar availability claims, all attached to the same `player:neymar` node and the same Brazil match subgraph.
 
 ### Knowledge Views
 

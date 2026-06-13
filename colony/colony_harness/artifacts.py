@@ -93,7 +93,7 @@ def _write_summary(path: Path, match: MatchContext, result: RoundResult) -> None
         "- `forecasts.csv`: final forecast and bet/pass decision for every predictor.",
         "- `findings.json`: normalized findings used by this run.",
         "- `knowledge_views.json`: filtered predictor views derived from the full graph.",
-        "- `world_graph.json`: lightweight round subgraph for this selected match.",
+        "- `world_graph.json`: lightweight round subgraph with match, teams, findings, evidence claims, sources, players, predictions, and debate claims.",
         "- `events.compact.jsonl`: compact machine-readable event stream.",
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -162,6 +162,7 @@ def _write_world_graph(path: Path, result: RoundResult) -> None:
 
 
 def _write_compact_events(path: Path, result: RoundResult) -> None:
+    entity_counts = _entity_type_counts(result)
     events = [{"event_type": "round_summary", **result.summary}]
     events.extend({"event_type": "finding", **finding.to_dict()} for finding in result.findings)
     events.extend(
@@ -186,6 +187,7 @@ def _write_compact_events(path: Path, result: RoundResult) -> None:
             "round_id": result.world_graph.round_id,
             "entities": len(result.world_graph.entities),
             "relationships": len(result.world_graph.relationships),
+            "entity_counts": entity_counts,
         }
     )
     events.extend({"event_type": "debate_claim", **claim.to_dict()} for claim in result.claims)
@@ -238,11 +240,14 @@ def _write_debug_report(path: Path, match: MatchContext, result: RoundResult) ->
             lines.append("")
 
     lines.extend(["## Round Subgraph", ""])
+    entity_counts = _entity_type_counts(result)
+    count_text = ", ".join(f"{entity_type}={count}" for entity_type, count in sorted(entity_counts.items()))
     lines.extend(
         [
             f"- Graph id: {result.world_graph.graph_id}",
             f"- Entities: {len(result.world_graph.entities)}",
             f"- Relationships: {len(result.world_graph.relationships)}",
+            f"- Entity types: {count_text}",
             "",
         ]
     )
@@ -284,3 +289,10 @@ def _write_debug_report(path: Path, match: MatchContext, result: RoundResult) ->
         ]
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _entity_type_counts(result: RoundResult) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for entity in result.world_graph.entities:
+        counts[entity.entity_type] = counts.get(entity.entity_type, 0) + 1
+    return counts
