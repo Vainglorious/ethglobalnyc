@@ -1,12 +1,13 @@
 """FastAPI wrapper around the Colony CLI pipeline.
 
 The first deployment goal is intentionally narrow: keep the existing harness as
-the source of truth, run it as a managed subprocess, and expose run artifacts to
-the frontend or demo tooling.
+the source of truth, run it as a managed subprocess, and expose run artifacts and
+an SSE stream to the frontend or demo tooling.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -18,7 +19,7 @@ from typing import Literal
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 
@@ -227,6 +228,7 @@ def get_run(run_id: str) -> dict:
     latest = _latest_compact_dir(run_id)
     metadata["artifacts"] = {
         "events": f"/runs/{run_id}/events",
+        "stream": f"/runs/{run_id}/stream",
         "stdout": f"/runs/{run_id}/artifacts/stdout.log",
         "stderr": f"/runs/{run_id}/artifacts/stderr.log",
     }
@@ -246,6 +248,40 @@ def get_run(run_id: str) -> dict:
 def get_events(run_id: str) -> PlainTextResponse:
     path = _safe_artifact_path(run_id, "events.jsonl")
     return PlainTextResponse(path.read_text(encoding="utf-8"), media_type="application/x-ndjson")
+
+
+@app.get("/runs/{run_id}/stream")
+async def stream_run(run_id: str) -> StreamingResponse:
+    _read_metadata(run_id)
+
+    async def event_source():
+        offset = 0
+        last_status_payload = ""
+        while True:
+            metadata = _read_metadata(run_id)
+            status_payload = json.dumps(metadata, sort_keys=True)
+            if status_payload != last_status_payload:
+                last_status_payload = status_payload
+                yield f"event: status\ndata: {status_payload}\n\n"
+
+            events_path = _run_dir(run_id) / "events.jsonl"
+            if events_path.exists():
+                with events_path.open("r", encoding="utf-8") as handle:
+                    handle.seek(offset)
+                    for line in handle:
+                        line = line.strip()
+                        if line:
+                            yield f"event: colony_event\ndata: {line}\n\n"
+                    offset = handle.tell()
+
+            if metadata["status"] in {"succeeded", "failed"}:
+                yield f"event: done\ndata: {status_payload}\n\n"
+                break
+
+            yield "event: heartbeat\ndata: {}\n\n"
+            await asyncio.sleep(1)
+
+    return StreamingResponse(event_source(), media_type="text/event-stream")
 
 
 @app.get("/runs/{run_id}/artifacts/{relative_path:path}")
