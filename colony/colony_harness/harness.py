@@ -12,6 +12,7 @@ from .debate import DebateFeed
 from .genes import random_genome
 from .knowledge import build_knowledge_views
 from .models import DebateClaim, DebateRoom, KnowledgeView, MatchContext, RoundResult
+from .population import normalize_agent_lineages
 from .voice import TemplateVoiceModel, VoiceModel
 from .wallets import WalletStore
 from .world_graph import build_world_graph
@@ -65,6 +66,7 @@ class ColonyHarness:
         self.agents = agents if agents is not None else self._spawn_agents()
         if agents is not None and self.wallet_store is not None:
             self._attach_wallets()
+        normalize_agent_lineages(self.agents)
 
     def _spawn_agents(self) -> list[AntAgent]:
         agents: list[AntAgent] = []
@@ -82,6 +84,8 @@ class ColonyHarness:
                 bankroll=round(self.starting_bankroll * self.rng.uniform(0.92, 1.08), 4),
                 accuracy=round(self.rng.uniform(0.35, 0.65), 4),
                 wallet_address=wallet_address,
+                lineage_id=f"lineage_{agent_id}",
+                lineage_root_agent_id=agent_id,
             )
             agents.append(agent)
         return agents

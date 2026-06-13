@@ -93,6 +93,7 @@ export function createWorldSink(): EventSink {
       }
       sim.names[index] = record.name
       sim.genomeHashes[index] = record.genome_hash
+      sim.walletAddresses[index] = record.wallet_address || ''
       sim.generations[index] = record.generation
       sim.bankrolls[index] = record.bankroll
       sim.accuracy[index] = record.accuracy

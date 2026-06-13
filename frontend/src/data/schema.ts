@@ -77,6 +77,7 @@ export interface RoundSummary {
 export interface AgentRecord {
   agent_id: string
   name: string
+  wallet_address?: string
   generation: number
   bankroll: number
   accuracy: number

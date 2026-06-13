@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Colony ENS Structure</title>
+  <style>
+    :root {
+      --bg: #f6f4ee;
+      --ink: #171717;
+      --muted: #66645e;
+      --line: #d8d2c3;
+      --panel: #fffdf8;
+      --green: #1f8a5b;
+      --blue: #2463eb;
+      --amber: #b36b00;
+      --violet: #6d4aff;
+      --red: #c2410c;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,255,255,0)),
+        var(--bg);
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 36px 22px 56px;
+    }
+
+    header {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 26px;
+    }
+
+    h1, h2, h3, p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: clamp(28px, 4vw, 48px);
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 820px;
+      color: var(--muted);
+      font-size: 17px;
+      line-height: 1.55;
+    }
+
+    .grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .grid.three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      box-shadow: 0 8px 24px rgba(35, 28, 18, 0.06);
+    }
+
+    .card h2 {
+      font-size: 18px;
+      line-height: 1.2;
+      margin-bottom: 10px;
+    }
+
+    .card h3 {
+      font-size: 14px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 10px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      height: 24px;
+      padding: 0 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      background: #eee9dc;
+      color: #3f3a31;
+    }
+
+    .tag.green { background: #e3f6ec; color: var(--green); }
+    .tag.blue { background: #e5edff; color: var(--blue); }
+    .tag.amber { background: #fff1d6; color: var(--amber); }
+    .tag.violet { background: #ece8ff; color: var(--violet); }
+
+    .name {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 15px;
+      word-break: break-all;
+      background: #f3efe4;
+      border: 1px solid #e3ddce;
+      border-radius: 6px;
+      padding: 10px;
+      margin: 10px 0;
+    }
+
+    .rows {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 150px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      font-size: 14px;
+    }
+
+    .key {
+      color: var(--muted);
+    }
+
+    .value {
+      font-weight: 650;
+      overflow-wrap: anywhere;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: 1fr 34px 1fr 34px 1fr;
+      align-items: stretch;
+      gap: 10px;
+      margin: 22px 0;
+    }
+
+    .arrow {
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 24px;
+      font-weight: 800;
+    }
+
+    pre {
+      margin: 0;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #1f2937;
+      background: #f5f1e8;
+      border: 1px solid #e2d9c8;
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .section {
+      margin-top: 28px;
+    }
+
+    .mini {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+      margin-top: 8px;
+    }
+
+    .callout {
+      border-left: 4px solid var(--green);
+      padding: 14px 16px;
+      background: #f0fbf5;
+      border-radius: 6px;
+      color: #164832;
+      font-weight: 650;
+      margin-top: 18px;
+    }
+
+    @media (max-width: 880px) {
+      .grid.three,
+      .grid.two,
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .arrow {
+        transform: rotate(90deg);
+      }
+
+      .row {
+        grid-template-columns: 1fr;
+        gap: 2px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <span class="tag green">ENS identity model</span>
+      <h1>ENS is the ant identity card</h1>
+      <p class="lead">
+        ENS n'est pas seulement un joli nom: c'est la carte d'identité canonique de chaque ant.
+        Chaque ant reçoit son propre subdomain ENS, qui relie son nom, sa parenté, son wallet,
+        son statut World hérité, son état économique et son historique complet.
+      </p>
+    </header>
+
+    <section class="flow" aria-label="Name resolution flow">
+      <article class="card">
+        <h3>Domaine projet</h3>
+        <h2>colony.eth</h2>
+        <div class="name">colony.eth</div>
+        <p class="mini">Nom parent contrôlé par le projet. Il pointe vers un resolver wildcard/offchain.</p>
+      </article>
+
+      <div class="arrow">→</div>
+
+      <article class="card">
+        <h3>Subdomain ant</h3>
+        <h2>Carte d'identité ENS</h2>
+        <div class="name">onyx-striker-7.colony.eth</div>
+        <p class="mini">Ce nom est l'identité publique de cet ant précis. Le nom random est généré à la naissance.</p>
+      </article>
+
+      <div class="arrow">→</div>
+
+      <article class="card">
+        <h3>Profile complet</h3>
+        <h2>Life story JSON</h2>
+        <div class="name">https://api.colony.app/ants/ant_0042.json</div>
+        <p class="mini">Toute la généalogie et les stats changent ici, sans transaction par update.</p>
+      </article>
+    </section>
+
+    <section class="grid three section">
+      <article class="card">
+        <span class="tag green">Identity card</span>
+        <h2>La carte d'identité de l'ant</h2>
+        <div class="name">onyx-striker-7.colony.eth</div>
+        <div class="rows">
+          <div class="row"><span class="key">Identité publique</span><span class="value">onyx-striker-7.colony.eth</span></div>
+          <div class="row"><span class="key">Id interne</span><span class="value">ant_0042</span></div>
+          <div class="row"><span class="key">Wallet</span><span class="value">0xb361...e7D7</span></div>
+          <div class="row"><span class="key">Famille</span><span class="value">root-ember.colony.eth</span></div>
+          <div class="row"><span class="key">World status</span><span class="value">verified by inheritance</span></div>
+          <div class="row"><span class="key">Life file</span><span class="value">profile JSON</span></div>
+        </div>
+        <p class="mini">Quand on résout ce nom ENS, on doit pouvoir comprendre qui est l'ant sans connaître le backend.</p>
+      </article>
+
+      <article class="card">
+        <span class="tag green">Règle ENS</span>
+        <h2>Chaque ant a son subdomain</h2>
+        <div class="rows">
+          <div class="row"><span class="key">ant_0000</span><span class="value">root-ember.colony.eth</span></div>
+          <div class="row"><span class="key">ant_0011</span><span class="value">ember-scout-2.colony.eth</span></div>
+          <div class="row"><span class="key">ant_0042</span><span class="value">onyx-striker-7.colony.eth</span></div>
+          <div class="row"><span class="key">agent_id</span><span class="value">reste l'id machine stable</span></div>
+        </div>
+        <p class="mini">Même si un ant meurt, son nom ENS reste son acte de naissance et son historique.</p>
+      </article>
+
+      <article class="card">
+        <span class="tag blue">ENS / Ethereum</span>
+        <h2>Identité canonique</h2>
+        <div class="rows">
+          <div class="row"><span class="key">Name</span><span class="value">onyx-striker-7.colony.eth</span></div>
+          <div class="row"><span class="key">addr</span><span class="value">0xb361...e7D7</span></div>
+          <div class="row"><span class="key">description</span><span class="value">Gen 4 verified ant, alive</span></div>
+          <div class="row"><span class="key">url</span><span class="value">https://colony.app/ants/ant_0042</span></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="grid three section">
+      <article class="card">
+        <span class="tag violet">World Chain</span>
+        <h2>World ID vient du root</h2>
+        <div class="rows">
+          <div class="row"><span class="key">Root wallet</span><span class="value">0xb361...e7D7</span></div>
+          <div class="row"><span class="key">AgentKit</span><span class="value">registered: true</span></div>
+          <div class="row"><span class="key">humanId</span><span class="value">0x07ea...9b2c</span></div>
+          <div class="row"><span class="key">Inherited by</span><span class="value">all descendants of lineage_ant_0000</span></div>
+        </div>
+      </article>
+
+      <article class="card">
+        <span class="tag amber">Arc testnet</span>
+        <h2>Argent et actions</h2>
+        <div class="rows">
+          <div class="row"><span class="key">Arc address</span><span class="value">0xb361...e7D7</span></div>
+          <div class="row"><span class="key">Uses</span><span class="value">USDC, trades, x402</span></div>
+          <div class="row"><span class="key">Bankroll</span><span class="value">147.20 USDC</span></div>
+          <div class="row"><span class="key">Status</span><span class="value">alive</span></div>
+        </div>
+      </article>
+
+      <article class="card">
+        <span class="tag violet">Inheritance</span>
+        <h2>Si l'ant vient d'une génération précédente</h2>
+        <div class="rows">
+          <div class="row"><span class="key">Generation</span><span class="value">4</span></div>
+          <div class="row"><span class="key">Parent</span><span class="value">ember-scout-2.colony.eth</span></div>
+          <div class="row"><span class="key">Root lineage</span><span class="value">root-ember.colony.eth</span></div>
+          <div class="row"><span class="key">World status</span><span class="value">inherited_world_verified: true</span></div>
+        </div>
+        <p class="mini">On ne demande pas World ID à l'enfant. On lit sa parenté jusqu'au root vérifié.</p>
+      </article>
+
+      <article class="card">
+        <span class="tag blue">Lookup</span>
+        <h2>Questions auxquelles sa carte répond</h2>
+        <div class="name">onyx-striker-7.colony.eth</div>
+        <div class="rows">
+          <div class="row"><span class="key">Qui est-ce ?</span><span class="value">ant_0042</span></div>
+          <div class="row"><span class="key">D'où vient-il ?</span><span class="value">gen 4, child of ant_0011</span></div>
+          <div class="row"><span class="key">World ID ?</span><span class="value">oui, via lineage_ant_0000</span></div>
+          <div class="row"><span class="key">Wallet ?</span><span class="value">0xb361...e7D7 on Arc</span></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="grid two section">
+      <article class="card">
+        <h3>ENS records légers</h3>
+        <h2>Le recto de la carte ENS</h2>
+        <pre>{
+  "name": "onyx-striker-7.colony.eth",
+  "addr": "0xb361A224A540913D4e829D27394fB291CEDee7D7",
+  "text": {
+    "description": "Gen 4 verified ant, child of ember-scout-2, alive",
+    "url": "https://colony.app/ants/ant_0042",
+    "com.colony.agent_id": "ant_0042",
+    "com.colony.parent": "ember-scout-2.colony.eth",
+    "com.colony.lineage": "root-ember.colony.eth",
+    "com.colony.world": "inherited_verified",
+    "com.colony.profile": "https://api.colony.app/ants/ant_0042.json"
+  }
+}</pre>
+        <p class="mini">
+          Le recto doit suffire pour identifier l'ant: nom, wallet, parent, lineage, World status,
+          lien dashboard et lien profile. Le détail complet reste dans le JSON.
+        </p>
+      </article>
+
+      <article class="card">
+        <h3>Profile JSON complet</h3>
+        <h2>Le verso: dossier complet</h2>
+        <pre>{
+  "agent_id": "ant_0042",
+  "ens_name": "onyx-striker-7.colony.eth",
+  "display_name": "Onyx Striker 7",
+  "generation": 4,
+  "parent": {
+    "agent_id": "ant_0011",
+    "ens_name": "ember-scout-2.colony.eth"
+  },
+  "lineage": {
+    "lineage_id": "lineage_ant_0000",
+    "root_agent_id": "ant_0000",
+    "root_name": "root-ember.colony.eth",
+    "verified_lineage": true,
+    "verification_source": "world_id_root",
+    "verified_inherited": true,
+    "world_human_id": "0x07eaa67a...254e9b2c"
+  },
+  "wallets": {
+    "evm": "0xb361A224A540913D4e829D27394fB291CEDee7D7",
+    "arc_testnet": "0xb361A224A540913D4e829D27394fB291CEDee7D7"
+  },
+  "state": {
+    "status": "alive",
+    "bankroll": 147.2,
+    "accuracy": 0.58,
+    "genome_hash": "3e5b30a8..."
+  }
+}</pre>
+      </article>
+    </section>
+
+    <section class="grid two section">
+      <article class="card">
+        <h3>Lineage root</h3>
+        <h2>root-ember.colony.eth</h2>
+        <div class="rows">
+          <div class="row"><span class="key">agent_id</span><span class="value">ant_0000</span></div>
+          <div class="row"><span class="key">verified</span><span class="value">true via World AgentKit</span></div>
+          <div class="row"><span class="key">children</span><span class="value">ant_0011, ant_0042, ant_0088...</span></div>
+          <div class="row"><span class="key">tier</span><span class="value">world_premium</span></div>
+        </div>
+        <p class="mini">Un humain vérifie un root. Tous les descendants héritent du statut verified_lineage.</p>
+      </article>
+
+      <article class="card">
+        <h3>Ant child</h3>
+        <h2>onyx-striker-7.colony.eth</h2>
+        <div class="rows">
+          <div class="row"><span class="key">agent_id</span><span class="value">ant_0042</span></div>
+          <div class="row"><span class="key">generation</span><span class="value">4</span></div>
+          <div class="row"><span class="key">parent</span><span class="value">ember-scout-2.colony.eth</span></div>
+          <div class="row"><span class="key">lineage</span><span class="value">root-ember.colony.eth</span></div>
+          <div class="row"><span class="key">world id</span><span class="value">inherited from root, not re-verified</span></div>
+        </div>
+        <p class="mini">L'ant a son propre nom, mais son statut verified vient de sa lignée.</p>
+      </article>
+    </section>
+
+    <div class="callout">
+      Règle simple: l'ENS name est la carte d'identité de l'ant. Arc règle l'argent, World vérifie la lignée, et le resolver ENS relie tout dans une identité lisible.
+    </div>
+  </main>
+</body>
+</html>

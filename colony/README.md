@@ -12,7 +12,7 @@ The goal of this prototype is narrow:
 6. let the rest of the colony consume the debate parametrically;
 7. produce sealed betting commitments.
 
-This is intentionally not the full product yet. There is no ENS, Arc, x402, ClickHouse, or real match oracle in this first harness. Those systems can be attached once the core loop feels right.
+This is intentionally not the full product yet. Arc trades, x402 purchases, ClickHouse, and real settlement are still outside this first harness. The harness can now generate local EVM wallets and ENS identity-card records for agents so the identity layer can be tested before those systems are attached.
 
 ## Current Working Version
 
@@ -43,6 +43,8 @@ What works today:
 - Feed structured dispute metadata back into the voice layer so challengers and source auditors reply to the disputed claim directly.
 - Render public debate messages without agent IDs in the text, with short source-grounded replies and a two-sentence cap for template voices.
 - Attach a stable `genome_id` to public roster records, debate claims, forecasts, disputes, conversation memory, and KG genome entities.
+- Attach local EVM wallet addresses and lineage metadata to agents.
+- Generate ENS identity-card records for each ant subdomain, including parent, lineage, World ID inheritance status, profile URL, and agent-context text.
 - Save/load a persistent population state so the same `genome_id` roster can run across multiple matches.
 - Evolve a saved population offline from recent conversation-memory scores, keeping useful genomes and replacing weaker slots with mutations.
 - Aggregate room outputs into one final-chamber synthesis with structured `diagnostics`: consensus, main evidence thread, minority report, source dispute, room range, and dispute counts.
@@ -55,7 +57,7 @@ Known rough edges:
 - Source quality is not ranked strongly enough yet. Search snippets and generic squad pages can leak into the debate beside stronger sources such as BBC, ESPN, RotoWire, or official pages.
 - Debate wording now uses short source summaries such as "BBC has Neymar missing", structured dispute targets, challenger objections, and room-level synthesis. The replies are cleaner and less repetitive than the first version, but still template-driven rather than a full natural conversation.
 - The public odds scout is still a placeholder unless a real odds provider is connected.
-- Settlement, bankroll updates, reproduction, death, x402 data purchases, and Worldcoin privilege are not implemented yet.
+- Settlement, bankroll updates, death, x402 data purchases, and live Worldcoin privilege routing are not implemented yet.
 
 ## Why This Shape
 
@@ -104,16 +106,84 @@ python3 colony/run_demo.py \
   --population-state colony/data/demo_population_state.json
 ```
 
-Create/reuse local throwaway EVM wallets for agents:
+Create/reuse local throwaway EVM wallets and assign deterministic ENS names for agents:
 
 ```bash
-python3 colony/run_demo.py --agents 40 --agent-wallets --show-roster
+python3 colony/run_demo.py \
+  --agents 40 \
+  --agent-wallets \
+  --ens-parent colonny.eth \
+  --show-roster
 ```
 
 Private keys are written to `colony/secrets/agent-wallets.local.json`, which is gitignored.
-Only `wallet_address` is exported in public agent records. The same EVM address can be
-registered with Worldcoin AgentKit on World Chain mainnet and later funded on Arc testnet
-for trades/x402 experiments.
+Only `wallet_address` and `ens_name` are exported in public agent records. The same EVM
+address can be registered with Worldcoin AgentKit on World Chain mainnet and later funded
+on Arc testnet for trades/x402 experiments.
+
+Generate ENS identity-card records for the current roster:
+
+```bash
+python3 colony/run_demo.py \
+  --agents 40 \
+  --agent-wallets \
+  --ens-parent colonny.eth \
+  --verified-root ant_0000 \
+  --identity-out colony/data/ens-identities.demo.json
+```
+
+Each record has a subdomain such as `root-fable-0.colonny.eth`, an `addr` record pointing
+to the ant wallet, an ENSIP-26 `agent-context`, `agent-endpoint[web]`, and compact
+`com.colony.*` text records.
+Generation-0 ants become lineage roots. Children keep their own ENS names and inherit
+`verified_lineage` from the root when a root has been registered through Worldcoin AgentKit.
+
+See the full runbook in [`docs/ens-agent-identity.md`](docs/ens-agent-identity.md).
+
+The canonical agent discovery path is the ENSIP-26 text record:
+
+```text
+agent-context         JSON identity card for the ant
+agent-endpoint[web]   URL for the ant profile JSON/page
+com.colony.*          compact Colony-specific indexes
+```
+
+Once a Colony on-chain registry exists, add ENSIP-25 verification records:
+
+```text
+agent-registration[<registry>][<agent_id>] = 1
+```
+
+Dry-run Sepolia registration from the generated identity file:
+
+```bash
+python3 colony/register_ens_identities.py colony/data/ens-identities.demo.json --limit 2
+```
+
+Check whether the parent exists and is ready before broadcasting:
+
+```bash
+python3 colony/register_ens_identities.py \
+  colony/data/ens-identities.demo.json \
+  --check-parent
+```
+
+To send Sepolia transactions, put `PROJECT_ENS_PRIVATE_KEY` and `SEPOLIA_RPC_URL`
+in `colony/.env`, then add `--broadcast`. For ENSv2 parents such as names created in
+`app.ens.dev`, the script deploys a per-owner resolver if needed, deploys and attaches a
+subregistry to the parent if needed, then registers the ant subname and writes the ENSIP-26
+records. Publish a specific ant first:
+
+```bash
+python3 colony/register_ens_identities.py \
+  colony/data/ens-identities.demo.json \
+  --agent-id ant_0001 \
+  --ens-version v2 \
+  --broadcast
+```
+
+The script can still fall back to classic ENS Sepolia for older wrapped/unwrapped parents,
+matching the NpmGuard publisher pattern.
 
 Write an additional full JSONL export:
 

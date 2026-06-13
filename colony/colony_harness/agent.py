@@ -315,6 +315,12 @@ class AntAgent:
     bankroll: float
     accuracy: float
     wallet_address: str = ""
+    ens_name: str = ""
+    parent_agent_id: str = ""
+    lineage_id: str = ""
+    lineage_root_agent_id: str = ""
+    verified_lineage: bool = False
+    world_human_id: str = ""
     evolution_role: str = ""
     parent_genome_id: str = ""
     previous_genome_id: str = ""
@@ -331,6 +337,12 @@ class AntAgent:
             "name": self.name,
             "genome_id": self.genome_id,
             "wallet_address": self.wallet_address,
+            "ens_name": self.ens_name,
+            "parent_agent_id": self.parent_agent_id,
+            "lineage_id": self.lineage_id,
+            "lineage_root_agent_id": self.lineage_root_agent_id,
+            "verified_lineage": self.verified_lineage,
+            "world_human_id": self.world_human_id,
             "generation": self.generation,
             "bankroll": round(self.bankroll, 4),
             "accuracy": round(self.accuracy, 4),

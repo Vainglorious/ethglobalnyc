@@ -25,6 +25,7 @@ export interface AntSnapshot {
   side: number
   stake: number
   genomeHash: string
+  walletAddress: string
   generation: number
 }
 
