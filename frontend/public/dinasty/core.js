@@ -5,7 +5,7 @@ window.DN = window.DN || {};
 DN.palette = {
   skyTop: 0x6FA6DA,
   skyMid: 0x9FC9E8,
-  horizon: 0xE4EEF0,
+  horizon: 0xA7C57E,
   sun: 0xFFF3D2,
 
   grass: 0x5E9A35,

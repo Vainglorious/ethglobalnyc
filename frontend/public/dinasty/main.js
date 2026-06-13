@@ -227,9 +227,9 @@ DN.app = (function () {
 
   App.boot = function () {
     world = DN.world.init(document.getElementById('scene'));
+    DN.colony.init(world.scene); // before flora so flora can clear around nests
     DN.flora.init(world.scene);
     DN.resources.init(world.scene);
-    DN.colony.init(world.scene);
     DN.ants.init(world.scene, DN.colony.list);
     DN.trails.init(world.scene, DN.colony.list);
     DN.underground.init();

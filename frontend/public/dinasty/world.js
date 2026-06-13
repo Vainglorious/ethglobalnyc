@@ -61,6 +61,8 @@ DN.world = (function () {
     noise = new DNNoise(11);
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(DN.palette.horizon);
+    // No fog. The green horizon/background (palette.horizon + biome bg/sky.bot)
+    // keeps the surround green so the finite terrain never reveals a white void.
     scene.fog = null;
 
     const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 4000);

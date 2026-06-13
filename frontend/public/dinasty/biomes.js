@@ -4,10 +4,10 @@ window.DN = window.DN || {};
 DN.biomes = [
   {
     id: 'verdant', name: 'Verdant Basin', tag: 'Temperate forest',
-    sky: { top: 0x6FA6DA, mid: 0x9FC9E8, bot: 0xE4EEF0, sun: 0xFFF3D2 },
+    sky: { top: 0x6FA6DA, mid: 0x9FC9E8, bot: 0xA7C57E, sun: 0xFFF3D2 },
     fog: [180, 660], sunColor: 0xFFEFC8, sunBias: 1.0,
     hemiSky: 0xDCEBFF, hemiGround: 0x4A5A28, amb: 0.16,
-    bg: 0xE4EEF0, water: 0x66BBD8,
+    bg: 0xA7C57E, water: 0x66BBD8,
     ground: { grass: 0x5E9A35, grassDark: 0x42741F, grassLight: 0x7FB544, dirt: 0x8A6536, sand: 0xCBB682, rock: 0x9D988D, rockLight: 0xBAB4A7, rockDark: 0x7C776C },
     flora: { trunk: 0x6E4C2C, trunkDark: 0x533922, foliage: [0x4E8B38, 0x3E7A2C, 0x69A848], warm: 0xC98B33, trees: 56, grass: 3400, bushes: 40, rocks: 30, mush: 70, flowers: 90, ferns: 600, pineRatio: 0.5, warmRatio: 0.12 }
   },

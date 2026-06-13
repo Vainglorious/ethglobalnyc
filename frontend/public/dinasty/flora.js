@@ -7,6 +7,17 @@ DN.flora = (function () {
   function ground(x, z) { return DN.world.heightAt(x, z); }
   function biome() { return DN.world.biome || DN.biomes[0]; }
 
+  // keep a clearing around each colony nest so flora never buries it
+  const CLEAR_R = 26, CLEAR_R2 = CLEAR_R * CLEAR_R;
+  function nearColony(x, z) {
+    const L = (DN.colony && DN.colony.list) || [];
+    for (let i = 0; i < L.length; i++) {
+      const dx = x - L[i].pos.x, dz = z - L[i].pos.z;
+      if (dx * dx + dz * dz < CLEAR_R2) return true;
+    }
+    return false;
+  }
+
   function mulberry(a) {
     return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
   }
@@ -166,6 +177,7 @@ DN.flora = (function () {
       const a = Math.random() * 6.28, rr = opts.rMin + Math.pow(Math.random(), opts.bias || 1) * (opts.rMax - opts.rMin);
       const x = Math.cos(a) * rr, z = Math.sin(a) * rr, y = ground(x, z);
       if (y < DN.world.WATER_LEVEL + 0.5) continue;
+      if (nearColony(x, z)) continue;
       const sc = opts.sMin + Math.random() * (opts.sMax - opts.sMin);
       e.set(0, Math.random() * 6.28, 0); q.setFromEuler(e); s.set(sc, sc * (opts.sy || 1), sc); p.set(x, y, z);
       m.compose(p, q, s); mesh.setMatrixAt(placed, m); placed++;
@@ -194,6 +206,7 @@ DN.flora = (function () {
       const a = Math.random() * 6.28, rr = 56 + Math.pow(Math.random(), 0.82) * (RAD - 56);
       const x = Math.cos(a) * rr, z = Math.sin(a) * rr, y = ground(x, z);
       if (y < DN.world.WATER_LEVEL + 1) { i--; continue; }
+      if (nearColony(x, z)) { i--; continue; }
       const kind = 'pine';
       const tree = new THREE.Mesh(buildTree(2000 + i + b.id.length * 100, kind, fb), treeMat);
       const sc = 0.9 + Math.random() * 0.8;
@@ -211,6 +224,7 @@ DN.flora = (function () {
     for (let i = 0; i < Math.round(fb.rocks * dens * 0.55); i++) {
       const a = Math.random() * 6.28, rr = 24 + Math.random() * (RAD - 10);
       const x = Math.cos(a) * rr, z = Math.sin(a) * rr, y = ground(x, z);
+      if (nearColony(x, z)) continue;
       const parts = []; const chunks = 1 + Math.floor(Math.random() * 3);
       for (let k = 0; k < chunks; k++) { const s = 1.4 + Math.random() * 3.6; parts.push({ geo: (k % 2 ? new THREE.DodecahedronGeometry(s, 0) : new THREE.IcosahedronGeometry(s, 0)), matrix: T((Math.random() - .5) * 3, s * 0.4 + k * 0.7, (Math.random() - .5) * 3, 1, 0.7, 1, Math.random() * 6.28), color: [gb.rock, gb.rockLight, gb.rockDark][k % 3] }); }
       const g = mergeGeos(parts); parts.forEach(p => p.geo.dispose());
