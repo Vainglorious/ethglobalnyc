@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 from colony_harness import ColonyHarness
+from colony_harness.artifacts import create_run_dir, write_compact_run_artifacts
 from colony_harness.env import load_env_file
 from colony_harness.models import MatchContext
 from colony_harness.voice import TemplateVoiceModel, llm_voice_model_from_env
@@ -25,10 +26,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the Colony debate harness.")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG), help="Path to a colony config JSON file.")
     parser.add_argument("--agents", type=int, default=None, help="Override population size.")
-    parser.add_argument("--speakers", type=int, default=None, help="Override number of debate speakers.")
+    parser.add_argument("--speakers", type=int, default=None, help="Override number of public debaters.")
     parser.add_argument("--seed", type=int, default=None, help="Override RNG seed.")
     parser.add_argument("--out", default=None, help="Optional JSONL output path.")
-    parser.add_argument("--show-roster", action="store_true", help="Print public ant records.")
+    parser.add_argument("--runs-dir", default="colony/runs", help="Directory for automatic compact run logs.")
+    parser.add_argument("--no-run-log", action="store_true", help="Disable automatic compact run logs.")
+    parser.add_argument("--debug", action="store_true", help="Write an additional human-readable debug.md report.")
+    parser.add_argument("--show-roster", action="store_true", help="Print public predictor records.")
     parser.add_argument(
         "--voice-mode",
         choices=["template", "llm"],
@@ -85,11 +89,27 @@ def main() -> None:
 
     match = MatchContext.from_dict(config)
     result = harness.run_round(match)
+    run_dir = None
+    if not args.no_run_log:
+        run_dir = create_run_dir(args.runs_dir, result.round_id)
+        write_compact_run_artifacts(run_dir=run_dir, match=match, result=result, debug=args.debug)
 
     print(f"Colony round: {result.round_id}")
     print(f"Match: {match.home_team} vs {match.away_team}")
-    print(f"Population: {result.summary['population']} agents")
-    print(f"Speakers: {result.summary['speaker_slots']}")
+    print(f"Population: {result.summary['population']} predictors")
+    print(f"Debaters: {result.summary['speaker_slots']}")
+    print(
+        "Findings: "
+        f"public={result.summary['public_findings']} "
+        f"shared={result.summary['shared_findings']} "
+        f"private={result.summary['private_findings']}"
+    )
+    print(
+        "Knowledge views: "
+        f"public={result.summary['public_views']} "
+        f"shared={result.summary['shared_views']} "
+        f"private={result.summary['private_views']}"
+    )
     print(f"Market home probability: {result.summary['market_home_probability']:.1%}")
     print(f"Debate home probability: {result.summary['debate_home_probability']:.1%}")
     print(
@@ -103,7 +123,7 @@ def main() -> None:
     print("\nDebate feed:")
     for claim in result.claims:
         tags = ", ".join(claim.evidence_tags) if claim.evidence_tags else "no dominant source"
-        print(f"- [{claim.model} | {tags}] {claim.message}")
+        print(f"- [{claim.model} | {claim.access_tier}/{claim.visible_findings} | {claim.claim_type} | {tags}] {claim.message}")
 
     if args.show_roster:
         print("\nPublic roster:")
@@ -113,6 +133,9 @@ def main() -> None:
     if args.out:
         harness.write_jsonl(result, args.out)
         print(f"\nWrote JSONL events to {args.out}")
+
+    if run_dir is not None:
+        print(f"\nSaved compact run logs to {run_dir}")
 
 
 if __name__ == "__main__":

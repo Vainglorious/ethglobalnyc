@@ -168,10 +168,10 @@ class OpenAICompatibleVoiceModel:
         direction: Side,
     ) -> str:
         prompt = (
-            "Write only a short rationale clause for a forecasting ant.\n"
+            "Write only a short rationale clause for a forecasting predictor.\n"
             "Do not include the ant name, match name, team names, numbers, probabilities, or percentages.\n"
             "Do not invent external facts. Do not mention team quality, injuries, tactics, recent form, players, or defensive gaps.\n"
-            "Only refer to the persona or internal weighted signals.\n"
+            "Only refer to the persona or internal weighted findings.\n"
             "Keep it under 18 words. Write in English. Return one sentence fragment or sentence.\n\n"
             f"Ant name: {agent_name}\n"
             f"Persona: {genome.persona}\n"
@@ -188,7 +188,7 @@ class OpenAICompatibleVoiceModel:
                 {
                     "role": "system",
                     "content": (
-                        "You are the voice layer for a bounded ant-colony debate feed. "
+                        "You are the voice layer for a bounded prediction-colony debate feed. "
                         "Always return a non-empty plain-text sentence."
                     ),
                 },
@@ -275,10 +275,10 @@ class MiniMaxVoiceModel:
         direction: Side,
     ) -> str:
         prompt = (
-            "Write only a short rationale clause for a forecasting ant.\n"
+            "Write only a short rationale clause for a forecasting predictor.\n"
             "Do not include the ant name, match name, team names, numbers, probabilities, or percentages.\n"
             "Do not invent external facts. Do not mention team quality, injuries, tactics, recent form, players, or defensive gaps.\n"
-            "Only refer to the persona or internal weighted signals.\n"
+            "Only refer to the persona or internal weighted findings.\n"
             "Keep it under 18 words. Write in English. Return one sentence fragment or sentence.\n\n"
             f"Ant name: {agent_name}\n"
             f"Persona: {genome.persona}\n"
@@ -292,7 +292,7 @@ class MiniMaxVoiceModel:
         payload = {
             "model": self.model,
             "system": (
-                "You are the voice layer for a bounded ant-colony debate feed. "
+                "You are the voice layer for a bounded prediction-colony debate feed. "
                 "Always return a non-empty plain-text sentence."
             ),
             "messages": [

@@ -1,0 +1,8 @@
+{
+  "label": "colony-worldcoin-test-agent-2",
+  "purpose": "Second throwaway keypair to prove the one-human invariant: after Adil registers it, status should return the SAME humanId as test-agent-1 (0x41e4...08f0). NOT for real funds.",
+  "created": "2026-06-13",
+  "chain_note": "Plain EVM keypair. Registration lands on World Chain (eip155:480).",
+  "address": "0xBA86C7457cFd227a573F19C4F9905b6a6613466a",
+  "private_key": "0xea6ab0e0bde7349943152703adb94f7765e649e110df4bbf8eb26cc2c31d1189"
+}

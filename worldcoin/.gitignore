@@ -1,0 +1,8 @@
+.env
+node_modules/
+__pycache__/
+*.py[cod]
+
+# Private keys — never commit, even throwaway test ones.
+test/*keypair*.json
+*.key

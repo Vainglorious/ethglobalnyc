@@ -1,0 +1,59 @@
+2026-06-13 — Notion integration + plain-english docs push
+
+GOAL
+  Make our internal docs easy for the product/football teammate to read by pushing the
+  plain-english docs into Notion.
+
+NOTION INTEGRATION
+  - Internal integration token saved (gitignored) at notion/.env as NOTION_TOKEN.
+    Template at notion/.env.example. notion/.gitignore ignores .env.
+    NOTION_VERSION="2022-06-28" (REST API version header).
+  - The token authenticates as bot "adil_claude" in workspace "VaingloriousETH's Space"
+    (workspace_id 78578dec-bb21-81f6-...). NOTE: the workspace name was NOT renamed —
+    Adil renamed a TEAMSPACE to "Colony" instead. The Notion API only reports the
+    top-level workspace name, so a teamspace rename is invisible to the token. Renaming
+    the workspace itself is admin-only in the UI (no API endpoint); left as-is.
+
+KEY GOTCHA — integrations see NOTHING until a page is shared with them
+  - A fresh integration returns 0 results from /v1/search and object_not_found on any page
+    until you explicitly connect it to a page: open the page -> ••• -> Connections ->
+    Connect to -> pick "adil_claude" -> CONFIRM in the dialog (the easy-to-miss step).
+  - Access then cascades to that page's subpages. There is no token-only workaround.
+  - It took a couple tries; confirmed working once the "Plain English" page was connected.
+
+THE TARGET PAGE
+  - Parent page "Plain English":
+    https://app.notion.com/p/Plain-English-37e78decbb2180ee854fdd92b436eef1
+    page_id 37e78dec-bb21-80ee-854f-dd92b436eef1
+  - All docs were created as SUBPAGES under it.
+
+THE PUSH SCRIPT
+  - notion/push_to_notion.py — pure-stdlib (+certifi) Markdown -> Notion blocks converter.
+    Usage: python3 notion/push_to_notion.py <PARENT_PAGE_ID_or_URL>
+    Reads token from notion/.env. Handles headings, bullet/numbered lists, blockquotes,
+    code fences, TABLES, dividers, and inline **bold** / `code` / *italic*. Creates one
+    subpage per doc, appending blocks in chunks of <=90 (Notion's 100-block limit).
+  - SSL gotcha: python.org Python 3.13 on macOS ships without CA certs, so urllib threw
+    CERTIFICATE_VERIFY_FAILED (curl worked because it uses the system trust store). Fixed
+    by building an ssl context from certifi.where().
+
+WHAT WE PUSHED (5 docs, from plain-english/)
+  1. Plain-English Docs — Colony (index + glossary)
+  2. Colony, in plain English (whole-project overview)
+  3. Worldcoin, in plain English (personhood rail)
+  4. The data the agents pay to read (ClickHouse rail)
+  5. Football, in plain English — and where WE need YOU (the football expert's fill-in doc)
+
+FOLDER RENAME (same session)
+  - layman/ -> plain-english/ (Adil: "layman" is an old-school word). README title updated;
+    push script repointed (DOCS_DIR); zero "layman" refs remain. File names already fit
+    (X-in-plain-english.md). The Notion parent page was likewise renamed to "Plain English".
+
+IMPORTANT BEHAVIOR / CAVEATS
+  - Re-running the script REPUBLISHES (creates fresh subpages) — it does NOT update in place,
+    so a second run makes duplicates. To reflect edits: delete the subpage in Notion and
+    re-push, OR add an --replace mode (archive same-title subpage first). Not built yet.
+  - Worth eyeballing the Football page in Notion to confirm the ✍️ YOUR CALL table rendered.
+
+SEE ALSO
+  notion/push_to_notion.py, notion/.env(.example), plain-english/*.md

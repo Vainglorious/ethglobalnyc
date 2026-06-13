@@ -1,0 +1,7 @@
+# Colony harness optional research dependencies.
+#
+# The core harness is mostly stdlib-only. These packages are needed for
+# native CAMEL research scouts and CAMEL SearchToolkit web search.
+
+camel-ai==0.2.90
+ddgs==9.14.4

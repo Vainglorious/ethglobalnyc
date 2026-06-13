@@ -8,7 +8,7 @@ import secrets
 from dataclasses import dataclass
 
 from .genes import Genome
-from .models import BetCommitment, DebateClaim, Forecast, MatchContext, Side
+from .models import AccessTier, BetCommitment, DebateClaim, Forecast, MatchContext, Side
 from .voice import TemplateVoiceModel, VoiceModel
 
 
@@ -30,6 +30,26 @@ def _short_voice_error(exc: Exception) -> str:
     if len(text) > 180:
         return f"{text[:177]}..."
     return text
+
+
+def _top_weight_labels(genome: Genome, count: int = 2) -> str:
+    weights = genome.source_weights.normalized().to_dict()
+    top = sorted(weights.items(), key=lambda item: item[1], reverse=True)[:count]
+    return ", ".join(f"{label}={value:.2f}" for label, value in top)
+
+
+def _claim_type_from_genome(genome: Genome) -> str:
+    weights = genome.source_weights.normalized().to_dict()
+    top_source = max(weights, key=weights.get)
+    if genome.herd_bias < -0.25:
+        return "contrarian"
+    if top_source == "odds":
+        return "market-check"
+    if top_source == "debate":
+        return "debate-response"
+    if top_source == "news":
+        return "narrative"
+    return "evidence"
 
 
 @dataclass
@@ -86,7 +106,15 @@ class AntAgent:
         adjustment = debate_weight * signed_herd * (debate_home_probability - match.market_home_probability)
         return _clamp_probability(base + adjustment)
 
-    def speak(self, match: MatchContext, rng: random.Random, voice_model: VoiceModel | None = None) -> DebateClaim:
+    def speak(
+        self,
+        match: MatchContext,
+        rng: random.Random,
+        voice_model: VoiceModel | None = None,
+        selection_reason: str = "",
+        access_tier: AccessTier = "public",
+        visible_findings: int = 0,
+    ) -> DebateClaim:
         probability = self.private_baseline_probability(match)
         edge = probability - match.market_home_probability
         confidence = min(abs(edge) * 3.0 + 0.25 + rng.random() * 0.1, 0.95)
@@ -124,6 +152,10 @@ class AntAgent:
             speaker_name=self.name,
             model=self.genome.model,
             persona=self.genome.persona,
+            access_tier=access_tier,
+            visible_findings=visible_findings,
+            claim_type=_claim_type_from_genome(self.genome),
+            selection_reason=selection_reason,
             stated_home_probability=round(probability, 4),
             confidence=round(confidence, 4),
             direction=direction,
@@ -131,29 +163,55 @@ class AntAgent:
             evidence_tags=tags,
         )
 
-    def forecast(self, match: MatchContext, debate_home_probability: float | None) -> Forecast:
+    def forecast(
+        self,
+        match: MatchContext,
+        debate_home_probability: float | None,
+        access_tier: AccessTier = "public",
+        visible_findings: int = 0,
+    ) -> Forecast:
+        baseline_probability = self.private_baseline_probability(match)
         probability = self.listen(match, debate_home_probability)
         home_edge = probability - match.market_home_probability
         away_edge = (1.0 - probability) - (1.0 - match.market_home_probability)
+        debate_shift = probability - baseline_probability
 
         if home_edge >= self.genome.edge_threshold:
             side: Side = "home"
             edge = home_edge
+            decision_reason = (
+                f"home edge {home_edge:+.1%} clears threshold {self.genome.edge_threshold:.1%}; "
+                f"debate shift {debate_shift:+.1%}; top weights {_top_weight_labels(self.genome)}"
+            )
         elif away_edge >= self.genome.edge_threshold:
             side = "away"
             edge = away_edge
+            decision_reason = (
+                f"away edge {away_edge:+.1%} clears threshold {self.genome.edge_threshold:.1%}; "
+                f"debate shift {debate_shift:+.1%}; top weights {_top_weight_labels(self.genome)}"
+            )
         else:
             side = "pass"
             edge = 0.0
+            decision_reason = (
+                f"largest edge {max(home_edge, away_edge):+.1%} is below threshold "
+                f"{self.genome.edge_threshold:.1%}; debate shift {debate_shift:+.1%}; "
+                f"top weights {_top_weight_labels(self.genome)}"
+            )
 
         stake = 0.0 if side == "pass" else round(self.bankroll * self.genome.risk_appetite, 4)
         return Forecast(
             agent_id=self.agent_id,
+            access_tier=access_tier,
+            visible_findings=visible_findings,
             home_probability=round(probability, 4),
+            market_edge=round(home_edge, 4),
+            edge_threshold=self.genome.edge_threshold,
             edge=round(edge, 4),
             side=side,
             stake=stake,
             bankroll=round(self.bankroll, 4),
+            decision_reason=decision_reason,
         )
 
     def commit_bet(self, forecast: Forecast, round_id: str) -> BetCommitment:

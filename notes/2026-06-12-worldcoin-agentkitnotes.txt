@@ -1,0 +1,139 @@
+2026-06-12 — Worldcoin / World Agent Kit notes
+
+WHAT AGENTKIT IS
+  AgentKit (Beta) is an extension of the x402 payment protocol from World. Its job:
+  let a server distinguish HUMAN-BACKED agents from bots/scripts. A real human vouches
+  for an agent wallet; the server can then resolve that agent to an anonymous human
+  identifier ("humanId") at request time and apply access / payment rules.
+  Docs saved at: worldcoin/docs/agent-kit-integrate.md
+  Source: https://docs.world.org/agents/agent-kit/integrate
+
+THE TWO IDENTITIES (the thing that was confusing, now clear)
+  1. Agent wallet (private key + address): just a normal EVM keypair. NOT issued by
+     Worldcoin. You generate it yourself (we used `cast wallet new`). Each agent CAN
+     have its own keypair. The key signs the agent's requests (eip191).
+  2. Your World ID (World App): never stored in a .env, no API key. It is used LIVE /
+     interactively at registration time — you approve in the World App on your phone.
+     That approval is what binds an agent address to YOU (a real human).
+
+WHAT WE ACTUALLY DID (2026-06-12)
+  - Generated a throwaway test keypair with `cast wallet new --json`:
+      address: 0x570A499afb5E0D32Abf748e4FE299e0F33A82d50
+    Saved (gitignored) at worldcoin/test/test-agent-keypair.json. NOT for real funds.
+  - Confirmed the CLI works: `npx -y @worldcoin/agentkit-cli` (agentkit@0.1.0).
+      commands: register <address>, status <address>  (+ mcp/skills helpers)
+  - Ran `status` on the test address BEFORE registering (baseline):
+      registered: false, humanId: null
+      contract:   0xA23aB2712eA7BBa896930544C7d6636a96b944dA  (AgentBook)
+      network:    eip155:480  (World Chain — so registration lands on World Chain)
+  - Adil ran `register 0x570A...2d50`, approved in the World App. It "worked and was easy."
+  - Post-register `status` (2026-06-13) CONFIRMED registration landed:
+      registered: true
+      humanId:    0x41e49b485e4b3e568ab23e28820f5c0be5135ec3322786f9d492ec8276608f0
+      contract:   0xA23aB2712eA7BBa896930544C7d6636a96b944dA  (AgentBook)
+      network:    eip155:480  (World Chain)
+    >>> This humanId is ADIL'S anonymous human identifier — our reference point. Any other
+        wallet Adil registers should return this SAME humanId (the one-human invariant).
+        This is the value that becomes the "verified lineage" badge in our architecture.
+
+CLI FACTS LEARNED
+  - register defaults to --auto: submits to relay https://x402-worldchain.vercel.app
+  - register --manual: prints the call data instead of submitting (inspect what's signed)
+  - register has NO private-key flag: registration proves a HUMAN vouches; it does not
+    use the agent's private key.
+  - status is a read-only AgentBook lookup -> { registered, humanId, contract, network }
+  - API_URL env var overrides the relay base URL.
+
+THE SCALING PROBLEM (key realization) — "what if we need 100 agents?"
+  Doing register 100x is the WRONG model, for two reasons:
+    1. 100 interactive World App approvals (the human proof is per-registration).
+    2. More importantly: every address YOU register resolves to the SAME humanId,
+       because there is one of you. 100 registrations = 1 human backing 100 wallets,
+       NOT 100 verified humans. The gate counts usage per (endpoint, humanId), so the
+       human-ness is pooled, not per-wallet.
+
+THE MODEL WE'RE ADOPTING INSTEAD
+  Matches plan §3: "verification attaches to a lineage, not each ant."
+  - Register ROOTS, not ants. One registration per REAL human. Recruit N humans -> N
+    verified lineage roots (N distinct humanIds). That's the whole verified cohort.
+  - Children inherit "verified" through OUR bookkeeping (colony state + ENS records),
+    not through new World App proofs.
+  - Anonymous lineages register nothing. That's the verified-vs-anon experiment (plan §8).
+  - Gateway pattern (to confirm): route gated/x402 requests through ONE registered
+    gateway wallet per lineage; individual ants are internal identities the gateway acts
+    on behalf of. Human-backing + payments live at the gateway. Collapses "100 taps" ->
+    "1 tap per human" = tens of registrations for tens of humans (plan: "tens, not thousands").
+
+OPEN QUESTIONS / NEXT EXPLORATION
+  [ ] Does the server-side gate require EACH requesting wallet to be in AgentBook, or can
+      one registered gateway front many sub-agents? (decides if gateway pattern is clean)
+      -> read server-setup / hooks docs: createAgentBookVerifier, tryIncrementUsage(endpoint, humanId, limit)
+  [ ] Did registration need gas on the agent address, or did the hosted relay cover it?
+  [ ] Record Adil's real humanId from post-register status; later register a 2nd address
+      and confirm it returns the SAME humanId (live proof of one-human rule).
+  [ ] Reconcile World Chain (eip155:480) with Arc, where Colony settles money (chain seam).
+  [ ] Map humanId -> ENS lineage root record.
+
+EXPLORATION RESULTS (2026-06-13) — server-side gate mechanics
+  Sources: github.com/worldcoin/agentkit, the world-x402-agentkit-example repo, and
+  World's AgentKit announcement coverage. (Full server internals live in the repo's
+  x402/DOCS.md and skills/agentkit-x402/SKILL.md — not yet deep-read.)
+
+  CONFIRMED — what the gate checks:
+    Request flow: hit endpoint -> 402 challenge -> agent signs a CAIP-122 message
+    (eip191) with its wallet -> server verifies the signature and looks up THAT signing
+    wallet in AgentBook -> resolves to a humanId -> applies policy. The ONLY thing the
+    server keys on is the signing wallet address.
+
+  CONFIRMED — the hard invariant:
+    One human = one humanId, across ALL their wallets (a one-way hash tying every wallet
+    you register back to the single you). You can NEVER produce more than one humanId
+    from one human. No Sybil cheat exists, by design. So registering 100 wallets to
+    yourself = 100 wallets, still 1 humanId.
+
+  ANSWER to "what if we need 100 agents?":
+    - Register-per-ant: 100 World App taps AND they all collapse to your 1 humanId.
+      Strictly worse, no reason to do it.
+    - One registered wallet signs for the whole lineage: server only checks the SIGNING
+      wallet, so ants can sign with their lineage's single registered wallet. One tap per
+      human, not per ant. >>> INFERENCE to validate by test (see below); the docs describe
+      "each agent registers its own wallet" and do NOT officially bless one-wallet-many-agents.
+    - AgentKit's built-in free-trial limit (3 uses / endpoint / humanId) is POOLED per
+      human — but mostly irrelevant because Colony runs its OWN x402 ClickHouse gate and
+      sets its own policy.
+
+  RECOMMENDED COLONY ARCHITECTURE (decided):
+    World ID verification happens ONCE per real human -> yields a humanId -> that humanId
+    IS the "verified lineage" badge, stamped into ENS / colony state. Ants inherit
+    verified-ness through OUR bookkeeping, never by replaying World ID. When an ant must
+    prove human-backing to a gated endpoint, it signs with its lineage's registered wallet.
+    Matches plan §3 ("verification attaches to a lineage, not each ant"), now confirmed
+    against real mechanics.
+
+  ONE-HUMAN INVARIANT — PROVEN LIVE (2026-06-13):
+    Registered a SECOND throwaway wallet 0xBA86C7457cFd227a573F19C4F9905b6a6613466a
+    (saved gitignored at worldcoin/test/test-agent-keypair-2.json). After Adil approved
+    it in World App, status returned:
+      registered: true
+      humanId:    0x41e49b485e4b3e568ab23e28820f5c0be5135ec3322786f9d492ec8276608f0
+    >>> SAME humanId as the first wallet (0x570A...2d50). Two different wallets, one human,
+        one humanId. The invariant is now empirically confirmed, not just inferred. This
+        validates registering ROOTS not ants, and humanId as the verified-lineage badge.
+
+    Mechanics note: each `register` call opens its OWN verification session (unique link).
+    Claude's background run printed a link and TIMED OUT (VERIFICATION_FAILED) because that
+    specific session wasn't approved; Adil ran his own `register` for the same address and
+    approved THAT session. Same address -> same result. Takeaway: Claude can run the command,
+    but the World App approval must happen on Adil's phone for whichever session he approves.
+
+  STILL TO VALIDATE LATER:
+    [ ] Shared-key signing test: register ONE wallet, then SIGN two different agent
+        requests with that same key against a gated endpoint -> confirm server accepts both
+        and reports the same humanId. (we've proven same-human across REGISTRATIONS; still
+        want to prove one key can SIGN for many agent contexts at request time.)
+    [ ] Deep-read x402/DOCS.md + skills/agentkit-x402/SKILL.md for the exact verifier
+        (createAgentBookVerifier) + tryIncrementUsage(endpoint, humanId, limit) semantics.
+
+SEE ALSO
+  worldcoin/docs/agent-kit-integrate.md, worldcoin/README.md, worldcoin/TODO.md
+  worldcoin/test/README.md  (the feasibility test write-up)

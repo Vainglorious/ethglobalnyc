@@ -1,0 +1,51 @@
+2026-06-12 — ClickHouse access, layer 1: "uma-clickhouse-oracle"
+
+WHAT THIS LAYER IS
+  The first layer of ClickHouse access for the Colony agents. We call it the
+  "uma-clickhouse-oracle" data layer. The umalabs database is experimental and
+  good for the hackathon, so agents get FREE RANGE over it: read it, and even
+  modify it (insert / update / delete / create / drop tables and views). The
+  Polymarket reference tables are read-only by contrast.
+
+CONNECTION
+  Cluster host: h919c97wno.us-east1.gcp.clickhouse.cloud  (ClickHouse Cloud, GCP us-east1)
+  User created for this layer: adil_hackathon_claude
+  Ports: HTTPS 8443 / native TLS 9440, secure=true
+
+FILES ADDED (in clickhouse/)
+  .env           - real connection values, password to be filled after user create. GITIGNORED.
+  .env.example   - committed template (host/user redacted by Adil before commit).
+  .gitignore     - ignores .env, __pycache__, *.pyc so the password never gets committed.
+
+USER + GRANTS (run as admin in ClickHouse Cloud SQL console)
+  Modeled on the existing lyan_dev2 user.
+
+  CREATE USER adil_hackathon_claude
+      IDENTIFIED WITH sha256_password BY '<strong password>';
+
+  -- Polymarket reference tables: READ-ONLY
+  GRANT SELECT ON default_v3.polymarket_markets_active TO adil_hackathon_claude;
+  GRANT SELECT ON default_v3.polymarket_markets_all    TO adil_hackathon_claude;
+
+  -- umalabs experimental sandbox: FULL read/write/DDL (the "uma-clickhouse-oracle" free range)
+  GRANT SELECT, INSERT, ALTER UPDATE, ALTER DELETE, CREATE TABLE, CREATE VIEW, DROP TABLE
+      ON umalabs.* TO adil_hackathon_claude;
+
+  Verify:  SHOW GRANTS FOR adil_hackathon_claude;   (compare to SHOW GRANTS FOR lyan_dev2;)
+
+ACCESS SUMMARY
+  umalabs.*                              -> free range (read + write + DDL). Agents may modify.
+  default_v3.polymarket_markets_active   -> read-only
+  default_v3.polymarket_markets_all      -> read-only
+  everything else                        -> no access yet (see TODO)
+
+TODO — LATER LAYERS (not doing now, deliberate)
+  [ ] Decide and grant access to the OTHER data beyond umalabs + the two polymarket tables
+      (e.g. broader default_v3 tables, odds-history needed for the beat-the-market check).
+      Grant explicitly, table by table, once we know what /query actually reads.
+  [ ] Reconcile this free-range modify policy with the timestamp gate: agent writes to
+      umalabs must not become a lookahead-leak vector (clickhouse/TODO.md P0, plan §4).
+
+SEE ALSO
+  clickhouse/README.md, clickhouse/TODO.md
+  notes/2026-06-12-worldcup.txt  (the live matches we can test against)

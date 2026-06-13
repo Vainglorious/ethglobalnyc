@@ -1,0 +1,28 @@
+2026-06-12 — World Cup test events for the demo
+
+These are the ONLY two matches that give us a full lifecycle within the demo window:
+a live prediction market exists, agents can bet, the game plays, and it resolves.
+A complete cycle of action our agents could see end to end (buy data -> stake ->
+match resolves -> settle bankroll).
+
+Saturday, June 13, 2026
+
+  Qatar vs Switzerland (Group B)
+    Kick-off: 19:00 UTC (3:00 PM ET / 12:00 PM PT)
+    Venue: Levi's Stadium, Santa Clara (San Francisco Bay Area), USA
+
+  Brazil vs Morocco (Group C)
+    Kick-off: 22:00 UTC (6:00 PM ET)
+    Venue: MetLife Stadium, East Rutherford, New Jersey, USA
+
+  Haiti vs Scotland (Group C)
+    Kick-off: 01:00 UTC (9:00 PM ET on June 13)
+    Venue: Gillette Stadium, Foxborough (Boston area), Massachusetts, USA
+
+Why these:
+  These are the matches with a prediction market we can actually bet on AND that
+  will run a complete cycle (market open -> bet -> game played -> resolved) inside
+  our window. So they're the candidates for the live x402 + timestamp-gate test and
+  the "agents see a full lifecycle" demo moment.
+
+See also: worldcup-test-events-2026-06-12.md (full weekend slate + test plan).

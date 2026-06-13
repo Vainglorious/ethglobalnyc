@@ -1,0 +1,1578 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Colony Harness System Map</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f4ee;
+      --ink: #17191f;
+      --muted: #626b7a;
+      --line: #d8d2c8;
+      --panel: #ffffff;
+      --panel-2: #fbfaf7;
+      --green: #267a56;
+      --green-soft: #dff0e7;
+      --blue: #295d8f;
+      --blue-soft: #e0ecf7;
+      --red: #9a3a32;
+      --red-soft: #f4e2df;
+      --gold: #8b661f;
+      --gold-soft: #f6ebca;
+      --shadow: 0 16px 40px rgba(22, 24, 29, 0.08);
+      --radius: 8px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.78), rgba(255,255,255,0.36)),
+        repeating-linear-gradient(90deg, rgba(41,93,143,0.04) 0 1px, transparent 1px 64px),
+        var(--bg);
+      color: var(--ink);
+    }
+
+    main {
+      width: min(1220px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 28px 0 48px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: 1.25fr 0.75fr;
+      gap: 20px;
+      align-items: stretch;
+      margin-bottom: 18px;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+
+    h1 {
+      font-size: clamp(30px, 4vw, 54px);
+      line-height: 0.98;
+      max-width: 780px;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      font-size: 20px;
+      margin-bottom: 14px;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      font-size: 14px;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    .lead {
+      margin-top: 14px;
+      max-width: 760px;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.55;
+    }
+
+    .panel {
+      background: rgba(255,255,255,0.88);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .intro {
+      padding: 28px;
+      min-height: 230px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .intro:after {
+      content: "";
+      position: absolute;
+      inset: auto -80px -110px auto;
+      width: 280px;
+      height: 280px;
+      background:
+        radial-gradient(circle at 45% 40%, rgba(38,122,86,0.18), transparent 58%),
+        conic-gradient(from 12deg, rgba(41,93,143,0.18), rgba(139,102,31,0.16), rgba(38,122,86,0.18), rgba(41,93,143,0.18));
+      border-radius: 50%;
+      opacity: 0.8;
+    }
+
+    .run-card {
+      padding: 18px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .metric {
+      padding: 12px;
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      min-height: 76px;
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+
+    .metric strong {
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 18px 0;
+    }
+
+    .tab {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      border-radius: 7px;
+      padding: 10px 14px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .tab[aria-selected="true"] {
+      background: var(--ink);
+      color: #fff;
+      border-color: var(--ink);
+    }
+
+    .section { display: none; }
+    .section.active { display: block; }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(360px, 0.72fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .flow {
+      padding: 18px;
+    }
+
+    .flow-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      position: relative;
+    }
+
+    .flow-node {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      min-height: 128px;
+      position: relative;
+    }
+
+    .flow-node:after {
+      content: "->";
+      position: absolute;
+      right: -12px;
+      top: 45%;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .flow-node:nth-child(4):after,
+    .flow-node:nth-child(8):after {
+      content: "";
+    }
+
+    .flow-node h3 {
+      color: var(--ink);
+      text-transform: none;
+      font-size: 16px;
+      margin-bottom: 8px;
+    }
+
+    .flow-node p {
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 14px;
+    }
+
+    .tag-row {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    .tag {
+      font-size: 12px;
+      padding: 4px 7px;
+      border-radius: 999px;
+      background: var(--blue-soft);
+      color: var(--blue);
+      border: 1px solid rgba(41,93,143,0.18);
+      white-space: nowrap;
+    }
+
+    .tag.green { background: var(--green-soft); color: var(--green); border-color: rgba(38,122,86,0.18); }
+    .tag.gold { background: var(--gold-soft); color: var(--gold); border-color: rgba(139,102,31,0.2); }
+    .tag.red { background: var(--red-soft); color: var(--red); border-color: rgba(154,58,50,0.18); }
+
+    .side-panel {
+      padding: 18px;
+    }
+
+    .code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      background: #10151d;
+      color: #edf2f7;
+      border-radius: 8px;
+      padding: 14px;
+      overflow: auto;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .compare {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .compare-card {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .compare-card h2 {
+      margin-bottom: 8px;
+    }
+
+    .compare-card p {
+      color: var(--muted);
+      line-height: 1.5;
+      margin-bottom: 14px;
+    }
+
+    ul.clean {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      gap: 8px;
+    }
+
+    ul.clean li {
+      display: grid;
+      grid-template-columns: 130px 1fr;
+      gap: 12px;
+      padding: 9px 0;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    ul.clean li strong {
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .control-board {
+      display: grid;
+      grid-template-columns: minmax(330px, 0.65fr) minmax(0, 1fr);
+      gap: 18px;
+    }
+
+    .controls {
+      padding: 18px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .control {
+      display: grid;
+      gap: 8px;
+    }
+
+    label {
+      font-size: 13px;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    label strong {
+      color: var(--ink);
+      font-size: 13px;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--green);
+    }
+
+    select {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 7px;
+      padding: 10px;
+      font: inherit;
+      color: var(--ink);
+    }
+
+    .result {
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .agent-card {
+      background: #111820;
+      color: #f6f8fb;
+      border-radius: 8px;
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .agent-card h2 {
+      margin: 0;
+      color: #fff;
+    }
+
+    .agent-card p {
+      color: #c9d2df;
+      line-height: 1.5;
+    }
+
+    .bars {
+      display: grid;
+      gap: 9px;
+    }
+
+    .bar {
+      display: grid;
+      grid-template-columns: 58px 1fr 48px;
+      gap: 10px;
+      align-items: center;
+      font-size: 12px;
+      color: #dbe4ef;
+    }
+
+    .track {
+      height: 9px;
+      background: rgba(255,255,255,0.12);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .fill {
+      height: 100%;
+      background: linear-gradient(90deg, #6ec29a, #7fb6e8);
+      width: 0%;
+    }
+
+    .decision-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .decision {
+      padding: 12px;
+      border-radius: 7px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+    }
+
+    .decision span {
+      color: var(--muted);
+      font-size: 12px;
+      display: block;
+      margin-bottom: 8px;
+    }
+
+    .decision strong {
+      font-size: 20px;
+    }
+
+    .log-levels {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .log-card {
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      display: grid;
+      gap: 12px;
+    }
+
+    .log-card h2 {
+      margin: 0;
+    }
+
+    .log-card p {
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .check-list {
+      display: grid;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .check-list div {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+    }
+
+    .check-list div:before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-top: 6px;
+      flex: 0 0 auto;
+      background: var(--green);
+    }
+
+    .data-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .roles-board {
+      display: grid;
+      grid-template-columns: minmax(0, 0.68fr) minmax(340px, 0.32fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .roles-map {
+      padding: 18px;
+    }
+
+    .role-flow-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    .role-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+      min-height: 250px;
+      position: relative;
+    }
+
+    .role-card h2 {
+      margin: 0;
+    }
+
+    .role-number {
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: var(--ink);
+      color: #fff;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .future-chip {
+      font-size: 12px;
+      color: var(--gold);
+      background: var(--gold-soft);
+      border: 1px solid rgba(139,102,31,0.2);
+      border-radius: 999px;
+      padding: 5px 8px;
+      white-space: nowrap;
+    }
+
+    .role-details {
+      display: grid;
+      gap: 8px;
+    }
+
+    .role-row {
+      display: grid;
+      grid-template-columns: 76px 1fr;
+      gap: 10px;
+      align-items: start;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.35;
+      padding-top: 8px;
+      border-top: 1px solid var(--line);
+    }
+
+    .role-row strong {
+      color: var(--ink);
+    }
+
+    .role-side {
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .ring {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #111820;
+      color: #eef4fb;
+      padding: 16px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .ring h2 {
+      margin: 0;
+      color: #fff;
+    }
+
+    .ring p {
+      color: #c9d2df;
+      line-height: 1.45;
+    }
+
+    .mini-flow {
+      display: grid;
+      gap: 8px;
+    }
+
+    .mini-flow div {
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 7px;
+      padding: 9px 10px;
+      background: rgba(255,255,255,0.06);
+      font-size: 13px;
+      color: #e8eef7;
+    }
+
+    .data-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 16px;
+      min-height: 210px;
+      display: grid;
+      align-content: start;
+      gap: 10px;
+    }
+
+    .data-card p {
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 14px;
+    }
+
+    .schema {
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    .kg-board {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.55fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .kg-main {
+      padding: 18px;
+    }
+
+    .kg-flow {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .kg-step {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 12px;
+      min-height: 112px;
+      position: relative;
+    }
+
+    .kg-step:after {
+      content: "->";
+      position: absolute;
+      right: -10px;
+      top: 44%;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .kg-step:last-child:after {
+      content: "";
+    }
+
+    .kg-step h3 {
+      color: var(--ink);
+      text-transform: none;
+      font-size: 15px;
+      margin-bottom: 7px;
+    }
+
+    .kg-step p {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .kg-layer-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .kg-visual {
+      margin: 14px 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.9), rgba(251,250,247,0.94)),
+        repeating-linear-gradient(90deg, rgba(41,93,143,0.05) 0 1px, transparent 1px 52px);
+      overflow: hidden;
+    }
+
+    .kg-visual svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      min-height: 360px;
+    }
+
+    .graph-edge {
+      fill: none;
+      stroke: #8b94a3;
+      stroke-width: 2;
+      marker-end: url(#arrowHead);
+    }
+
+    .graph-edge.soft {
+      stroke-dasharray: 6 6;
+      opacity: 0.76;
+    }
+
+    .graph-node rect,
+    .graph-node circle {
+      stroke: #c7c1b8;
+      stroke-width: 1.4;
+      filter: drop-shadow(0 8px 14px rgba(22, 24, 29, 0.09));
+    }
+
+    .graph-node text {
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      fill: var(--ink);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .graph-node .subtext {
+      fill: var(--muted);
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .node-source rect { fill: #fff; }
+    .node-scout rect { fill: var(--blue-soft); stroke: rgba(41,93,143,0.3); }
+    .node-graph circle { fill: #111820; stroke: #111820; }
+    .node-graph text { fill: #fff; }
+    .node-graph .subtext { fill: #c9d2df; }
+    .node-public rect { fill: var(--green-soft); stroke: rgba(38,122,86,0.32); }
+    .node-premium rect { fill: var(--gold-soft); stroke: rgba(139,102,31,0.32); }
+    .node-private rect { fill: var(--red-soft); stroke: rgba(154,58,50,0.32); }
+    .node-view rect { fill: #fff; }
+    .node-debate rect { fill: #f0f4f9; stroke: rgba(41,93,143,0.28); }
+
+    .graph-caption {
+      padding: 0 14px 14px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .kg-layer {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: var(--panel-2);
+      display: grid;
+      gap: 10px;
+      min-height: 230px;
+    }
+
+    .kg-layer.public { border-top: 5px solid var(--green); }
+    .kg-layer.premium { border-top: 5px solid var(--gold); }
+    .kg-layer.private { border-top: 5px solid var(--red); }
+
+    .kg-layer h2 {
+      margin: 0;
+    }
+
+    .kg-layer p {
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 14px;
+    }
+
+    .kg-items {
+      display: grid;
+      gap: 7px;
+    }
+
+    .kg-item {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      padding: 9px 10px;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+
+    .kg-item strong {
+      color: var(--ink);
+      display: block;
+      margin-bottom: 3px;
+    }
+
+    .kg-side {
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .view-stack {
+      display: grid;
+      gap: 10px;
+    }
+
+    .view-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 13px;
+      background: var(--panel);
+      display: grid;
+      gap: 8px;
+    }
+
+    .view-card h3 {
+      color: var(--ink);
+      text-transform: none;
+      margin: 0;
+      font-size: 15px;
+    }
+
+    .view-card p {
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 13px;
+    }
+
+    .policy-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .policy-list div {
+      border-left: 3px solid var(--blue);
+      padding-left: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .footnote {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    @media (max-width: 920px) {
+      header,
+      .grid-2,
+      .control-board,
+      .compare,
+      .data-grid,
+      .kg-board,
+      .kg-flow,
+      .kg-layer-grid,
+      .roles-board,
+      .role-flow-grid,
+      .log-levels {
+        grid-template-columns: 1fr;
+      }
+
+      .flow-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .flow-node:after {
+        content: "v";
+        right: 18px;
+        top: auto;
+        bottom: -13px;
+      }
+
+      .flow-node:nth-child(4):after {
+        content: "v";
+      }
+
+      .flow-node:nth-child(8):after {
+        content: "";
+      }
+
+      .kg-step:after {
+        content: "v";
+        right: 18px;
+        top: auto;
+        bottom: -13px;
+      }
+
+      .kg-step:last-child:after {
+        content: "";
+      }
+
+      ul.clean li {
+        grid-template-columns: 1fr;
+        gap: 4px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <section class="panel intro">
+        <h1>Colony Harness System Map</h1>
+        <p class="lead">
+          A compact visual board for the current football forecasting harness: World Cup knowledge graph,
+          scout ingestion, filtered predictor views, debaters, consensus, bets, and readable logs.
+        </p>
+        <div class="tag-row">
+          <span class="tag green">default logs stay compact</span>
+          <span class="tag">OpenRouter voice layer</span>
+          <span class="tag gold">mock scouts now, CAMEL later</span>
+          <span class="tag red">predictors stay local and cheap</span>
+        </div>
+      </section>
+
+      <aside class="panel run-card">
+        <h2>Current Demo Shape</h2>
+        <div class="metric-grid">
+          <div class="metric"><span>Predictors</span><strong>40</strong></div>
+          <div class="metric"><span>Debaters</span><strong>6</strong></div>
+          <div class="metric"><span>KG entities</span><strong>204</strong></div>
+          <div class="metric"><span>KG matches</span><strong>104</strong></div>
+        </div>
+        <div class="code">python3 colony/build_kg.py --force-refresh</div>
+      </aside>
+    </header>
+
+    <nav class="tabs" aria-label="System map sections">
+      <button class="tab" aria-selected="true" data-tab="flow">Interaction Flow</button>
+      <button class="tab" aria-selected="false" data-tab="genome">Genome vs CAMEL</button>
+      <button class="tab" aria-selected="false" data-tab="roles">Roles</button>
+      <button class="tab" aria-selected="false" data-tab="graph">Knowledge Graph</button>
+      <button class="tab" aria-selected="false" data-tab="params">Parameter Board</button>
+      <button class="tab" aria-selected="false" data-tab="data">Data Sources</button>
+      <button class="tab" aria-selected="false" data-tab="logs">Logs</button>
+    </nav>
+
+    <section id="flow" class="section active">
+      <div class="grid-2">
+        <article class="panel flow">
+          <h2>One Round Interaction</h2>
+          <div class="flow-grid">
+            <div class="flow-node">
+              <h3>1. Tournament KG</h3>
+              <p>Start from the World Cup graph: tournament, groups, teams, matches, venues.</p>
+              <div class="tag-row"><span class="tag">World Cup 2026</span></div>
+            </div>
+            <div class="flow-node">
+              <h3>2. Match Subgraph</h3>
+              <p>Select one match and attach fresh findings, odds, news, lineup, and weather reads.</p>
+              <div class="tag-row"><span class="tag">France</span><span class="tag">Senegal</span></div>
+            </div>
+            <div class="flow-node">
+              <h3>3. Spawn Predictors</h3>
+              <p>Generate many cheap predictors with private genomes and public hashes.</p>
+              <div class="tag-row"><span class="tag green">N = 40</span></div>
+            </div>
+            <div class="flow-node">
+              <h3>4. Private Forecast</h3>
+              <p>Each predictor sees an allowed graph view, then logs a decision reason.</p>
+              <div class="tag-row"><span class="tag gold">no LLM needed</span></div>
+            </div>
+            <div class="flow-node">
+              <h3>5. Debater Selection</h3>
+              <p>Only a bounded subset joins the public debate. Logs include a selection reason.</p>
+              <div class="tag-row"><span class="tag red">6 debaters</span></div>
+            </div>
+            <div class="flow-node">
+              <h3>6. Voice Layer</h3>
+              <p>OpenRouter renders short public claims. Probabilities stay deterministic.</p>
+              <div class="tag-row"><span class="tag">DeepSeek V4 Flash</span></div>
+            </div>
+            <div class="flow-node">
+              <h3>7. Debate Finding</h3>
+              <p>Debater claims publish selected knowledge back into the public layer.</p>
+              <div class="tag-row"><span class="tag green">50.7%</span></div>
+            </div>
+            <div class="flow-node">
+              <h3>8. Listen and Decide</h3>
+              <p>All predictors update using debate weight and herd bias, then bet or pass.</p>
+              <div class="tag-row"><span class="tag gold">home / away / pass</span></div>
+            </div>
+          </div>
+        </article>
+
+        <aside class="panel side-panel">
+          <h2>Design Rule</h2>
+          <div class="code">CAMEL scouts collect data
+        |
+        v
+World Cup KG
+        |
+        v
+match subgraph + access zones
+        |
+        v
+filtered predictor views
+        |
+        v
+debate + consensus + bets</div>
+          <p class="footnote">
+            The harness should not turn every colony member into a costly free-form LLM worker.
+            CAMEL is best used for fewer, tool-using scouts. Genomes are best for many reproducible opinions.
+          </p>
+        </aside>
+      </div>
+    </section>
+
+    <section id="genome" class="section">
+      <div class="compare">
+        <article class="compare-card">
+          <h2>Genome Predictor</h2>
+          <p>Many cheap simulated decision-makers. Each one interprets the same data through different numeric preferences.</p>
+          <ul class="clean">
+            <li><strong>Identity</strong><span>persona, model label, genome hash</span></li>
+            <li><strong>Inputs</strong><span>stats, odds, news, debate finding</span></li>
+            <li><strong>Parameters</strong><span>source weights, risk appetite, edge threshold, herd bias</span></li>
+            <li><strong>Output</strong><span>private forecast, public claim if selected, final bet or pass</span></li>
+            <li><strong>Best for</strong><span>scale, reproducibility, analysis, evolutionary loops</span></li>
+          </ul>
+        </article>
+
+        <article class="compare-card">
+          <h2>CAMEL Scout</h2>
+          <p>Fewer tool-using LLM workers. Each one can search, browse, call APIs, and return structured evidence.</p>
+          <ul class="clean">
+            <li><strong>Identity</strong><span>system message, role, model backend</span></li>
+            <li><strong>Inputs</strong><span>task prompt, tools, memory, external APIs</span></li>
+            <li><strong>Parameters</strong><span>model config, tools, response schema, memory policy</span></li>
+            <li><strong>Output</strong><span>structured datasource finding with citations and confidence</span></li>
+            <li><strong>Best for</strong><span>data collection, extraction, summarization, tool orchestration</span></li>
+          </ul>
+        </article>
+      </div>
+      <p class="footnote">
+        Recommended split: CAMEL answers "what evidence exists?" and genomes answer "how should a population of predictors weight that evidence?"
+      </p>
+    </section>
+
+    <section id="roles" class="section">
+      <div class="roles-board">
+        <article class="panel roles-map">
+          <h2>Core Roles For The First Useful Harness</h2>
+
+          <div class="role-flow-grid">
+            <article class="role-card">
+              <div class="role-number">1</div>
+              <h2>Scout</h2>
+              <p>Collects or extracts data from APIs, local files, search, browser tools, ScrapeCreators, or CAMEL.</p>
+              <div class="role-details">
+                <div class="role-row"><strong>Input</strong><span>Raw source: odds page, news article, ranking table, scrape result.</span></div>
+                <div class="role-row"><strong>Output</strong><span>Structured finding with scout name, confidence, and citations.</span></div>
+              </div>
+            </article>
+
+            <article class="role-card">
+              <div class="role-number">2</div>
+              <h2>Finding</h2>
+              <p>A compact piece of evidence that the simulation can consume without reading raw web pages.</p>
+              <div class="role-details">
+                <div class="role-row"><strong>Now</strong><span>Public market/stats/odds/news, shared lineup/social, private weather.</span></div>
+                <div class="role-row"><strong>Later</strong><span>Budgets decide who can buy shared or private findings.</span></div>
+              </div>
+            </article>
+
+            <article class="role-card">
+              <div class="role-number">3</div>
+              <h2>Predictor</h2>
+              <p>A cheap genome-based participant that interprets findings, forms a probability, listens, and bets or passes.</p>
+              <div class="role-details">
+                <div class="role-row"><strong>Genome</strong><span>Weights, risk appetite, threshold, herd bias, persona.</span></div>
+                <div class="role-row"><strong>Evolves</strong><span>This is where the genetic algorithm should start.</span></div>
+              </div>
+            </article>
+
+            <article class="role-card">
+              <div class="role-number">4</div>
+              <h2>Debater</h2>
+              <p>A predictor selected for this round to publish a compressed public claim.</p>
+              <div class="role-details">
+                <div class="role-row"><strong>Why</strong><span>Elite score or wildcard exploration slot.</span></div>
+                <div class="role-row"><strong>Effect</strong><span>Claims become a debate finding that all predictors can react to.</span></div>
+              </div>
+            </article>
+          </div>
+
+          <div class="code">Scout -> Finding -> Predictor -> Debater -> Debate Finding -> Bet/Pass</div>
+
+          <p class="footnote">
+            Shared paid access can come later. For now, the useful core is: collect findings, let predictors interpret them, then select a few debaters to make the social finding visible.
+          </p>
+        </article>
+
+        <aside class="panel role-side">
+          <div class="ring">
+            <h2>Public Debate</h2>
+            <p>Debaters are not separate workers. They are selected predictors for this round.</p>
+            <div class="mini-flow">
+              <div>1. Scouts publish structured findings</div>
+              <div>2. Predictors make private predictions</div>
+              <div>3. A few predictors become debaters</div>
+              <div>4. Debaters publish compressed claims</div>
+              <div>5. Everyone listens, updates, and bets/pass</div>
+            </div>
+          </div>
+
+          <div class="code">All predictors think.
+Some predictors debate.
+All predictors decide.</div>
+
+          <p class="footnote">
+            This keeps the debate large enough to matter but small enough to read. It also prevents every predictor from scraping or paying for the same information.
+          </p>
+        </aside>
+      </div>
+    </section>
+
+    <section id="graph" class="section">
+      <div class="kg-board">
+        <article class="panel kg-main">
+          <h2>World Cup Knowledge Graph And Access Zones</h2>
+          <div class="tag-row">
+            <span class="tag green">204 entities</span>
+            <span class="tag">104 matches</span>
+            <span class="tag">48 teams</span>
+            <span class="tag gold">588 relationships</span>
+          </div>
+          <div class="kg-flow">
+            <div class="kg-step">
+              <h3>Sources</h3>
+              <p>OpenFootball, ScrapeCreators, APIs, local files, and mock data.</p>
+            </div>
+            <div class="kg-step">
+              <h3>Scouts</h3>
+              <p>Normalize raw data into cited, confidence-scored findings.</p>
+            </div>
+            <div class="kg-step">
+              <h3>Tournament KG</h3>
+              <p>Stores the full competition: groups, teams, venues, and matches.</p>
+            </div>
+            <div class="kg-step">
+              <h3>Match Subgraph</h3>
+              <p>Extracts one match and attaches round-specific findings.</p>
+            </div>
+            <div class="kg-step">
+              <h3>Filtered View</h3>
+              <p>Each predictor sees only the findings it is allowed to use.</p>
+            </div>
+            <div class="kg-step">
+              <h3>Debate Release</h3>
+              <p>Selected debaters can turn private knowledge into public pressure.</p>
+            </div>
+          </div>
+
+          <div class="kg-visual" aria-label="World Cup knowledge graph diagram showing scouts, match subgraph, access zones, filtered predictor views, and debate release">
+            <svg viewBox="0 0 920 430" role="img">
+              <defs>
+                <marker id="arrowHead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                  <path d="M 0 0 L 10 4 L 0 8 z" fill="#8b94a3"></path>
+                </marker>
+              </defs>
+
+              <path class="graph-edge" d="M 135 78 C 185 78 195 95 236 116"></path>
+              <path class="graph-edge" d="M 135 148 C 184 148 198 138 236 132"></path>
+              <path class="graph-edge" d="M 135 218 C 185 218 195 173 236 149"></path>
+              <path class="graph-edge" d="M 135 288 C 186 288 198 204 236 164"></path>
+              <path class="graph-edge" d="M 356 140 C 397 140 414 150 445 176"></path>
+
+              <path class="graph-edge" d="M 540 160 C 579 105 604 76 650 74"></path>
+              <path class="graph-edge" d="M 556 212 C 596 212 608 212 650 212"></path>
+              <path class="graph-edge" d="M 540 264 C 582 318 607 354 650 354"></path>
+
+              <path class="graph-edge" d="M 770 74 C 818 91 833 117 842 154"></path>
+              <path class="graph-edge" d="M 770 212 C 818 212 830 206 842 196"></path>
+              <path class="graph-edge" d="M 770 354 C 818 333 833 273 842 230"></path>
+              <path class="graph-edge soft" d="M 842 190 C 742 158 665 132 548 174"></path>
+
+              <g class="graph-node node-source">
+                <rect x="32" y="45" width="118" height="48" rx="8"></rect>
+                <text x="48" y="68">OpenFootball</text>
+                <text class="subtext" x="48" y="83">schedule</text>
+              </g>
+              <g class="graph-node node-source">
+                <rect x="32" y="115" width="118" height="48" rx="8"></rect>
+                <text x="48" y="138">ScrapeCreators</text>
+                <text class="subtext" x="48" y="153">news/lineups</text>
+              </g>
+              <g class="graph-node node-source">
+                <rect x="32" y="185" width="118" height="48" rx="8"></rect>
+                <text x="48" y="208">APIs</text>
+                <text class="subtext" x="48" y="223">odds/weather</text>
+              </g>
+              <g class="graph-node node-source">
+                <rect x="32" y="255" width="118" height="48" rx="8"></rect>
+                <text x="48" y="278">Local Files</text>
+                <text class="subtext" x="48" y="293">ratings/csv</text>
+              </g>
+
+              <g class="graph-node node-scout">
+                <rect x="236" y="98" width="132" height="82" rx="10"></rect>
+                <text x="265" y="128">Scouts</text>
+                <text class="subtext" x="254" y="148">normalize raw data</text>
+                <text class="subtext" x="265" y="164">into findings</text>
+              </g>
+
+              <g class="graph-node node-graph">
+                <circle cx="500" cy="214" r="76"></circle>
+                <text x="462" y="203">World Cup</text>
+                <text x="485" y="221">KG</text>
+                <text class="subtext" x="455" y="242">tournament memory</text>
+              </g>
+
+              <g class="graph-node node-public">
+                <rect x="650" y="38" width="142" height="72" rx="10"></rect>
+                <text x="682" y="67">Public</text>
+                <text class="subtext" x="671" y="86">everyone sees</text>
+              </g>
+              <g class="graph-node node-premium">
+                <rect x="650" y="176" width="142" height="72" rx="10"></rect>
+                <text x="674" y="205">Premium</text>
+                <text class="subtext" x="672" y="224">budget gated</text>
+              </g>
+              <g class="graph-node node-private">
+                <rect x="650" y="318" width="142" height="72" rx="10"></rect>
+                <text x="681" y="347">Private</text>
+                <text class="subtext" x="669" y="366">buyer scoped</text>
+              </g>
+
+              <g class="graph-node node-view">
+                <rect x="815" y="132" width="90" height="112" rx="10"></rect>
+                <text x="833" y="162">Filtered</text>
+                <text x="841" y="180">View</text>
+                <text class="subtext" x="834" y="204">per predictor</text>
+                <text class="subtext" x="830" y="220">before forecast</text>
+              </g>
+
+              <g class="graph-node node-debate">
+                <rect x="388" y="332" width="220" height="58" rx="10"></rect>
+                <text x="431" y="358">Debate Release</text>
+                <text class="subtext" x="420" y="376">selected claims become public pressure</text>
+              </g>
+
+              <path class="graph-edge soft" d="M 815 208 C 730 286 648 334 608 354"></path>
+            </svg>
+            <p class="graph-caption">
+              The World Cup KG stores the whole tournament. Each round extracts a match subgraph, enriches it with scout findings, then gives each predictor a filtered view. Debate can leak a compressed version of premium or private knowledge back into the public layer.
+            </p>
+          </div>
+
+          <div class="kg-layer-grid">
+            <article class="kg-layer public">
+              <h2>Public Zone</h2>
+              <p>Free baseline memory from the tournament KG. Every predictor sees this layer.</p>
+              <div class="kg-items">
+                <div class="kg-item"><strong>Schedule</strong>OpenFootball fixtures, teams, date, group, ground.</div>
+                <div class="kg-item"><strong>Market Baseline</strong>Current implied home probability.</div>
+                <div class="kg-item"><strong>Basic Stats</strong>Public ratings and historical form snapshots.</div>
+              </div>
+            </article>
+
+            <article class="kg-layer premium">
+              <h2>Premium Zone</h2>
+              <p>Shared paid memory. Predictors need budget, privilege, or policy access.</p>
+              <div class="kg-items">
+                <div class="kg-item"><strong>News Summary</strong>ScrapeCreators or CAMEL summary with citations.</div>
+                <div class="kg-item"><strong>Lineup Risk</strong>Availability and uncertainty close to kickoff.</div>
+                <div class="kg-item"><strong>Odds Movement</strong>Freshness-gated movement and liquidity reads.</div>
+              </div>
+            </article>
+
+            <article class="kg-layer private">
+              <h2>Private Zone</h2>
+              <p>Purchased or lineage-specific memory. The graph stores it, but most predictors cannot see it.</p>
+              <div class="kg-items">
+                <div class="kg-item"><strong>Private Scout Report</strong>One predictor buys a finding with its budget.</div>
+                <div class="kg-item"><strong>LLM Analysis</strong>Costly reasoning attached to the buyer only.</div>
+                <div class="kg-item"><strong>Later</strong>Worldcoin or lineage privilege can unlock fresher data.</div>
+              </div>
+            </article>
+          </div>
+        </article>
+
+        <aside class="panel kg-side">
+          <div class="ring">
+            <h2>Core Rule</h2>
+            <p>The tournament graph can know the whole competition. A predictor only receives the filtered match subgraph for the current round.</p>
+          </div>
+
+          <div class="view-stack">
+            <article class="view-card">
+              <h3>Predictor A</h3>
+              <p>Public schedule, market, stats, and debate. No paid findings.</p>
+              <div class="tag-row"><span class="tag green">cheap</span><span class="tag">baseline</span></div>
+            </article>
+            <article class="view-card">
+              <h3>Predictor B</h3>
+              <p>Public layer plus premium news and lineup uncertainty.</p>
+              <div class="tag-row"><span class="tag gold">paid</span><span class="tag">freshness edge</span></div>
+            </article>
+            <article class="view-card">
+              <h3>Predictor C</h3>
+              <p>Public layer plus a private LLM analysis bought with query budget.</p>
+              <div class="tag-row"><span class="tag red">private</span><span class="tag">costly</span></div>
+            </article>
+          </div>
+
+          <div class="policy-list">
+            <div>Access policy filters findings before forecasting.</div>
+            <div>Debate can reveal a compressed version of private or premium information.</div>
+            <div>Genetic selection later rewards both good prediction genes and good data-buying strategy.</div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section id="params" class="section">
+      <div class="control-board">
+        <article class="panel controls">
+          <h2>Predictor Parameter Explorer</h2>
+          <div class="control">
+            <label for="persona">Persona <strong id="personaLabel">market contrarian</strong></label>
+            <select id="persona">
+              <option>cold probabilist</option>
+              <option selected>market contrarian</option>
+              <option>news-sensitive scout</option>
+              <option>risk-on striker</option>
+              <option>defensive skeptic</option>
+              <option>crowd watcher</option>
+              <option>model maximalist</option>
+              <option>quiet value hunter</option>
+            </select>
+          </div>
+
+          <div class="control">
+            <label for="risk">Risk appetite <strong id="riskLabel">0.10</strong></label>
+            <input id="risk" type="range" min="0.02" max="0.18" step="0.005" value="0.10">
+          </div>
+          <div class="control">
+            <label for="threshold">Edge threshold <strong id="thresholdLabel">0.035</strong></label>
+            <input id="threshold" type="range" min="0.01" max="0.18" step="0.005" value="0.035">
+          </div>
+          <div class="control">
+            <label for="herd">Herd bias <strong id="herdLabel">-0.20</strong></label>
+            <input id="herd" type="range" min="-1" max="1" step="0.05" value="-0.20">
+          </div>
+
+          <h3>Source Weights</h3>
+          <div class="control">
+            <label for="stats">Stats <strong id="statsLabel">0.40</strong></label>
+            <input id="stats" type="range" min="0.05" max="1" step="0.01" value="0.40">
+          </div>
+          <div class="control">
+            <label for="odds">Odds <strong id="oddsLabel">0.30</strong></label>
+            <input id="odds" type="range" min="0.05" max="1" step="0.01" value="0.30">
+          </div>
+          <div class="control">
+            <label for="news">News <strong id="newsLabel">0.15</strong></label>
+            <input id="news" type="range" min="0.05" max="1" step="0.01" value="0.15">
+          </div>
+          <div class="control">
+            <label for="debate">Debate <strong id="debateLabel">0.15</strong></label>
+            <input id="debate" type="range" min="0.05" max="1" step="0.01" value="0.15">
+          </div>
+        </article>
+
+        <article class="panel result">
+          <div class="agent-card">
+            <h2 id="agentTitle">predictor-preview: market contrarian</h2>
+            <p id="agentClaim">I price France above market (51.5% vs 47.0%). Contrarian finding outweighs the consensus.</p>
+            <div class="bars">
+              <div class="bar"><span>stats</span><div class="track"><div class="fill" id="statsFill"></div></div><strong id="statsPct">40%</strong></div>
+              <div class="bar"><span>odds</span><div class="track"><div class="fill" id="oddsFill"></div></div><strong id="oddsPct">30%</strong></div>
+              <div class="bar"><span>news</span><div class="track"><div class="fill" id="newsFill"></div></div><strong id="newsPct">15%</strong></div>
+              <div class="bar"><span>debate</span><div class="track"><div class="fill" id="debateFill"></div></div><strong id="debatePct">15%</strong></div>
+            </div>
+          </div>
+
+          <div class="decision-grid">
+            <div class="decision"><span>Private probability</span><strong id="privateProb">51.5%</strong></div>
+            <div class="decision"><span>Final probability</span><strong id="finalProb">51.2%</strong></div>
+            <div class="decision"><span>Decision</span><strong id="decision">Pass</strong></div>
+          </div>
+
+          <div class="code" id="formula">baseline = stats*55.0% + odds*48.0% + news*51.0% + debate*47.0%</div>
+        </article>
+      </div>
+    </section>
+
+    <section id="data" class="section">
+      <div class="data-grid">
+        <article class="data-card">
+          <h2>Odds Scout</h2>
+          <p>Collects bookmaker or prediction-market prices and converts them into implied probabilities.</p>
+          <div class="tag-row"><span class="tag">custom API tool</span><span class="tag gold">low LLM use</span></div>
+          <div class="schema">{ scout_name, source_type, home_probability, confidence, citations[] }</div>
+        </article>
+
+        <article class="data-card">
+          <h2>Stats Scout</h2>
+          <p>Collects Elo, rankings, recent form, expected goals, or other numeric features. Prefer APIs or local CSVs first.</p>
+          <div class="tag-row"><span class="tag green">deterministic</span><span class="tag">CSV/API</span></div>
+          <div class="schema">{ scout_name, finding_name, home_delta, confidence, citations[] }</div>
+        </article>
+
+        <article class="data-card">
+          <h2>News Scout</h2>
+          <p>Uses CAMEL with search/browser tools to find recent news, then returns a compact structured finding.</p>
+          <div class="tag-row"><span class="tag gold">CAMEL</span><span class="tag red">cite sources</span></div>
+          <div class="schema">{ scout_name, summary, home_probability, confidence, citations[] }</div>
+        </article>
+
+        <article class="data-card">
+          <h2>Lineup Scout</h2>
+          <p>Checks official lineups or injuries. This should be timestamp-gated and source-cited.</p>
+          <div class="tag-row"><span class="tag">browser</span><span class="tag red">high variance</span></div>
+          <div class="schema">{ access_level, availability_notes, home_delta, confidence, citations[] }</div>
+        </article>
+
+        <article class="data-card">
+          <h2>Weather Scout</h2>
+          <p>Optional for outdoor matches. Converts weather into a small uncertainty or style adjustment.</p>
+          <div class="tag-row"><span class="tag green">API</span><span class="tag">small impact</span></div>
+          <div class="schema">{ access_level, temperature, rain_probability, home_delta, cost }</div>
+        </article>
+
+        <article class="data-card">
+          <h2>Retriever Scout</h2>
+          <p>Reads local documents, past runs, match notes, or CSVs. Useful before web scraping gets added.</p>
+          <div class="tag-row"><span class="tag gold">CAMEL RetrievalToolkit</span></div>
+          <div class="schema">{ retrieved_facts[], confidence, source_paths[], citations[] }</div>
+        </article>
+      </div>
+      <p class="footnote">
+        Data scouts should produce structured findings. Colony predictors should not browse freely during the debate unless we explicitly opt into a more expensive mode.
+      </p>
+    </section>
+
+    <section id="logs" class="section">
+      <div class="log-levels">
+        <article class="log-card">
+          <h2>Default Logs</h2>
+          <p>Always saved. Compact enough to keep every run.</p>
+          <div class="check-list">
+            <div>summary.md</div>
+            <div>debate.md</div>
+            <div>forecasts.csv</div>
+            <div>findings.json</div>
+            <div>world_graph.json</div>
+            <div>events.compact.jsonl</div>
+          </div>
+        </article>
+
+        <article class="log-card">
+          <h2>Debug Logs</h2>
+          <p>Optional human-readable explanation for development.</p>
+          <div class="check-list">
+            <div>debater selection reasons</div>
+            <div>top edges and decision reasons</div>
+            <div>mock scout finding table</div>
+            <div>LLM call status without raw payloads</div>
+          </div>
+        </article>
+
+        <article class="log-card">
+          <h2>Trace Logs</h2>
+          <p>Optional full machine trace for experiments, kept off by default.</p>
+          <div class="check-list">
+            <div>predictor_spawned</div>
+            <div>private_forecast</div>
+            <div>voice_request redacted</div>
+            <div>final_forecast and bet_commitment</div>
+          </div>
+        </article>
+      </div>
+
+      <p class="footnote">
+        Proposed default: save compact logs automatically. Add <code>--debug</code> for readable internals and <code>--trace</code> for full experiments.
+      </p>
+    </section>
+  </main>
+
+  <script>
+    const tabs = Array.from(document.querySelectorAll(".tab"));
+    const sections = Array.from(document.querySelectorAll(".section"));
+
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        const target = tab.dataset.tab;
+        tabs.forEach((item) => item.setAttribute("aria-selected", item === tab ? "true" : "false"));
+        sections.forEach((section) => section.classList.toggle("active", section.id === target));
+      });
+    });
+
+    const ids = ["risk", "threshold", "herd", "stats", "odds", "news", "debate", "persona"];
+    const els = Object.fromEntries(ids.map((id) => [id, document.getElementById(id)]));
+    const findings = { stats: 0.55, odds: 0.48, news: 0.51, debate: 0.47 };
+    const market = 0.47;
+    const debateConsensus = 0.507;
+    const bankroll = 100;
+
+    function pct(value) {
+      return `${(value * 100).toFixed(1)}%`;
+    }
+
+    function num(id) {
+      return Number(els[id].value);
+    }
+
+    function updateExplorer() {
+      const raw = {
+        stats: num("stats"),
+        odds: num("odds"),
+        news: num("news"),
+        debate: num("debate")
+      };
+      const total = raw.stats + raw.odds + raw.news + raw.debate;
+      const weights = {
+        stats: raw.stats / total,
+        odds: raw.odds / total,
+        news: raw.news / total,
+        debate: raw.debate / total
+      };
+
+      const privateProb =
+        weights.stats * findings.stats +
+        weights.odds * findings.odds +
+        weights.news * findings.news +
+        weights.debate * market;
+
+      const debateMove = weights.debate * num("herd") * (debateConsensus - market);
+      const finalProb = Math.min(Math.max(privateProb + debateMove, 0.01), 0.99);
+      const edge = finalProb - market;
+      const threshold = num("threshold");
+      const side = edge >= threshold ? "Home" : ((-edge) >= threshold ? "Away" : "Pass");
+      const stake = side === "Pass" ? 0 : bankroll * num("risk");
+      const persona = els.persona.value;
+
+      document.getElementById("personaLabel").textContent = persona;
+      document.getElementById("riskLabel").textContent = num("risk").toFixed(3);
+      document.getElementById("thresholdLabel").textContent = num("threshold").toFixed(3);
+      document.getElementById("herdLabel").textContent = num("herd").toFixed(2);
+
+      for (const key of ["stats", "odds", "news", "debate"]) {
+        document.getElementById(`${key}Label`).textContent = raw[key].toFixed(2);
+        document.getElementById(`${key}Fill`).style.width = `${weights[key] * 100}%`;
+        document.getElementById(`${key}Pct`).textContent = `${Math.round(weights[key] * 100)}%`;
+      }
+
+      document.getElementById("agentTitle").textContent = `predictor-preview: ${persona}`;
+      const direction = finalProb >= market ? "above" : "below";
+      const rationale = persona.includes("contrarian")
+        ? "Contrarian weighting fades the crowd finding."
+        : persona.includes("news")
+          ? "News weight has visible influence on the final read."
+          : persona.includes("crowd")
+            ? "Debate finding has visible influence on the final read."
+            : "Internal weighted findings drive the final read.";
+      document.getElementById("agentClaim").textContent =
+        `I price France ${direction} market (${pct(finalProb)} vs ${pct(market)}). ${rationale}`;
+
+      document.getElementById("privateProb").textContent = pct(privateProb);
+      document.getElementById("finalProb").textContent = pct(finalProb);
+      document.getElementById("decision").textContent = stake > 0 ? `${side} $${stake.toFixed(2)}` : side;
+      document.getElementById("formula").textContent =
+        `private = stats*55.0% + odds*48.0% + news*51.0% + debate*47.0%\n` +
+        `final = private + debate_weight * herd_bias * (50.7% - 47.0%)\n` +
+        `edge = ${pct(edge)}; threshold = ${pct(threshold)}`;
+    }
+
+    ids.forEach((id) => els[id].addEventListener("input", updateExplorer));
+    updateExplorer();
+  </script>
+</body>
+</html>

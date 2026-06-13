@@ -1,0 +1,8 @@
+{
+  "label": "colony-worldcoin-test-agent-1",
+  "purpose": "Throwaway test keypair to feasibility-test World App agent whitelisting. NOT for real funds.",
+  "created": "2026-06-12",
+  "chain_note": "Plain EVM keypair. Same address works on World Chain (eip155:480) and Base (eip155:8453).",
+  "address": "0x570A499afb5E0D32Abf748e4FE299e0F33A82d50",
+  "private_key": "0xb1a65af58b0d4857bf954756cf6e1ab8b05c160d7190ddfe60f725c8d25de6d9"
+}
