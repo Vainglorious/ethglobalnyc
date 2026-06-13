@@ -24,16 +24,16 @@ export default function Water() {
       <planeGeometry args={[2400, 2400]} />
       <MeshReflectorMaterial
         resolution={512}
-        mirror={0.28}
-        mixBlur={2.4}
-        mixStrength={2.3}
+        mirror={0.18}
+        mixBlur={3.2}
+        mixStrength={1.35}
         blur={[520, 180]}
         minDepthThreshold={0.3}
-        maxDepthThreshold={1.4}
-        depthScale={1.1}
-        color="#4f8fc0"
-        metalness={0.08}
-        roughness={0.18}
+        maxDepthThreshold={1.8}
+        depthScale={0.85}
+        color="#5d9cb8"
+        metalness={0.02}
+        roughness={0.34}
       />
     </mesh>
   )

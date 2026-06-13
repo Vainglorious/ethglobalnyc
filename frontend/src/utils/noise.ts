@@ -71,8 +71,8 @@ export function fbm(x: number, y: number, octaves = 4, lacunarity = 2, gain = 0.
  * that needs to place objects on the ground. Keep params here in one place.
  */
 export const TERRAIN = {
-  scale: 0.01, // horizontal frequency
-  amplitude: 18, // vertical scale of hills (dramatic, Minecraft-ish)
+  scale: 0.008, // broad landform frequency
+  amplitude: 16, // vertical scale of hills
   octaves: 4,
 }
 
@@ -81,7 +81,8 @@ export const BLOCK = 4
 export const VOXEL_HALF = 180
 
 /** Water surface height. Anything below this is flooded (lakes / sea). */
-export const WATER_LEVEL = -3.5
+export const WATER_LEVEL = -6.25
+export const SHORE_CLEARANCE = 0.85
 
 /**
  * Continuous terrain height (smooth noise). Two octave sets layered: broad
@@ -89,11 +90,13 @@ export const WATER_LEVEL = -3.5
  * basins pool into water. This is the single canonical surface function.
  */
 export function terrainHeight(x: number, z: number): number {
-  const base = fbm(x * TERRAIN.scale, z * TERRAIN.scale, TERRAIN.octaves) * TERRAIN.amplitude
-  // ridged detail on the uplands for craggier peaks
-  const ridge = (1 - Math.abs(noise2D(x * 0.018 + 11, z * 0.018 - 7))) * 6
-  const lift = base > 4 ? (ridge - 3) * Math.min((base - 4) / 10, 1) : 0
-  return base + lift
+  const broad = fbm(x * TERRAIN.scale, z * TERRAIN.scale, TERRAIN.octaves) * TERRAIN.amplitude
+  const folds = fbm(x * 0.019 + 8, z * 0.019 - 3, 3, 2.15, 0.48) * 5.2
+  const detail = fbm(x * 0.055 - 19, z * 0.055 + 13, 3, 2.1, 0.42) * 1.35
+  const ridge = (1 - Math.abs(noise2D(x * 0.021 + 11, z * 0.021 - 7))) * 6.5
+  const upland = Math.min(Math.max((broad + folds - 3) / 14, 0), 1)
+  const cliffLift = (ridge - 3.25) * upland
+  return broad + folds + detail + cliffLift
 }
 
 /**
@@ -104,6 +107,39 @@ export function terrainHeight(x: number, z: number): number {
  */
 export function groundY(x: number, z: number): number {
   return terrainHeight(x, z)
+}
+
+export function isDryLand(x: number, z: number, clearance = SHORE_CLEARANCE): boolean {
+  return terrainHeight(x, z) > WATER_LEVEL + clearance
+}
+
+export function findDryLandNear(
+  x: number,
+  z: number,
+  rand: () => number,
+  clearance = SHORE_CLEARANCE,
+): [number, number] {
+  if (isDryLand(x, z, clearance)) return [x, z]
+  let bestX = x
+  let bestZ = z
+  let bestH = -Infinity
+  for (let ring = 1; ring <= 18; ring++) {
+    const radius = ring * 5
+    const offset = rand() * Math.PI * 2
+    for (let step = 0; step < 10; step++) {
+      const a = offset + (step / 10) * Math.PI * 2
+      const nx = x + Math.cos(a) * radius
+      const nz = z + Math.sin(a) * radius
+      const h = terrainHeight(nx, nz)
+      if (h > bestH) {
+        bestH = h
+        bestX = nx
+        bestZ = nz
+      }
+      if (h > WATER_LEVEL + clearance) return [nx, nz]
+    }
+  }
+  return [bestX, bestZ]
 }
 
 /**

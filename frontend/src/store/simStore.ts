@@ -12,7 +12,7 @@
  */
 
 import { Role, AntState, AntTask } from '../data/schema'
-import { groundY, terrainHeight, WATER_LEVEL } from '../utils/noise'
+import { findDryLandNear, groundY } from '../utils/noise'
 import { SpatialHash } from '../systems/spatialHash'
 
 export const MAX_AGENTS = 2048
@@ -100,14 +100,7 @@ class SimStore {
 
   /** find a land position (above the waterline) near a target, else the target. */
   private landNear(x: number, z: number, rand: () => number): [number, number] {
-    for (let t = 0; t < 12; t++) {
-      const a = rand() * Math.PI * 2
-      const r = t * 6
-      const nx = x + Math.cos(a) * r
-      const nz = z + Math.sin(a) * r
-      if (terrainHeight(nx, nz) > WATER_LEVEL + 2) return [nx, nz]
-    }
-    return [x, z]
+    return findDryLandNear(x, z, rand, 2)
   }
 
   /**
@@ -173,8 +166,7 @@ class SimStore {
       const colony = this.colonies[cid]
       const a = rand() * Math.PI * 2
       const r = rand() * 18
-      const x = colony.x + Math.cos(a) * r
-      const z = colony.z + Math.sin(a) * r
+      const [x, z] = this.landNear(colony.x + Math.cos(a) * r, colony.z + Math.sin(a) * r, rand)
       this.positions[i3] = x
       this.positions[i3 + 1] = groundY(x, z)
       this.positions[i3 + 2] = z

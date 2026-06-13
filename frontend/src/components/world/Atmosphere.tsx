@@ -5,12 +5,12 @@
 
 import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
-import { BufferGeometry, BufferAttribute, Points, AdditiveBlending, DirectionalLight } from 'three'
+import { AdditiveBlending, BufferAttribute, BufferGeometry, DirectionalLight, Points } from 'three'
 import { VOXEL_HALF } from '../../utils/noise'
 import { PALETTE } from '../../utils/palette'
 import { mulberry32 } from '../../utils/math'
 
-const DUST_COUNT = 320
+const DUST_COUNT = 520
 
 export default function Atmosphere() {
   const dustRef = useRef<Points>(null)
@@ -20,9 +20,11 @@ export default function Atmosphere() {
     const rand = mulberry32(98765)
     const arr = new Float32Array(DUST_COUNT * 3)
     for (let i = 0; i < DUST_COUNT; i++) {
-      arr[i * 3] = (rand() * 2 - 1) * VOXEL_HALF
-      arr[i * 3 + 1] = 6 + rand() * 50
-      arr[i * 3 + 2] = (rand() * 2 - 1) * VOXEL_HALF
+      const r = Math.sqrt(rand()) * VOXEL_HALF * 1.45
+      const a = rand() * Math.PI * 2
+      arr[i * 3] = Math.cos(a) * r
+      arr[i * 3 + 1] = 4 + Math.pow(rand(), 1.7) * 62
+      arr[i * 3 + 2] = Math.sin(a) * r
     }
     const g = new BufferGeometry()
     g.setAttribute('position', new BufferAttribute(arr, 3))
@@ -32,19 +34,19 @@ export default function Atmosphere() {
   useFrame((state) => {
     if (dustRef.current) {
       const t = state.clock.elapsedTime
-      dustRef.current.rotation.y = t * 0.01
-      dustRef.current.position.y = Math.sin(t * 0.25) * 1.5
+      dustRef.current.rotation.y = t * 0.006
+      dustRef.current.position.y = Math.sin(t * 0.18) * 1.1
     }
   })
 
   return (
     <>
-      <hemisphereLight args={['#d8ecff', '#8d8a72', 1.25]} />
-      <ambientLight intensity={0.62} />
+      <hemisphereLight args={['#d7e9f1', '#9a8665', 0.92]} />
+      <ambientLight intensity={0.34} />
       <directionalLight
         ref={sunRef}
-        position={[120, 180, 90]}
-        intensity={1.75}
+        position={[86, 72, 48]}
+        intensity={2.35}
         color={PALETTE.sun}
         castShadow
         shadow-mapSize-width={2048}
@@ -60,10 +62,10 @@ export default function Atmosphere() {
 
       <points ref={dustRef} geometry={dustGeo}>
         <pointsMaterial
-          size={0.6}
-          color="#ffffff"
+          size={0.42}
+          color="#ffe7bd"
           transparent
-          opacity={0.18}
+          opacity={0.11}
           sizeAttenuation
           depthWrite={false}
           blending={AdditiveBlending}

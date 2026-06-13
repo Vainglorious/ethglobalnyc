@@ -8,7 +8,7 @@ import { Canvas } from '@react-three/fiber'
 import { Sky, AdaptiveDpr, AdaptiveEvents } from '@react-three/drei'
 import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing'
 import { Perf } from 'r3f-perf'
-import { FogExp2, Color, ACESFilmicToneMapping } from 'three'
+import { FogExp2, Color, ACESFilmicToneMapping, SRGBColorSpace } from 'three'
 
 import Engine from './Engine'
 import Atmosphere from './world/Atmosphere'
@@ -32,17 +32,28 @@ export default function Experience() {
     <Canvas
       shadows="soft"
       dpr={[1, 2]}
-      gl={{ antialias: true, powerPreference: 'high-performance', toneMapping: ACESFilmicToneMapping }}
-      camera={{ position: [62, 72, 98], fov: 55, near: 0.1, far: 3000 }}
+      gl={{
+        antialias: true,
+        powerPreference: 'high-performance',
+        toneMapping: ACESFilmicToneMapping,
+        outputColorSpace: SRGBColorSpace,
+      }}
+      camera={{ position: [88, 58, 112], fov: 48, near: 0.1, far: 3000 }}
       onCreated={({ scene }) => {
         scene.background = new Color(PALETTE.sky)
-        scene.fog = new FogExp2(PALETTE.horizon, 0.00075)
+        scene.fog = new FogExp2(PALETTE.horizon, 0.00105)
       }}
     >
       {/* sim driver — must be first */}
       <Engine />
 
-      <Sky sunPosition={[120, 180, 90]} turbidity={4.2} rayleigh={1.6} mieCoefficient={0.003} mieDirectionalG={0.74} />
+      <Sky
+        sunPosition={[80, 54, 42]}
+        turbidity={6.6}
+        rayleigh={2.4}
+        mieCoefficient={0.006}
+        mieDirectionalG={0.82}
+      />
 
       <Atmosphere />
       <Terrain />
@@ -63,8 +74,8 @@ export default function Experience() {
       <CameraRig />
 
       <EffectComposer enableNormalPass={false}>
-        <Bloom mipmapBlur intensity={0.16} luminanceThreshold={1.05} luminanceSmoothing={0.2} />
-        <Vignette eskil={false} offset={0.38} darkness={0.18} />
+        <Bloom mipmapBlur intensity={0.12} luminanceThreshold={1.08} luminanceSmoothing={0.24} />
+        <Vignette eskil={false} offset={0.48} darkness={0.1} />
       </EffectComposer>
 
       <AdaptiveDpr />

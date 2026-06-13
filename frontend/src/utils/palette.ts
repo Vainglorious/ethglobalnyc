@@ -1,4 +1,4 @@
-/** Central color system — vivid, blocky, sunlit (Minecraft-style world). */
+/** Central color system — warm natural daylight for the ant-colony world. */
 
 import { Color } from 'three'
 import { Role, AntState } from '../data/schema'
@@ -6,20 +6,20 @@ import { WATER_LEVEL } from './noise'
 
 export const PALETTE = {
   // sky + atmosphere
-  sky: '#9fd0ff',
-  skyHigh: '#5aa9f0',
-  horizon: '#dcefff',
-  sun: '#fff1cf',
+  sky: '#bfd7e5',
+  skyHigh: '#7fb4d6',
+  horizon: '#e8dfc8',
+  sun: '#ffe2a8',
 
   // biome bands (by altitude) — naturalistic, slightly desaturated
-  water: '#2f6fb0',
-  waterDeep: '#1c4a7d',
-  sand: '#d8c79c',
-  grass: '#4f8f3c',
-  grassDark: '#3a6e2b',
-  dirt: '#7d5536',
-  rock: '#7c756b',
-  rockDark: '#5d564e',
+  water: '#4f91b8',
+  waterDeep: '#2f617f',
+  sand: '#cdbf94',
+  grass: '#5e8c4a',
+  grassDark: '#3f6f36',
+  dirt: '#77593e',
+  rock: '#827b70',
+  rockDark: '#635b52',
   snow: '#eef3f8',
 
   // agents

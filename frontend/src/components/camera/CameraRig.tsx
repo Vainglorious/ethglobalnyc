@@ -17,24 +17,27 @@ import { Vector3 } from 'three'
 import { damp3 } from 'maath/easing'
 import { useWorldStore, type CameraTarget } from '../../store/worldStore'
 import { groundY } from '../../utils/noise'
+import { sim } from '../../store/simStore'
 
-const EYE_HEIGHT = 9.5
-const WALK_SPEED = 28
-const SPRINT = 2.0
+const EYE_HEIGHT = 6.2
+const WALK_SPEED = 19
+const SPRINT = 1.75
 
 const PRESETS: Record<CameraTarget, { pos: Vector3; target: Vector3 }> = {
-  strategic: { pos: new Vector3(62, 72, 98), target: new Vector3(0, 14, 0) },
-  explore: { pos: new Vector3(0, 18, 26), target: new Vector3(0, 11, -28) },
+  strategic: { pos: new Vector3(88, 58, 112), target: new Vector3(0, 9, 0) },
+  explore: { pos: new Vector3(0, 14, 32), target: new Vector3(0, 8, -24) },
 }
 
 export default function CameraRig() {
   const cameraMode = useWorldStore((s) => s.cameraMode)
   const targetMode = useWorldStore((s) => s.targetMode)
   const { camera, gl } = useThree()
+  const orbitRef = useRef<any>(null)
 
   // live keyboard state (no React re-render)
   const keys = useRef<Record<string, boolean>>({})
   const lookTarget = useMemo(() => new Vector3(0, 8, 0), [])
+  const colonyTarget = useMemo(() => new Vector3(0, 8, 0), [])
   const forward = useMemo(() => new Vector3(), [])
   const right = useMemo(() => new Vector3(), [])
 
@@ -60,12 +63,31 @@ export default function CameraRig() {
     }
   }, [cameraMode, targetMode, lookTarget])
 
-  useFrame((_, dt) => {
+  useFrame((state, dt) => {
+    if (sim.colonies.length > 0) {
+      let x = 0
+      let z = 0
+      for (const colony of sim.colonies) {
+        x += colony.x
+        z += colony.z
+      }
+      x /= sim.colonies.length
+      z /= sim.colonies.length
+      colonyTarget.set(x, groundY(x, z) + 10, z)
+    }
+
+    if (cameraMode === 'strategic' && orbitRef.current) {
+      orbitRef.current.target.lerp(colonyTarget, 1 - Math.exp(-dt * 2.6))
+      orbitRef.current.update()
+    }
+
     if (cameraMode === 'transition') {
       const dest = PRESETS[targetMode]
-      damp3(camera.position, dest.pos, 0.35, dt)
-      camera.lookAt(dest.target)
-      if (camera.position.distanceToSquared(dest.pos) < 1.5) {
+      const target = targetMode === 'strategic' ? colonyTarget : dest.target
+      damp3(camera.position, dest.pos, 0.28, dt)
+      damp3(lookTarget, target, 0.22, dt)
+      camera.lookAt(lookTarget)
+      if (camera.position.distanceToSquared(dest.pos) < 2.4) {
         camera.position.copy(dest.pos)
         useWorldStore.getState().endTransition()
       }
@@ -94,7 +116,10 @@ export default function CameraRig() {
       }
       // Glue eye height to the smooth terrain surface. Keep this comfortably
       // above ants/rocks so first-person screenshots do not start inside props.
-      camera.position.y = groundY(camera.position.x, camera.position.z) + EYE_HEIGHT
+      const desiredY = groundY(camera.position.x, camera.position.z) + EYE_HEIGHT
+      camera.position.y += (desiredY - camera.position.y) * (1 - Math.exp(-dt * 7))
+      const breathing = Math.sin(state.clock.elapsedTime * 1.15) * 0.045
+      camera.position.y += breathing
     }
   })
 
@@ -102,14 +127,18 @@ export default function CameraRig() {
     <>
       {cameraMode === 'strategic' && (
         <OrbitControls
+          ref={orbitRef}
           makeDefault
-          target={[0, 8, 0]}
           enablePan
-          maxPolarAngle={Math.PI * 0.49}
-          minDistance={20}
-          maxDistance={320}
+          minPolarAngle={Math.PI * 0.16}
+          maxPolarAngle={Math.PI * 0.46}
+          minDistance={34}
+          maxDistance={245}
           enableDamping
-          dampingFactor={0.08}
+          dampingFactor={0.055}
+          rotateSpeed={0.36}
+          zoomSpeed={0.62}
+          panSpeed={0.42}
         />
       )}
       {cameraMode === 'explore' && <PointerLockControls makeDefault domElement={gl.domElement} />}

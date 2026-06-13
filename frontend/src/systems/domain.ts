@@ -19,7 +19,7 @@
 import { sim, MAX_AGENTS } from '../store/simStore'
 import { Role, AntState, AntTask } from '../data/schema'
 import { mulberry32, clamp } from '../utils/math'
-import { groundY } from '../utils/noise'
+import { findDryLandNear, groundY } from '../utils/noise'
 import { pher } from './pheromone'
 
 const rng = mulberry32(0xc0ffee)
@@ -65,8 +65,7 @@ function spawnWorker(cid: number): boolean {
   const colony = sim.colonies[cid]
   const a = rng() * Math.PI * 2
   const r = rng() * 6
-  const x = colony.x + Math.cos(a) * r
-  const z = colony.z + Math.sin(a) * r
+  const [x, z] = findDryLandNear(colony.x + Math.cos(a) * r, colony.z + Math.sin(a) * r, rng, 1.4)
   sim.positions[i3] = x
   sim.positions[i3 + 1] = groundY(x, z)
   sim.positions[i3 + 2] = z

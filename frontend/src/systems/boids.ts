@@ -15,7 +15,7 @@
  */
 
 import { sim, WORLD_HALF } from '../store/simStore'
-import { groundY } from '../utils/noise'
+import { groundY, isDryLand, WATER_LEVEL } from '../utils/noise'
 import { AntTask } from '../data/schema'
 import { mulberry32 } from '../utils/math'
 import { pher, TO_FOOD, TO_HOME } from './pheromone'
@@ -38,6 +38,8 @@ const TERRITORY_SQ = TERRITORY * TERRITORY
 
 const BASE_SPEED = 9
 const MAX_FORCE = 26
+const DRY_LEVEL = WATER_LEVEL + 0.7
+const WATER_LOOKAHEAD = 10
 
 // caste cruising-speed multipliers
 const TASK_SPEED: Record<AntTask, number> = {
@@ -49,6 +51,7 @@ const TASK_SPEED: Record<AntTask, number> = {
 }
 
 const _dir = new Float32Array(2)
+const DRY_DIRS = 12
 
 function nearestVisibleResource(px: number, pz: number): number {
   let best = -1
@@ -174,6 +177,30 @@ export function updateBoids(dt: number) {
       }
     }
 
+    // --- shoreline avoidance: water is an obstacle, not just blue terrain ---
+    const speedForLook = Math.hypot(vx, vz)
+    const hx = speedForLook > 0.01 ? vx / speedForLook : Math.cos(rng() * Math.PI * 2)
+    const hz = speedForLook > 0.01 ? vz / speedForLook : Math.sin(rng() * Math.PI * 2)
+    if (groundY(px + hx * WATER_LOOKAHEAD, pz + hz * WATER_LOOKAHEAD) < DRY_LEVEL) {
+      let bestX = hx
+      let bestZ = hz
+      let bestH = -Infinity
+      const offset = rng() * Math.PI * 2
+      for (let s = 0; s < DRY_DIRS; s++) {
+        const a = offset + (s / DRY_DIRS) * Math.PI * 2
+        const sx = Math.cos(a)
+        const sz = Math.sin(a)
+        const h = groundY(px + sx * WATER_LOOKAHEAD, pz + sz * WATER_LOOKAHEAD)
+        if (h > bestH) {
+          bestH = h
+          bestX = sx
+          bestZ = sz
+        }
+      }
+      ax += bestX * BASE_SPEED * 3.1
+      az += bestZ * BASE_SPEED * 3.1
+    }
+
     // --- territory: repelled from rival nests; raise their threat ---
     for (let c = 0; c < colonies.length; c++) {
       if (c === cid) continue
@@ -219,8 +246,39 @@ export function updateBoids(dt: number) {
 
     // integrate position; store the terrain contact point. Renderers add model
     // foot clearance from their own bounds so ants do not float above hills.
-    const nx = px + V[i3] * dt
-    const nz = pz + V[i3 + 2] * dt
+    let nx = px + V[i3] * dt
+    let nz = pz + V[i3 + 2] * dt
+    if (!isDryLand(nx, nz, 0.42)) {
+      let found = false
+      let bestX = px
+      let bestZ = pz
+      let bestH = -Infinity
+      for (let ring = 1; ring <= 3 && !found; ring++) {
+        const radius = ring * 4
+        const offset = Math.atan2(-V[i3 + 2], -V[i3])
+        for (let s = 0; s < DRY_DIRS; s++) {
+          const a = offset + (s / DRY_DIRS) * Math.PI * 2
+          const sx = px + Math.cos(a) * radius
+          const sz = pz + Math.sin(a) * radius
+          const h = groundY(sx, sz)
+          if (h > bestH) {
+            bestH = h
+            bestX = sx
+            bestZ = sz
+          }
+          if (h > DRY_LEVEL) {
+            bestX = sx
+            bestZ = sz
+            found = true
+            break
+          }
+        }
+      }
+      nx = bestX
+      nz = bestZ
+      V[i3] *= -0.18
+      V[i3 + 2] *= -0.18
+    }
     P[i3] = nx
     P[i3 + 2] = nz
     P[i3 + 1] = groundY(nx, nz)

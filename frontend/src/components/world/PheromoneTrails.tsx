@@ -8,13 +8,26 @@
 import { useMemo } from 'react'
 import { CatmullRomCurve3, Color, TubeGeometry, Vector3 } from 'three'
 import { sim } from '../../store/simStore'
-import { groundY } from '../../utils/noise'
+import { groundY, isDryLand } from '../../utils/noise'
 import { COLONY_COLORS } from '../../utils/palette'
 import { useWorldStore } from '../../store/worldStore'
 
 const MAX_ROUTES_PER_COLONY = 4
 const POINTS_PER_ROUTE = 18
 const _soil = new Color('#6b5137')
+
+function dryRoutePoint(x: number, z: number, nx: number, nz: number): [number, number] {
+  if (isDryLand(x, z, 0.45)) return [x, z]
+  for (let r = 4; r <= 42; r += 4) {
+    const ax = x + nx * r
+    const az = z + nz * r
+    if (isDryLand(ax, az, 0.45)) return [ax, az]
+    const bx = x - nx * r
+    const bz = z - nz * r
+    if (isDryLand(bx, bz, 0.45)) return [bx, bz]
+  }
+  return [x, z]
+}
 
 function makeRoute(colonyIndex: number, tx: number, tz: number) {
   const c = sim.colonies[colonyIndex]
@@ -30,8 +43,9 @@ function makeRoute(colonyIndex: number, tx: number, tz: number) {
     const t = i / (POINTS_PER_ROUTE - 1)
     const ease = t * t * (3 - 2 * t)
     const wobble = Math.sin(t * Math.PI) * bend + Math.sin(t * Math.PI * 3 + colonyIndex) * 2.4
-    const x = c.x + dx * ease + nx * wobble
-    const z = c.z + dz * ease + nz * wobble
+    let x = c.x + dx * ease + nx * wobble
+    let z = c.z + dz * ease + nz * wobble
+    ;[x, z] = dryRoutePoint(x, z, nx, nz)
     pts.push(new Vector3(x, groundY(x, z) + 0.08, z))
   }
 
