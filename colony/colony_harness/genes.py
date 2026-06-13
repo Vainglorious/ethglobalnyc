@@ -125,17 +125,27 @@ def random_genome(rng: random.Random, llm_probability: float = 0.18) -> Genome:
         model: ModelSpecies = rng.choice(LLM_MODEL_SPECIES)
     else:
         model = "parametric"
+    risk_appetite, edge_threshold = _random_risk_settings(rng)
 
     return Genome(
         estimator=estimator,
         model=model,
-        risk_appetite=round(rng.uniform(0.02, 0.18), 4),
-        edge_threshold=round(rng.uniform(0.01, 0.18), 4),
+        risk_appetite=risk_appetite,
+        edge_threshold=edge_threshold,
         source_weights=_random_weights(rng).normalized(),
         herd_bias=round(rng.uniform(-1.0, 1.0), 4),
         query_budget=round(rng.uniform(0.1, 2.0), 4),
         persona=rng.choice(PERSONA_TRAITS),
     )
+
+
+def _random_risk_settings(rng: random.Random) -> tuple[float, float]:
+    bucket = rng.random()
+    if bucket < 0.34:
+        return round(rng.uniform(0.015, 0.055), 4), round(rng.uniform(0.08, 0.18), 4)
+    if bucket < 0.78:
+        return round(rng.uniform(0.055, 0.13), 4), round(rng.uniform(0.035, 0.1), 4)
+    return round(rng.uniform(0.13, 0.26), 4), round(rng.uniform(0.006, 0.045), 4)
 
 
 def mutate_genome(
@@ -171,7 +181,7 @@ def mutate_genome(
     return Genome(
         estimator=estimator,
         model=model,
-        risk_appetite=round(_mutate_bounded(parent.risk_appetite, rng, 0.02, 0.2, mutation_rate), 4),
+        risk_appetite=round(_mutate_bounded(parent.risk_appetite, rng, 0.015, 0.28, mutation_rate), 4),
         edge_threshold=round(_mutate_bounded(parent.edge_threshold, rng, 0.005, 0.2, mutation_rate), 4),
         source_weights=mutated_weights,
         herd_bias=round(_mutate_bounded(parent.herd_bias, rng, -1.0, 1.0, mutation_rate), 4),

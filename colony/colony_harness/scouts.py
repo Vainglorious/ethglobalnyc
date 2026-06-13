@@ -61,6 +61,12 @@ def mock_match_context_from_tournament_match(match_entity: dict) -> MatchContext
         stats_home_signal=stats,
         odds_home_signal=odds,
         news_home_signal=news,
+        match_date=str(attrs.get("date") or ""),
+        match_time=str(attrs.get("time") or ""),
+        group_name=str(attrs.get("group") or ""),
+        stage_name=str(attrs.get("round") or attrs.get("stage") or ""),
+        venue_name=str(attrs.get("ground") or attrs.get("venue") or ""),
+        score=str(attrs.get("score") or ""),
         findings=mock_findings_for_match(
             round_id=round_id,
             home_team=home_team,
@@ -199,7 +205,7 @@ def mock_findings_for_match(
             market=market,
             confidence=0.55,
             summary=(
-                "Synthetic team-news scout placeholder for future ScrapeCreators web/news. "
+                "Seeded team-news scout output for local harness tests. "
                 "X/social is intentionally excluded from this run."
             ),
             citations=[f"mock://news/{_slug(home_team)}", f"mock://news/{_slug(away_team)}"],
@@ -229,7 +235,7 @@ def mock_findings_for_match(
             home_probability=lineup,
             market=market,
             confidence=0.5,
-            summary="Shared mock lineup read. This is the paid/premium placeholder, not an X/social scrape.",
+            summary="Shared seeded lineup read for local harness tests, not an X/social scrape.",
             citations=["mock://lineup/projected-xi"],
             evidence_claims=[
                 _mock_claim(
@@ -258,7 +264,7 @@ def mock_findings_for_match(
             market=market,
             confidence=0.35,
             cost=0.02,
-            summary="Private mock weather read. This is a placeholder for a venue/date weather API later.",
+            summary="Private seeded weather read for local harness tests.",
             citations=["mock://weather/matchday-forecast"],
         ),
     ]

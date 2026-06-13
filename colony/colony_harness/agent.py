@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import random
+import re
 import secrets
 from dataclasses import dataclass, field
 
@@ -23,6 +24,30 @@ def _normalize_public_message(agent_name: str, message: str) -> str:
     prefix = f"{agent_name}:"
     if cleaned.startswith(prefix):
         cleaned = cleaned[len(prefix) :].strip()
+    return _sanitize_public_numbers(cleaned)
+
+
+def _sanitize_public_numbers(text: str) -> str:
+    def confidence_percent(match: re.Match[str]) -> str:
+        value = float(match.group(1))
+        if value >= 70:
+            return "high confidence"
+        if value >= 45:
+            return "medium confidence"
+        return "low confidence"
+
+    def confidence_decimal(match: re.Match[str]) -> str:
+        value = float(match.group(1))
+        if value >= 0.7:
+            return "high confidence"
+        if value >= 0.45:
+            return "medium confidence"
+        return "low confidence"
+
+    cleaned = re.sub(r"\b(\d+(?:\.\d+)?)%\s+confiden(?:ce|t)\b", confidence_percent, text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bconfidence\s+(?:is\s+)?(?:only\s+)?(\d?\.\d+)\b", confidence_decimal, cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(\d?\.\d+)\s+confiden(?:ce|t)\b", confidence_decimal, cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(\d+(?:\.\d+)?)%\b", "a numeric signal", cleaned)
     return cleaned
 
 
@@ -54,6 +79,9 @@ def _evidence_subject(evidence: dict) -> str:
 
 
 def _source_quality(evidence: dict) -> str:
+    explicit_quality = str(evidence.get("source_quality") or "").lower()
+    if explicit_quality in {"strong", "medium", "weak"}:
+        return explicit_quality
     source = str(evidence.get("source_title") or evidence.get("source_url") or evidence.get("scout_name") or "").lower()
     claim = str(evidence.get("claim") or "").lower()
     if any(marker in source for marker in ("prediction", "betting", "tips", "boostmatch", "wc26lineups", "lineup & players")):
@@ -119,7 +147,7 @@ def _build_dispute_metadata(
         "probability_gap": round(probability - target_claim.stated_home_probability, 4),
         "target_subject": _evidence_subject(target_evidence),
         "counter_subject": _evidence_subject(current_evidence),
-        "target_source_quality": _source_quality(target_evidence) if target_evidence else "unknown",
+        "target_source_quality": _source_quality(target_evidence) if target_evidence else "not_evidenced",
     }
 
 
@@ -127,6 +155,109 @@ def _top_weight_labels(genome: Genome, count: int = 2) -> str:
     weights = genome.source_weights.normalized().to_dict()
     top = sorted(weights.items(), key=lambda item: item[1], reverse=True)[:count]
     return ", ".join(f"{label}={value:.2f}" for label, value in top)
+
+
+def _draw_band(genome: Genome) -> float:
+    profile = _risk_profile(genome)
+    if profile == "secure":
+        return 0.011 + max(genome.edge_threshold, 0.0) * 0.035
+    if profile == "risky":
+        return 0.002 + max(genome.edge_threshold, 0.0) * 0.004
+    return 0.0055 + max(genome.edge_threshold, 0.0) * 0.014
+
+
+def _risk_profile(genome: Genome) -> str:
+    if genome.risk_appetite >= 0.135 or genome.edge_threshold <= 0.035:
+        return "risky"
+    if genome.risk_appetite <= 0.06 or genome.edge_threshold >= 0.105:
+        return "secure"
+    return "balanced"
+
+
+def _forced_three_way_side(probability: float, genome: Genome) -> Side:
+    if abs(probability - 0.5) <= _draw_band(genome):
+        return "draw"
+    return "home" if probability > 0.5 else "away"
+
+
+def _side_label(side: Side, match: MatchContext) -> str:
+    if side == "home":
+        return match.home_team
+    if side == "away":
+        return match.away_team
+    if side == "draw":
+        return "draw"
+    return "pass"
+
+
+def _qualitative_shift(value: float) -> str:
+    if value >= 0.015:
+        return "toward home"
+    if value <= -0.015:
+        return "toward away"
+    return "only slightly"
+
+
+def _stake_fraction(genome: Genome) -> float:
+    profile = _risk_profile(genome)
+    if profile == "secure":
+        return max(0.006, genome.risk_appetite * 0.55)
+    if profile == "risky":
+        return min(0.33, genome.risk_appetite * 1.35)
+    return genome.risk_appetite
+
+
+def _social_stance(side: Side) -> str:
+    if side == "home":
+        return "supportive_home"
+    if side == "away":
+        return "opposing_home"
+    if side == "draw":
+        return "neutral_draw"
+    return "observer"
+
+
+def _activity_level(genome: Genome) -> str:
+    score = genome.query_budget + genome.risk_appetite * 5.0 + max(0.0, -genome.edge_threshold) * 2.0
+    if score >= 2.35:
+        return "very_active"
+    if score >= 1.45:
+        return "active"
+    if score >= 0.75:
+        return "regular"
+    return "quiet"
+
+
+def _influence_weight(genome: Genome, access_tier: AccessTier) -> str:
+    access_bonus = {"public": 0.0, "shared": 0.25, "private": 0.45}.get(access_tier, 0.0)
+    score = genome.query_budget * 0.45 + genome.risk_appetite * 2.2 + access_bonus
+    if score >= 1.25:
+        return "high"
+    if score >= 0.65:
+        return "medium"
+    return "low"
+
+
+def _response_delay(genome: Genome) -> str:
+    if _risk_profile(genome) == "risky" or genome.query_budget >= 1.7:
+        return "fast"
+    if _risk_profile(genome) == "secure" and genome.query_budget <= 0.8:
+        return "slow"
+    return "normal"
+
+
+def _active_windows(genome: Genome) -> str:
+    weights = genome.source_weights.normalized()
+    windows = ["pre_match"]
+    if weights.news >= 0.28:
+        windows.append("lineup_window")
+    if weights.odds >= 0.28:
+        windows.append("market_move_window")
+    if weights.debate >= 0.28:
+        windows.append("late_room_replies")
+    if _risk_profile(genome) == "risky":
+        windows.append("last_call")
+    return ",".join(dict.fromkeys(windows))
 
 
 def _claim_type_from_genome(genome: Genome) -> str:
@@ -154,6 +285,10 @@ def _evidence_score(evidence: dict, *, direction: Side, source_weight: float, de
         score += 0.35
     if claim_type in {"recent_form", "player_form"}:
         score += 0.24
+    if claim_type == "match_history":
+        score += 0.2
+    if claim_type == "tactical":
+        score += 0.18
     if player:
         score += 0.16
     if claim_type in {"lineup", "market_preview"} and not player:
@@ -173,6 +308,10 @@ def _evidence_score(evidence: dict, *, direction: Side, source_weight: float, de
     elif debate_focus == "market_pricing" and claim_type == "market_preview":
         score += 0.9
     elif debate_focus == "team_form" and claim_type == "recent_form":
+        score += 0.95
+    elif debate_focus == "match_history" and claim_type == "match_history":
+        score += 0.95
+    elif debate_focus == "tactical_matchup" and claim_type == "tactical":
         score += 0.95
     elif debate_focus == "player_form" and claim_type == "player_form":
         score += 0.95
@@ -224,6 +363,10 @@ def _matches_debate_focus(evidence: dict, debate_focus: str) -> bool:
         return claim_type == "market_preview"
     if debate_focus == "team_form":
         return claim_type == "recent_form"
+    if debate_focus == "match_history":
+        return claim_type == "match_history"
+    if debate_focus == "tactical_matchup":
+        return claim_type == "tactical"
     if debate_focus == "player_form":
         return claim_type == "player_form"
     if debate_focus == "source_audit":
@@ -444,8 +587,8 @@ class AntAgent:
             )
             message = _normalize_public_message(self.name, message)
         except Exception as exc:
-            fallback = TemplateVoiceModel()
-            message = fallback.render_claim(
+            recovery_voice = TemplateVoiceModel()
+            message = recovery_voice.render_claim(
                 agent_name=self.name,
                 genome=self.genome,
                 match=match,
@@ -457,7 +600,7 @@ class AntAgent:
                 debate_phase=debate_phase,
                 dispute=dispute,
             )
-            message = f"{message} [voice fallback: {_short_voice_error(exc)}]"
+            message = f"{message} [voice recovery: {_short_voice_error(exc)}]"
 
         tags = []
         weights = self.genome.source_weights.normalized()
@@ -501,34 +644,34 @@ class AntAgent:
         away_edge = (1.0 - probability) - (1.0 - match.market_home_probability)
         debate_shift = probability - baseline_probability
 
-        if home_edge >= self.genome.edge_threshold:
-            side: Side = "home"
+        side = _forced_three_way_side(probability, self.genome)
+        if side == "home":
             edge = home_edge
-            decision_reason = (
-                f"home edge {home_edge:+.1%} clears threshold {self.genome.edge_threshold:.1%}; "
-                f"debate shift {debate_shift:+.1%}; top weights {_top_weight_labels(self.genome)}"
-            )
-        elif away_edge >= self.genome.edge_threshold:
-            side = "away"
+        elif side == "away":
             edge = away_edge
-            decision_reason = (
-                f"away edge {away_edge:+.1%} clears threshold {self.genome.edge_threshold:.1%}; "
-                f"debate shift {debate_shift:+.1%}; top weights {_top_weight_labels(self.genome)}"
-            )
         else:
-            side = "pass"
-            edge = 0.0
-            decision_reason = (
-                f"largest edge {max(home_edge, away_edge):+.1%} is below threshold "
-                f"{self.genome.edge_threshold:.1%}; debate shift {debate_shift:+.1%}; "
-                f"top weights {_top_weight_labels(self.genome)}"
-            )
+            edge = max(0.0025, _draw_band(self.genome) - abs(probability - 0.5))
+        risk_profile = _risk_profile(self.genome)
+        decision_reason = (
+            f"{risk_profile} group-stage pick: {_side_label(side, match)}; "
+            f"debate moved the read {_qualitative_shift(debate_shift)}; "
+            f"top inputs {_top_weight_labels(self.genome)}"
+        )
 
-        stake = 0.0 if side == "pass" else round(self.bankroll * self.genome.risk_appetite, 4)
+        stake = round(max(0.0001, self.bankroll * _stake_fraction(self.genome)), 4)
         return Forecast(
             agent_id=self.agent_id,
+            wallet_address=self.wallet_address,
+            ens_name=self.ens_name,
             access_tier=access_tier,
             visible_findings=visible_findings,
+            persona=self.genome.persona,
+            risk_profile=risk_profile,
+            social_stance=_social_stance(side),
+            activity_level=_activity_level(self.genome),
+            influence_weight=_influence_weight(self.genome, access_tier),
+            response_delay=_response_delay(self.genome),
+            active_windows=_active_windows(self.genome),
             home_probability=round(probability, 4),
             market_edge=round(home_edge, 4),
             edge_threshold=self.genome.edge_threshold,
@@ -545,6 +688,8 @@ class AntAgent:
         reveal = {
             "agent_id": self.agent_id,
             "genome_id": self.genome_id,
+            "wallet_address": self.wallet_address,
+            "ens_name": self.ens_name,
             "round_id": round_id,
             "side": forecast.side,
             "stake": forecast.stake,

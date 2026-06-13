@@ -16,7 +16,6 @@ def print_debate_quality(result: RoundResult) -> None:
     print(
         "Debate quality: "
         f"disputes={summary.get('dispute_count', 0)} "
-        f"rate={float(summary.get('dispute_rate', 0.0)):.0%} "
         f"subjects={summary.get('subject_count', 0)} "
         f"critique_types={summary.get('critique_type_count', 0)} "
         f"subject_shifts={summary.get('subject_shift_count', 0)} "
@@ -30,16 +29,11 @@ def print_room_debug(result: RoundResult, *, max_claim_chars: int = 220) -> None
 
     print("\nRoom debate debug:")
     for room in result.rooms:
-        probability = (
-            "n/a"
-            if room.synthesis_home_probability is None
-            else f"{room.synthesis_home_probability:.1%}"
-        )
         print(
             f"- {room.room_id} topic={room.evidence_focus} "
             f"participants={len(room.participant_ids)} "
             f"representatives={len(room.representative_ids)} "
-            f"home={probability}"
+            f"lean={_lean_label(room.synthesis_home_probability)}"
         )
         for claim in room.claims:
             message = _shorten(claim.message, max_claim_chars)
@@ -50,7 +44,7 @@ def print_room_debug(result: RoundResult, *, max_claim_chars: int = 220) -> None
                 dispute = f" -> {critique} on {target}"
             print(
                 f"  - {claim.speaker_name} [{claim.debate_role}/{claim.access_tier}] "
-                f"{claim.stated_home_probability:.1%}: {message}{dispute}"
+                f"{_lean_label(claim.stated_home_probability)}: {message}{dispute}"
             )
 
 
@@ -70,3 +64,13 @@ def _shorten(text: str, limit: int) -> str:
     if " " in clipped:
         clipped = clipped.rsplit(" ", 1)[0].rstrip(" .")
     return f"{clipped}..."
+
+
+def _lean_label(value: float | None) -> str:
+    if value is None:
+        return "unclear"
+    if value >= 0.515:
+        return "leans_home"
+    if value <= 0.485:
+        return "leans_away"
+    return "contested"

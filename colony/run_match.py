@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
         "--data-mode",
         choices=["synthetic", "public"],
         default="synthetic",
-        help="Use deterministic placeholders or fetch public non-social data.",
+        help="Use deterministic synthetic fixtures or fetch public non-social data.",
     )
     parser.add_argument(
         "--refresh-data",
@@ -54,6 +54,28 @@ def parse_args() -> argparse.Namespace:
         "--include-x",
         action="store_true",
         help="Add the optional X availability scout to public data mode.",
+    )
+    parser.add_argument(
+        "--include-telegram",
+        action="store_true",
+        help="Add the optional Telegram social/news scout to public data mode.",
+    )
+    parser.add_argument(
+        "--include-polygun",
+        action="store_true",
+        help="Add the optional read-only PolyGun match-market snapshot scout to public data mode.",
+    )
+    parser.add_argument(
+        "--scout-focus",
+        action="append",
+        default=[],
+        metavar="TEAM:CLAIM_TYPE",
+        help="Add a focused public re-scout target such as 'Morocco:match_history'. Can be repeated.",
+    )
+    parser.add_argument(
+        "--rescout-from-audit",
+        default=None,
+        help="Read scouting_audit.json and add focused public re-scout targets from its scouting_backlog.",
     )
     parser.add_argument("--agents", type=int, default=None, help="Population size.")
     parser.add_argument(
@@ -172,14 +194,19 @@ def main() -> None:
     graph = _load_graph(Path(args.kg))
     match_entity = _select_match(graph, match_id=args.match_id, match_name=args.match)
     if args.data_mode == "public":
+        rescout_targets = _rescout_targets_from_args(args)
         match = public_match_context_from_tournament_match(
             match_entity,
             cache_dir=args.live_cache_dir,
             refresh=args.refresh_data,
             include_x=args.include_x,
             include_camel=args.include_camel,
+            include_telegram=args.include_telegram,
+            include_polygun=args.include_polygun,
+            rescout_targets=rescout_targets,
         )
     else:
+        rescout_targets = []
         match = mock_match_context_from_tournament_match(match_entity)
 
     voice_model = llm_voice_model_from_env() if args.voice_mode == "llm" else TemplateVoiceModel()
@@ -214,7 +241,18 @@ def main() -> None:
     print(f"Match: {match.home_team} vs {match.away_team}")
     print(f"Schedule: {attrs.get('date')} {attrs.get('time')} | {attrs.get('group')} | {attrs.get('ground')}")
     print(f"Data mode: {args.data_mode}")
-    print(f"Optional scouts: x={'enabled' if args.include_x else 'disabled'} camel={'enabled' if args.include_camel else 'disabled'}")
+    print(
+        "Optional scouts: "
+        f"x={'enabled' if args.include_x else 'disabled'} "
+        f"camel={'enabled' if args.include_camel else 'disabled'} "
+        f"telegram={'enabled' if args.include_telegram else 'disabled'} "
+        f"polygun={'enabled' if args.include_polygun else 'disabled'}"
+    )
+    if rescout_targets:
+        print(
+            "Focused re-scout targets: "
+            + ", ".join(f"{target.get('team')}:{target.get('claim_type')}" for target in rescout_targets)
+        )
     print(f"Population: {result.summary['population']} predictors")
     if args.population_state:
         status = "loaded" if loaded_agents is not None else "created"
@@ -242,14 +280,24 @@ def main() -> None:
         f"shared={result.summary['shared_views']} "
         f"private={result.summary['private_views']}"
     )
-    print(f"Market home probability: {result.summary['market_home_probability']:.1%}")
-    print(f"Debate home probability: {result.summary['debate_home_probability']:.1%}")
+    print(f"Risk profiles: {_risk_profile_summary(result.summary.get('risk_profiles', {}))}")
+    print(f"Market anchor: {_lean_label(result.summary['market_home_probability'])}")
+    print(f"Debate lean: {_lean_label(result.summary['debate_home_probability'])}")
     print(
         "Bets: "
         f"home={result.summary['home_bets']} "
+        f"draw={result.summary.get('draw_bets', 0)} "
         f"away={result.summary['away_bets']} "
-        f"pass={result.summary['passes']} "
+        f"participation={result.summary.get('participating_bets', 0)}/{result.summary['population']} "
+        f"technical_pass={result.summary['passes']} "
         f"total_staked={result.summary['total_staked']}"
+    )
+    decision = result.collective_decision
+    print(
+        "Decision: "
+        f"{decision.prediction['sentence']} "
+        f"bet={decision.recommendation['side']} "
+        f"value={decision.prediction['value']}"
     )
     if args.debug:
         print_room_debug(result)
@@ -282,6 +330,51 @@ def _resolve_room_budget(*, rooms: int | None, speakers: int | None, default: in
     if value < 1:
         raise SystemExit("--rooms must be positive")
     return value
+
+
+def _rescout_targets_from_args(args: argparse.Namespace) -> list[dict]:
+    targets: list[dict] = []
+    if args.rescout_from_audit:
+        audit_path = Path(args.rescout_from_audit)
+        if not audit_path.exists():
+            raise SystemExit(f"Scouting audit not found: {audit_path}")
+        audit = json.loads(audit_path.read_text(encoding="utf-8"))
+        for item in audit.get("scouting_backlog", {}).get("items", []):
+            if item.get("status") != "needs_rescout":
+                continue
+            team = str(item.get("team") or "").strip()
+            claim_type = str(item.get("claim_type") or "").strip()
+            if team and claim_type:
+                targets.append(
+                    {
+                        "team": team,
+                        "claim_type": claim_type,
+                        "source": str(audit_path),
+                        "target_entity_id": str(item.get("target_entity_id") or ""),
+                    }
+                )
+    for spec in args.scout_focus or []:
+        if ":" in spec:
+            team, claim_type = spec.split(":", 1)
+        elif "=" in spec:
+            team, claim_type = spec.split("=", 1)
+        else:
+            raise SystemExit("--scout-focus must be shaped as TEAM:CLAIM_TYPE")
+        team = team.strip()
+        claim_type = claim_type.strip()
+        if not team or not claim_type:
+            raise SystemExit("--scout-focus must include both team and claim type")
+        targets.append({"team": team, "claim_type": claim_type, "source": "cli"})
+
+    deduped: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for target in targets:
+        key = (str(target.get("team") or "").casefold(), str(target.get("claim_type") or "").casefold())
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(target)
+    return deduped
 
 
 def _save_population_if_requested(path: str | None, harness: ColonyHarness, *, note: str) -> Path | None:
@@ -341,6 +434,22 @@ def _apply_world_agents(args: argparse.Namespace, harness: ColonyHarness) -> Non
 
 def _resolve_world_verifications(args: argparse.Namespace) -> str:
     return args.world_verifications or os.environ.get("COLONY_WORLD_VERIFICATIONS") or str(DEFAULT_WORLD_VERIFICATION_STORE)
+
+
+def _lean_label(value: float | None) -> str:
+    if value is None:
+        return "unclear"
+    if value >= 0.515:
+        return "leans_home"
+    if value <= 0.485:
+        return "leans_away"
+    return "contested"
+
+
+def _risk_profile_summary(profiles: dict) -> str:
+    if not profiles:
+        return "n/a"
+    return " ".join(f"{key}={profiles.get(key, 0)}" for key in ("secure", "balanced", "risky"))
 
 
 def _load_graph(path: Path) -> dict:

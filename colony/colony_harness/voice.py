@@ -447,27 +447,27 @@ def _template_evidence_sentence(evidence_claims: list[dict], *, direction: Side,
             lead = _choose(
                 seed + ":recent-form",
                 [
-                    f"{detail}; I treat that as an anchor, not a final answer.",
-                    f"That form note matters, but only after we size the move properly: {detail}.",
-                    f"Useful starting point: {detail}.",
+                    f"Okay, this is the form point I care about: {detail}.",
+                    f"Form is doing work here: {detail}. Still not enough to go blind.",
+                    f"This is the useful bit on form: {detail}.",
                 ],
             )
         elif claim_type == "player form":
             lead = _choose(
                 seed + ":player-form",
                 [
-                    f"{subject} belongs in the conversation, but not alone.",
-                    f"{subject} is useful player context, not the bet by itself.",
-                    f"{subject} matters, with availability still doing the heavier lifting.",
+                    f"{subject} matters, but I am not letting one player note run the whole pick.",
+                    f"I keep {subject} in the mix. Not the whole bet, but real.",
+                    f"{subject} is a real input. I still want the team context next to it.",
                 ],
             )
         elif claim_type == "market preview":
             lead = _choose(
                 seed + ":market-preview",
                 [
-                    f"That preview is market context more than a fresh edge; {detail}.",
-                    f"That reads like background, not a reason to chase; {detail}.",
-                    f"Useful preview, but mostly what the market already sees; {detail}.",
+                    f"Market note is useful, but do not chase it: {detail}.",
+                    f"I see the market point. It is context, not a free lunch: {detail}.",
+                    f"Fine, but that may already be in the price: {detail}.",
                 ],
             )
         else:
@@ -475,8 +475,8 @@ def _template_evidence_sentence(evidence_claims: list[dict], *, direction: Side,
                 seed + ":generic-evidence",
                 [
                     f"The useful detail is {subject}: {detail}.",
-                    f"I keep coming back to {subject}: {detail}.",
-                    f"The concrete thing on the board is {subject}: {detail}.",
+                    f"I keep circling {subject}: {detail}.",
+                    f"Put {subject} on the board: {detail}.",
                 ],
             )
     else:
@@ -500,8 +500,8 @@ def _template_evidence_sentence(evidence_claims: list[dict], *, direction: Side,
                 seed + ":counter-away",
                 [
                 f"{counter_subject} pulls the other way, just not enough for me.",
-                f"{counter_subject} is real; I still make it the smaller problem.",
-                f"{counter_subject} is the offset, not the anchor.",
+                f"{counter_subject} is real. I just make it the smaller problem.",
+                f"{counter_subject} offsets it, but does not take over.",
             ],
         )
         return f"{lead} {counter_line}"
@@ -509,8 +509,8 @@ def _template_evidence_sentence(evidence_claims: list[dict], *, direction: Side,
         counter_line = _choose(
                 seed + ":counter-home",
                 [
-                f"{counter_subject} is real, but the away-side risk still looks larger.",
-                f"{counter_subject} trims the move; it does not kill it.",
+                f"{counter_subject} is real. I still see more risk on the other side.",
+                f"{counter_subject} trims the move. It does not kill it.",
                 f"{counter_subject} keeps me cautious rather than bearish.",
             ],
         )
@@ -519,9 +519,9 @@ def _template_evidence_sentence(evidence_claims: list[dict], *, direction: Side,
         counter_line = _choose(
             seed + ":negative-context",
             [
-                "That is more useful than another generic preview.",
-                "That beats another broad pre-match line.",
-                "At least that gives us a concrete variable to argue about.",
+                "That is better than a generic preview.",
+                "That beats another broad pre-match take.",
+                "At least we have a real thing to argue about.",
             ],
         )
         return f"{lead} {counter_line}"
@@ -624,11 +624,11 @@ def _template_challenge_sentence(
         return structured
     if not prior_claims:
         return _choose(
-            seed + ":challenge-open",
-            [
-                "Show me the causal link before we move the price.",
-                "That needs one stronger football fact before I chase it.",
-                "Source first, then the move.",
+                seed + ":challenge-open",
+                [
+                "Show me the football reason before we move.",
+                "I need one stronger fact before I follow that.",
+                "Source first, pick second.",
             ],
         )
 
@@ -662,37 +662,37 @@ def _template_challenge_sentence(
         )
     if current_subject and previous_subject and current_subject != previous_subject:
         return _choose(
-            seed + ":challenge-counter-topic",
-            [
-                f"The missing counterweight is {current_subject}; {previous_subject} is not the whole match.",
-                f"I buy part of {previous_subject}, but we still have to price {current_subject}.",
-                f"{previous_subject} matters, just not before we net it against {current_subject}.",
+                seed + ":challenge-counter-topic",
+                [
+                f"You are missing {current_subject}; {previous_subject} is not the whole match.",
+                f"I buy part of {previous_subject}, but {current_subject} still has to count.",
+                f"{previous_subject} matters. So does {current_subject}.",
             ],
         )
     if abs(gap) < 0.006:
         return _choose(
-            seed + ":challenge-size-close",
-            [
-                f"Directionally fine, but {previous_subject} should not carry the whole move.",
-                "Close to that, but the impact size still feels overstated.",
-                f"Keep {previous_subject} on the board; just do not make it the whole trade.",
+                seed + ":challenge-size-close",
+                [
+                f"Direction is fine, but {previous_subject} cannot carry the whole pick.",
+                "Close, but the impact still feels too big.",
+                f"Keep {previous_subject} on the board. Do not make it everything.",
             ],
         )
     if gap > 0:
         return _choose(
-            seed + ":challenge-too-bearish",
-            [
-                f"That cut is too large; {previous_subject} does not erase the other side.",
-                "The topic is fine; the size of the cut is not.",
-                "Right topic, wrong damage estimate.",
+                seed + ":challenge-too-bearish",
+                [
+                f"Too much of a cut. {previous_subject} does not erase the other side.",
+                "Right topic, too much damage.",
+                "I like the angle. I do not like the size.",
             ],
         )
     return _choose(
-            seed + ":challenge-not-bearish-enough",
-            [
-                f"I cut harder than that; {previous_subject} still feels underpriced.",
-                "That names the risk, but it does not move enough for it.",
-                f"The room is still light on {previous_subject}.",
+                seed + ":challenge-not-bearish-enough",
+                [
+                f"I cut harder than that. {previous_subject} still feels underpriced.",
+                "That names the risk, but barely moves for it.",
+                f"The room is still too light on {previous_subject}.",
             ],
         )
 

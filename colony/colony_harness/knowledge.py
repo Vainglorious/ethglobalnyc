@@ -44,22 +44,22 @@ def build_knowledge_views(
             market_home_probability=_source_probability(
                 findings,
                 source_types={"market"},
-                fallback=match.market_home_probability,
+                baseline=match.market_home_probability,
             ),
             stats_home_signal=_source_probability(
                 findings,
                 source_types={"stats", "lineup"},
-                fallback=match.stats_home_signal,
+                baseline=match.stats_home_signal,
             ),
             odds_home_signal=_source_probability(
                 findings,
                 source_types={"odds"},
-                fallback=match.odds_home_signal,
+                baseline=match.odds_home_signal,
             ),
             news_home_signal=_source_probability(
                 findings,
                 source_types={"news", "social", "weather", "retrieval"},
-                fallback=match.news_home_signal,
+                baseline=match.news_home_signal,
             ),
         )
     return views
@@ -73,7 +73,7 @@ def _allowed_levels(access_tier: AccessTier) -> set[str]:
     return {"public"}
 
 
-def _source_probability(findings: list[Finding], *, source_types: set[str], fallback: float) -> float:
+def _source_probability(findings: list[Finding], *, source_types: set[str], baseline: float) -> float:
     weighted_total = 0.0
     weight = 0.0
     for finding in findings:
@@ -83,5 +83,5 @@ def _source_probability(findings: list[Finding], *, source_types: set[str], fall
         weighted_total += finding.home_probability * confidence
         weight += confidence
     if weight <= 0:
-        return fallback
+        return baseline
     return round(weighted_total / weight, 4)

@@ -56,7 +56,7 @@ Known rough edges:
 - Claim extraction is still heuristic. It can misclassify a positive player note as `injury_availability`, or attach a sentence to the wrong team when both teams are mentioned.
 - Source quality is not ranked strongly enough yet. Search snippets and generic squad pages can leak into the debate beside stronger sources such as BBC, ESPN, RotoWire, or official pages.
 - Debate wording now uses short source summaries such as "BBC has Neymar missing", structured dispute targets, challenger objections, and room-level synthesis. The replies are cleaner and less repetitive than the first version, but still template-driven rather than a full natural conversation.
-- The public odds scout is still a placeholder unless a real odds provider is connected.
+- A real odds provider is not connected yet, so no odds-source finding is added to the KG.
 - Settlement, bankroll updates, death, x402 data purchases, and live Worldcoin privilege routing are not implemented yet.
 
 ## Why This Shape
@@ -374,9 +374,9 @@ Once the World Cup KG exists, run one match from the graph:
 python3 colony/run_match.py --match "Brazil vs Morocco" --agents 40 --rooms 6 --seed 12 --debug
 ```
 
-This path uses tournament metadata from the KG and deterministic scout placeholders for market, team-form, odds, news, lineup, and weather. X/social scouts are intentionally disabled here so we can test the core predictor/debater loop before adding noisy or paid social data.
+This path uses tournament metadata from the KG and deterministic seeded scout outputs for market, team-form, odds, news, lineup, and weather. X/social scouts are intentionally disabled here so we can test the core predictor/debater loop before adding noisy or paid social data.
 
-To fetch lightweight public data instead of using synthetic scout placeholders:
+To fetch lightweight public data instead of using seeded scout outputs:
 
 ```bash
 python3 colony/run_match.py \
@@ -392,13 +392,52 @@ python3 colony/run_match.py \
 The public-data path currently fetches:
 
 - Wikipedia page summaries for both national teams.
+- Structured team-history claims from reference profiles, including FIFA/confederation membership years when available.
 - Google News RSS results for the match query.
-- Team-targeted recent-match and form searches for each national team, with DDGS fallback and compact result claims.
-- Key-player season-form searches for both teams, including player-specific DDGS queries for tracked players.
+- Team-targeted recent-match and form searches for each national team, using strict DDGS/RSS collectors and compact result claims.
+- Head-to-head, previous-meeting, and recent match-history searches.
+- Result archive sources from strict recent-form searches are also promoted into `match_history` claims when they cite real scores, fixtures, or results pages.
+- Key-player season-form searches for both teams, including player-specific DDGS queries for tracked players, club form, goals, assists, minutes, appearances, and rating sources.
+- Tactical matchup searches: formations, pressing, transitions, set pieces, and key matchups.
+- Clean squad-depth results with lineup, predicted-XI, tactics, formation, or key-player signals are also promoted into `tactical` claims.
+- Official-ish squad and roster sources: FIFA, federation, call-up, player, and availability pages.
 - Squad-depth, predicted-XI, and role-depth searches for both teams.
 - Google News RSS squad, player, and injury availability headlines.
 
-It does not use X/social unless you explicitly enable the X scout. It also does not claim to have bookmaker odds yet: the odds finding is logged as a low-confidence `odds_unavailable_scout` until a real odds provider is connected.
+It does not use X/social unless you explicitly enable the X scout. It also does not claim to have bookmaker odds yet: no odds-source finding is added to the KG until a real odds provider is connected.
+
+If `scouting_audit.json` reports per-team gaps, run a focused re-scout from its
+backlog instead of broadening every source again:
+
+```bash
+python3 colony/run_match.py \
+  --match "Brazil vs Morocco" \
+  --data-mode public \
+  --refresh-data \
+  --rescout-from-audit colony/runs/<run-id>/scouting_audit.json \
+  --agents 20 \
+  --rooms 5 \
+  --seed 12 \
+  --debug
+```
+
+You can also target one topic manually:
+
+```bash
+python3 colony/run_match.py \
+  --match "Brazil vs Morocco" \
+  --data-mode public \
+  --refresh-data \
+  --scout-focus "Morocco:match_history" \
+  --agents 20 \
+  --rooms 5 \
+  --seed 12 \
+  --debug
+```
+
+Focused re-scouting writes a `focused_<claim_type>_rescout` finding only when it
+finds admissible sourced claims for the requested team/topic. Empty focus
+results leave the KG topic missing and keep the backlog item visible.
 
 Add the optional deeper research scout:
 
@@ -413,7 +452,7 @@ python3 colony/run_match.py \
   --debug
 ```
 
-`--include-camel` writes a `camel_research_scout` finding. By default it uses focused web/news research queries. If `camel-ai` is installed and `COLONY_CAMEL_USE_NATIVE=1`, it attempts native CAMEL `ChatAgent` + `SearchToolkit().search_duckduckgo` using the `COLONY_CAMEL_*` model settings from `colony/.env`; if native CAMEL fails or returns no usable items, it falls back to the focused web/news path.
+`--include-camel` writes a `camel_research_scout` finding only when the focused research path returns usable structured items. By default it uses focused web/news research queries. If `camel-ai` is installed and `COLONY_CAMEL_USE_NATIVE=1`, it first attempts native CAMEL `ChatAgent` + `SearchToolkit().search_duckduckgo` using the `COLONY_CAMEL_*` model settings from `colony/.env`; when native CAMEL returns no usable items, only real items from the direct focused web/news collector are eligible for the KG.
 
 To keep the same population across several matches, add `--population-state`:
 
@@ -444,6 +483,50 @@ python3 colony/run_match.py \
 
 The X scout is isolated as `x_availability_scout` and is `shared` access by default. To wire ScrapeCreators or another X provider, set `SCRAPECREATORS_API_KEY` and `SCRAPECREATORS_X_SEARCH_URL` in `colony/.env`. The URL may either contain `{query}` for a templated GET request, or accept POST JSON shaped as `{"query": "..."}`.
 
+Add the optional Telegram scout:
+
+```bash
+python3 colony/run_match.py \
+  --match "Brazil vs Morocco" \
+  --data-mode public \
+  --include-telegram \
+  --agents 20 \
+  --rooms 5 \
+  --debug
+```
+
+The Telegram scout is isolated as `telegram_social_scout` and is `shared` access
+by default. The simplest setup is to point `COLONY_TELEGRAM_SCOUT_JSON` at a local
+message export shaped as `{"messages": [...]}`. Live mode is available but off by
+default: set `COLONY_TELEGRAM_ENABLE_LIVE=1`, `COLONY_TELEGRAM_CHATS`, and the
+Telethon credentials/session values in `colony/.env`.
+
+Add the optional PolyGun snapshot scout:
+
+```bash
+polygun/.venv/bin/python polygun/pg.py snapshot --out polygun/snapshots/latest.json
+
+python3 colony/run_match.py \
+  --match "Brazil vs Morocco" \
+  --data-mode public \
+  --include-polygun \
+  --agents 20 \
+  --rooms 5 \
+  --debug
+```
+
+The PolyGun scout is read-only. It consumes a JSON snapshot of recent bot messages
+and inline buttons, then writes a private `polygun_snapshot_scout` finding only
+when the snapshot contains match-specific market panel text for the teams being
+scouted. Balance/account state is ignored, and the scout never sends a message,
+clicks a button, or places a trade.
+
+The public scouting path also includes a structured `squad_roster_scout`. It
+reads the current-squad templates from each team's Wikipedia page and emits
+`squad_roster` claims with player, position, club, international caps, and
+international goals. This is intentionally separate from `lineup`: a current
+squad is useful KG context, but it is not treated as a predicted or confirmed XI.
+
 ## Run Artifacts
 
 Default logs are intentionally compact. They are designed for debugging and analysis without saving raw LLM prompts, raw provider responses, or secret-bearing payloads.
@@ -456,6 +539,7 @@ Each automatic run directory contains:
 - `conversation_memory.json` - queryable debate memory: room timeline, claims, dispute edges, debater activity, and final diagnostics.
 - `forecasts.csv` - final forecast and bet/pass decision for every predictor.
 - `findings.json` - normalized findings used by the run.
+- `scouting_audit.json` - scout coverage, per-team coverage gaps, targeted re-scouting backlog, claim types, source domains, source quality, source kind, source recency, and provenance summary.
 - `knowledge_views.json` - filtered predictor views derived from the full graph.
 - `world_graph.json` - lightweight round subgraph for the selected match, findings, genomes, predictions, and claims.
 - `events.compact.jsonl` - compact event stream with summary, findings, claims, and forecasts.
@@ -560,7 +644,7 @@ If you are using a Token Plan quota, put the Subscription Key in `COLONY_LLM_API
 - `run_match.py` - one-match runner from the World Cup KG, with X/social scouts disabled.
 - `build_kg.py` - World Cup tournament KG builder.
 - `colony_harness/genes.py` - genome definitions and random generation.
-- `colony_harness/scouts.py` - mock scout findings until real datasources are connected.
+- `colony_harness/scouts.py` - deterministic seeded scout findings for local harness tests.
 - `colony_harness/knowledge.py` - access policy and per-predictor filtered knowledge views.
 - `colony_harness/tournament_graph.py` - OpenFootball schedule loader and tournament graph builder.
 - `colony_harness/agent.py` - predictor behavior, forecasting, debating, listening.
@@ -585,7 +669,7 @@ CAMEL is not necessary for this first harness because we do not need full multi-
 
 ### Findings
 
-The harness now represents match inputs as `Finding` objects. A finding is a compact piece of structured evidence produced by a scout or deterministic adapter. The current version converts the synthetic config values into mock scout findings:
+The harness now represents match inputs as `Finding` objects. A finding is a compact piece of structured evidence produced by a scout or deterministic adapter. The current version converts the synthetic config values into seeded scout findings:
 
 - market baseline;
 - stats finding;
@@ -644,11 +728,31 @@ World Cup KG
 Each current run writes a lightweight `world_graph.json`. Today this file is a round subgraph for the selected match. It is the first local version of what will later be extracted from the larger World Cup KG:
 
 - `team` entities;
-- `match` entity;
+- `match` entity with date, time, venue, group, stage, score, and market probability attributes when supplied by the tournament KG;
+- `venue`, `group`, and `stage` entities from the selected tournament match metadata;
+- `match_result` entities when a match-history claim contains an explicit score for both teams;
+- `availability_event` entities when an availability claim has a structured status;
 - `finding` entities;
 - `evidence_claim` entities for structured facts extracted from findings;
 - `source` entities for cited articles, feeds, or scraped pages;
+- `source_domain` entities for domains such as `bbc.com`, `espn.com`, or `wikipedia.org`;
+- `source_kind` entities such as `news`, `stats`, `reference`, `search`, `social`, or `official`;
+- `source_quality` entities with a simple `trust_score` for `strong`, `medium`, or `weak` sources;
+- `source_recency` entities such as `last_7_days`, `last_30_days`, or `older` when a source publication date can be parsed;
+- `availability_status` entities such as `out`, `doubtful`, or `injured`;
+- `body_part` entities such as `calf` or `hamstring` when the injury text is explicit;
+- `scouting_topic` entities for each required or observed scouting topic, with `coverage_status`, `claim_count`, `unique_source_count`, and `metric_claim_count`;
+- `team_scouting_topic` entities for each team/topic pair, so the KG can show that one team has sourced player form while the other is still missing it, including source strength and freshness counters;
+- `scouting_gap` entities for missing required team/topic coverage or freshness-sensitive coverage that needs a recent source, with priority, recommended scout, query focus, and admission criteria;
+- `scout` entities for the producer of each finding;
+- `claim_type` entities for topics such as `player_form`, `squad_roster`, `injury_availability`, `team_profile`, `team_history`, or `match_history`;
+- `claim_impact` entities such as `negative_home`, `negative_away`, `context_home`, and `context_away`, with side/effect attributes;
+- `metric` entities for parsed values such as goals, assists, appearances, availability status, roster position, club, international caps/goals, historical score, affiliation years, or pass completion;
+- `player_stat_line` entities when a player claim has concrete performance stats such as goals, assists, appearances, xG, or clean sheets; minutes alone are not enough;
 - `player` entities when a claim mentions a specific player;
+- `club` entities from structured roster claims;
+- `position` entities from structured roster claims;
+- `formation` entities from explicit tactical shapes such as `4-1-4-1`;
 - `predictor` entities;
 - `prediction` entities;
 - `debate_claim` entities.
@@ -656,13 +760,46 @@ Each current run writes a lightweight `world_graph.json`. Today this file is a r
 Relations include:
 
 - team `plays_home_in` / `plays_away_in` match;
+- match `played_at` venue;
+- match `part_of_group` group;
+- match `part_of_stage` stage;
 - finding `concerns` match;
+- scout `produced` finding;
 - finding `has_evidence_claim`;
 - evidence claim `concerns` match;
+- evidence claim `has_claim_type`;
+- evidence claim `supports_scouting_topic`;
+- evidence claim `supports_team_scouting_topic` when the claim is explicitly tied to one of the match teams;
+- evidence claim `has_claim_impact`;
 - evidence claim `about_team`;
 - evidence claim `about_player`;
 - evidence claim `evidenced_by` source;
+- source `from_domain` source domain;
+- source `has_source_kind`;
+- source `has_source_quality`;
+- source `has_source_recency`;
+- match `has_scouting_topic`;
+- match/team `has_team_scouting_topic`;
+- match/team `has_scouting_gap`;
+- scouting topic `tracks_claim_type`;
+- team scouting topic `tracks_claim_type`;
+- scouting gap `targets_team_scouting_topic`;
+- scouting gap `tracks_claim_type`;
+- evidence claim `has_metric` parsed metric;
+- evidence claim `mentions_player_stat_line`;
+- evidence claim `mentions_availability_event`;
+- availability event `availability_context_for` match;
+- availability event `has_availability_status`;
+- availability event `has_body_part`;
+- evidence claim `mentions_result` match result;
+- evidence claim `mentions_formation` formation;
+- formation `formation_context_for` match;
+- formation `used_by_team` team;
+- match result `historical_context_for` match;
+- match result `team_a` / `team_b` teams;
 - player `member_of` team;
+- player `affiliated_with` club;
+- player `plays_position` position;
 - predictor `made_prediction`;
 - predictor `published_claim`;
 - claim `concerns` match.

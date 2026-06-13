@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Literal
 
-Side = Literal["home", "away", "pass"]
+Side = Literal["home", "draw", "away", "pass"]
 AccessLevel = Literal["public", "shared", "private"]
 AccessTier = Literal["public", "shared", "private"]
 SourceType = Literal["market", "stats", "odds", "news", "lineup", "social", "weather", "retrieval", "other"]
@@ -16,10 +16,29 @@ EntityType = Literal[
     "venue",
     "team",
     "match",
+    "match_result",
+    "availability_event",
+    "scouting_topic",
+    "team_scouting_topic",
+    "scouting_gap",
     "finding",
     "evidence_claim",
     "source",
+    "source_domain",
+    "source_kind",
+    "source_quality",
+    "source_recency",
+    "availability_status",
+    "body_part",
+    "scout",
+    "claim_type",
+    "claim_impact",
+    "metric",
+    "player_stat_line",
     "player",
+    "club",
+    "position",
+    "formation",
     "genome",
     "predictor",
     "debate_claim",
@@ -94,6 +113,12 @@ class MatchContext:
     stats_home_signal: float
     odds_home_signal: float
     news_home_signal: float
+    match_date: str = ""
+    match_time: str = ""
+    group_name: str = ""
+    stage_name: str = ""
+    venue_name: str = ""
+    score: str = ""
     findings: list[Finding] = field(default_factory=list)
 
     @classmethod
@@ -117,6 +142,12 @@ class MatchContext:
             stats_home_signal=stats,
             odds_home_signal=odds,
             news_home_signal=news,
+            match_date=str(match.get("date") or ""),
+            match_time=str(match.get("time") or ""),
+            group_name=str(match.get("group") or ""),
+            stage_name=str(match.get("round") or match.get("stage") or ""),
+            venue_name=str(match.get("ground") or match.get("venue") or ""),
+            score=str(match.get("score") or ""),
             findings=findings,
         )
 
@@ -140,6 +171,12 @@ class KnowledgeView:
             stats_home_signal=self.stats_home_signal,
             odds_home_signal=self.odds_home_signal,
             news_home_signal=self.news_home_signal,
+            match_date=match.match_date,
+            match_time=match.match_time,
+            group_name=match.group_name,
+            stage_name=match.stage_name,
+            venue_name=match.venue_name,
+            score=match.score,
             findings=self.visible_findings,
         )
 
@@ -213,10 +250,43 @@ class DebateRoom:
 
 
 @dataclass(frozen=True)
+class SocialAction:
+    action_id: str
+    round_id: str
+    room_id: str
+    phase: str
+    action_type: str
+    actor_id: str
+    actor_name: str
+    role: str
+    stance: str
+    target_action_id: str
+    target_actor_id: str
+    topic: str
+    text: str
+    grounded_elements: list[dict] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    weight: float = 1.0
+    metadata: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class Forecast:
     agent_id: str
+    wallet_address: str
+    ens_name: str
     access_tier: AccessTier
     visible_findings: int
+    persona: str
+    risk_profile: str
+    social_stance: str
+    activity_level: str
+    influence_weight: str
+    response_delay: str
+    active_windows: str
     home_probability: float
     market_edge: float
     edge_threshold: float
@@ -243,15 +313,36 @@ class BetCommitment:
 
 
 @dataclass(frozen=True)
+class CollectiveDecision:
+    round_id: str
+    match: dict
+    method: dict
+    match_call: dict
+    prediction: dict
+    recommendation: dict
+    internal_metrics: dict
+    score_projection: dict
+    vote_breakdown: dict
+    top_supporters: list[dict]
+    agent_predictions: list[dict]
+    agent_votes: list[dict]
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class RoundResult:
     round_id: str
     rooms: list[DebateRoom]
     claims: list[DebateClaim]
+    social_actions: list[SocialAction]
     forecasts: list[Forecast]
     commitments: list[BetCommitment]
     findings: list[Finding]
     knowledge_views: list[KnowledgeView]
     world_graph: WorldGraph
+    collective_decision: CollectiveDecision
     summary: dict
 
     def to_dict(self) -> dict:
@@ -262,7 +353,9 @@ class RoundResult:
             "world_graph": self.world_graph.to_dict(),
             "rooms": [room.to_dict() for room in self.rooms],
             "claims": [claim.to_dict() for claim in self.claims],
+            "social_actions": [action.to_dict() for action in self.social_actions],
             "forecasts": [forecast.to_dict() for forecast in self.forecasts],
             "commitments": [commitment.to_dict() for commitment in self.commitments],
+            "collective_decision": self.collective_decision.to_dict(),
             "summary": self.summary,
         }

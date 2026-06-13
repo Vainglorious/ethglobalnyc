@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import json
 import random
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
 from .agent import AntAgent
 from .debate import DebateFeed
+from .decision import build_collective_decision
 from .genes import random_genome
 from .knowledge import build_knowledge_views
 from .models import DebateClaim, DebateRoom, KnowledgeView, MatchContext, RoundResult
 from .population import normalize_agent_lineages
+from .social import build_social_actions
 from .voice import TemplateVoiceModel, VoiceModel
 from .wallets import WalletStore
 from .world_graph import build_world_graph
@@ -144,17 +147,32 @@ class ColonyHarness:
                     len(view.visible_findings),
                 )
             )
+        forecasts_by_agent = {forecast.agent_id: forecast for forecast in forecasts}
+        social_actions = build_social_actions(
+            match=match,
+            rooms=rooms,
+            final_claims=feed.claims,
+            forecasts_by_agent=forecasts_by_agent,
+            rng=self.rng,
+        )
         commitments = [
             agent.commit_bet(forecast, match.round_id)
             for agent, forecast in zip(self.agents, forecasts, strict=True)
         ]
 
         home_bets = sum(1 for forecast in forecasts if forecast.side == "home")
+        draw_bets = sum(1 for forecast in forecasts if forecast.side == "draw")
         away_bets = sum(1 for forecast in forecasts if forecast.side == "away")
         passes = sum(1 for forecast in forecasts if forecast.side == "pass")
         total_staked = round(sum(forecast.stake for forecast in forecasts), 4)
+        risk_profiles = Counter(forecast.risk_profile for forecast in forecasts)
 
         debate_quality = _debate_quality_metrics(rooms)
+        collective_decision = build_collective_decision(
+            match=match,
+            agents=self.agents,
+            forecasts=forecasts,
+        )
         summary = {
             "population": self.population_size,
             "speaker_slots": self.speaker_slots,
@@ -172,9 +190,17 @@ class ColonyHarness:
             "shared_views": sum(1 for view in knowledge_views_by_agent.values() if view.access_tier == "shared"),
             "private_views": sum(1 for view in knowledge_views_by_agent.values() if view.access_tier == "private"),
             "home_bets": home_bets,
+            "draw_bets": draw_bets,
             "away_bets": away_bets,
             "passes": passes,
+            "participating_bets": home_bets + draw_bets + away_bets,
+            "risk_profiles": dict(risk_profiles),
             "total_staked": total_staked,
+            "decision_side": collective_decision.recommendation["side"],
+            "decision_winner": collective_decision.recommendation["winner"],
+            "decision_confidence": collective_decision.internal_metrics["confidence"],
+            "decision_market_edge": collective_decision.internal_metrics["market_edge"],
+            "decision_home_probability": collective_decision.internal_metrics["weighted_home_probability"],
         }
         all_debate_claims = [claim for room in rooms for claim in room.claims] + feed.claims
         world_graph = build_world_graph(match, claims=all_debate_claims, forecasts=forecasts)
@@ -183,11 +209,13 @@ class ColonyHarness:
             round_id=match.round_id,
             claims=feed.claims,
             rooms=rooms,
+            social_actions=social_actions,
             forecasts=forecasts,
             commitments=commitments,
             findings=match.findings,
             knowledge_views=list(knowledge_views_by_agent.values()),
             world_graph=world_graph,
+            collective_decision=collective_decision,
             summary=summary,
         )
 
@@ -204,9 +232,11 @@ class ColonyHarness:
         events.extend({"event_type": "finding", **finding.to_dict()} for finding in result.findings)
         events.extend({"event_type": "knowledge_view", **view.to_dict()} for view in result.knowledge_views)
         events.extend({"event_type": "debate_room", **room.to_dict()} for room in result.rooms)
+        events.extend({"event_type": "social_action", **action.to_dict()} for action in result.social_actions)
         events.append({"event_type": "world_graph", **result.world_graph.to_dict()})
         events.extend({"event_type": "debate_claim", **claim.to_dict()} for claim in result.claims)
         events.extend({"event_type": "forecast", **forecast.to_dict()} for forecast in result.forecasts)
+        events.append({"event_type": "collective_decision", **result.collective_decision.to_dict()})
         events.extend({"event_type": "bet_commitment", **commitment.to_dict()} for commitment in result.commitments)
 
         with path.open("w", encoding="utf-8") as handle:
@@ -328,7 +358,7 @@ class ColonyHarness:
                 claim_type="synthesis",
                 selection_reason=(
                     f"aggregated {len(rooms)} rooms and {len(room_claims)} room claims; "
-                    f"room_range={_room_probability_range(rooms)}"
+                    f"room_lean={_lean_label(synthesis_probability)}"
                 ),
                 stated_home_probability=round(synthesis_probability, 4),
                 confidence=round(_average_room_confidence(rooms), 4),
@@ -445,6 +475,10 @@ def _conversation_venues(profiles: list[DebateProfile], *, max_rooms: int) -> li
         candidates.append(("morocco_availability", "Do Morocco injuries offset the Neymar drag?"))
     if "recent_form" in evidence_text or "recent form" in evidence_text or "last matches" in evidence_text:
         candidates.append(("team_form", "What do recent matches say about each team's baseline?"))
+    if "match_history" in evidence_text or "head-to-head" in evidence_text or "previous meetings" in evidence_text:
+        candidates.append(("match_history", "Does head-to-head or recent match history change the baseline?"))
+    if "tactical" in evidence_text or "pressing" in evidence_text or "set-piece" in evidence_text:
+        candidates.append(("tactical_matchup", "Do tactical styles or set pieces create a matchup edge?"))
     if "player_form" in evidence_text or "season form" in evidence_text or "goals" in evidence_text:
         candidates.append(("player_form", "Which key players are in form strongly enough to move price?"))
     candidates.extend(
@@ -527,6 +561,14 @@ def _venue_affinity(profile: DebateProfile, venue: ConversationVenue) -> float:
     elif venue.topic == "team_form":
         score += weights.stats * 0.9
         score += 0.45 if "recent_form" in text or "last matches" in text else 0.0
+    elif venue.topic == "match_history":
+        score += weights.stats * 0.8
+        score += weights.news * 0.2
+        score += 0.5 if "match_history" in text or "head-to-head" in text or "previous meetings" in text else 0.0
+    elif venue.topic == "tactical_matchup":
+        score += weights.stats * 0.7
+        score += weights.news * 0.25
+        score += 0.5 if "tactical" in text or "pressing" in text or "set-piece" in text else 0.0
     elif venue.topic == "player_form":
         score += weights.stats * 0.55
         score += weights.news * 0.35
@@ -917,7 +959,7 @@ def _final_dispute_summary(match: MatchContext, rooms: list[DebateRoom]) -> dict
             if target_subject and counter_subject and target_subject != counter_subject:
                 line = f"Minority report: the live counterweight is {counter_subject} against {target_subject}."
                 return _dispute_summary_dict(disputes, critique_counts, dominant_type, dominant_pair, line)
-        line = "Minority report: challengers are arguing counter-evidence more than raw probability."
+        line = "Minority report: challengers are arguing counter-evidence more than raw conviction."
         return _dispute_summary_dict(disputes, critique_counts, dominant_type, dominant_pair, line)
     if dominant_type == "underpriced_home":
         line = f"Minority report: some rooms think {match.home_team} is still underpriced after the risk adjustment."
@@ -1022,9 +1064,15 @@ def _room_synthesis(
     subjects = ", ".join(top_subjects[:3]) if top_subjects else evidence_focus
     return (
         f"{room_id} grouped {participants} predictors around {stance}/{evidence_focus}. "
-        f"Room synthesis prices home at {_format_probability(probability)} with evidence focus on {subjects}."
+        f"Room synthesis is {_lean_label(probability)}, with evidence focus on {subjects}."
     )
 
 
-def _format_probability(value: float | None) -> str:
-    return "n/a" if value is None else f"{value:.1%}"
+def _lean_label(value: float | None) -> str:
+    if value is None:
+        return "unclear"
+    if value >= 0.515:
+        return "leaning home"
+    if value <= 0.485:
+        return "leaning away"
+    return "contested"

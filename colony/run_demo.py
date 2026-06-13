@@ -240,14 +240,24 @@ def main() -> None:
         f"shared={result.summary['shared_views']} "
         f"private={result.summary['private_views']}"
     )
-    print(f"Market home probability: {result.summary['market_home_probability']:.1%}")
-    print(f"Debate home probability: {result.summary['debate_home_probability']:.1%}")
+    print(f"Risk profiles: {_risk_profile_summary(result.summary.get('risk_profiles', {}))}")
+    print(f"Market anchor: {_lean_label(result.summary['market_home_probability'])}")
+    print(f"Debate lean: {_lean_label(result.summary['debate_home_probability'])}")
     print(
         "Bets: "
         f"home={result.summary['home_bets']} "
+        f"draw={result.summary.get('draw_bets', 0)} "
         f"away={result.summary['away_bets']} "
-        f"pass={result.summary['passes']} "
+        f"participation={result.summary.get('participating_bets', 0)}/{result.summary['population']} "
+        f"technical_pass={result.summary['passes']} "
         f"total_staked={result.summary['total_staked']}"
+    )
+    decision = result.collective_decision
+    print(
+        "Decision: "
+        f"{decision.prediction['sentence']} "
+        f"bet={decision.recommendation['side']} "
+        f"value={decision.prediction['value']}"
     )
 
     if args.debug:
@@ -350,6 +360,22 @@ def _apply_world_agents(args: argparse.Namespace, harness: ColonyHarness) -> Non
 
 def _resolve_world_verifications(args: argparse.Namespace) -> str:
     return args.world_verifications or os.environ.get("COLONY_WORLD_VERIFICATIONS") or str(DEFAULT_WORLD_VERIFICATION_STORE)
+
+
+def _lean_label(value: float | None) -> str:
+    if value is None:
+        return "unclear"
+    if value >= 0.515:
+        return "leans_home"
+    if value <= 0.485:
+        return "leans_away"
+    return "contested"
+
+
+def _risk_profile_summary(profiles: dict) -> str:
+    if not profiles:
+        return "n/a"
+    return " ".join(f"{key}={profiles.get(key, 0)}" for key in ("secure", "balanced", "risky"))
 
 
 if __name__ == "__main__":

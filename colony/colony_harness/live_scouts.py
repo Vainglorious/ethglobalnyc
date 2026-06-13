@@ -11,15 +11,20 @@ import json
 import os
 import re
 import hashlib
+import unicodedata
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
+from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-from .models import Finding, MatchContext
+from .models import Finding, MatchContext, SourceType
+from .scout_adapters.polygun import polygun_findings_for_match
+from .scout_adapters.telegram import telegram_findings_for_match
 from .scouts import synthetic_probabilities
 
 
@@ -84,6 +89,18 @@ class NewsItem:
 
 
 @dataclass(frozen=True)
+class SquadPlayer:
+    team: str
+    name: str
+    position: str
+    club: str
+    caps: int | None
+    goals: int | None
+    source_title: str
+    source_url: str
+
+
+@dataclass(frozen=True)
 class EvidenceClaim:
     claim_type: str
     subject: str
@@ -94,6 +111,15 @@ class EvidenceClaim:
     confidence: float
     source_title: str
     source_url: str
+    source_published: str = ""
+    source_published_date: str = ""
+    source_recency_days: int | None = None
+    source_recency_bucket: str = ""
+    source_domain: str = ""
+    source_kind: str = ""
+    source_quality: str = "medium"
+    extraction_method: str = "heuristic_sentence"
+    metrics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -106,6 +132,15 @@ class EvidenceClaim:
             "confidence": self.confidence,
             "source_title": self.source_title,
             "source_url": self.source_url,
+            "source_published": self.source_published,
+            "source_published_date": self.source_published_date,
+            "source_recency_days": self.source_recency_days,
+            "source_recency_bucket": self.source_recency_bucket,
+            "source_domain": self.source_domain,
+            "source_kind": self.source_kind,
+            "source_quality": self.source_quality,
+            "extraction_method": self.extraction_method,
+            "metrics": self.metrics,
         }
 
 
@@ -117,6 +152,9 @@ def public_match_context_from_tournament_match(
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     include_x: bool = False,
     include_camel: bool = False,
+    include_telegram: bool = False,
+    include_polygun: bool = False,
+    rescout_targets: list[dict] | None = None,
 ) -> MatchContext:
     """Create a match context from real public sources and optional research scouts."""
     attrs = match_entity["attributes"]
@@ -129,9 +167,28 @@ def public_match_context_from_tournament_match(
 
     home_profile = fetch_team_profile(home_team, cache_path, refresh=refresh, timeout_seconds=timeout_seconds)
     away_profile = fetch_team_profile(away_team, cache_path, refresh=refresh, timeout_seconds=timeout_seconds)
+    squad_rosters = {
+        home_team: fetch_team_roster(home_team, cache_path, refresh=refresh, timeout_seconds=timeout_seconds),
+        away_team: fetch_team_roster(away_team, cache_path, refresh=refresh, timeout_seconds=timeout_seconds),
+    }
+    known_players = _known_players_by_team(squad_rosters)
     match_news = fetch_news_query(
         cache_key=f"match_news_{_slug(home_team)}_{_slug(away_team)}",
         query=f"{home_team} {away_team} World Cup football",
+        cache_dir=cache_path,
+        refresh=refresh,
+        timeout_seconds=timeout_seconds,
+    )
+    match_history_items = fetch_match_history_news(
+        home_team=home_team,
+        away_team=away_team,
+        cache_dir=cache_path,
+        refresh=refresh,
+        timeout_seconds=timeout_seconds,
+    )
+    tactical_items = fetch_tactical_matchup_news(
+        home_team=home_team,
+        away_team=away_team,
         cache_dir=cache_path,
         refresh=refresh,
         timeout_seconds=timeout_seconds,
@@ -158,8 +215,24 @@ def public_match_context_from_tournament_match(
             cache_dir=cache_path,
             refresh=refresh,
             timeout_seconds=timeout_seconds,
+            known_players=known_players,
         ),
         away_team: fetch_team_scout_news(
+            away_team,
+            cache_dir=cache_path,
+            refresh=refresh,
+            timeout_seconds=timeout_seconds,
+            known_players=known_players,
+        ),
+    }
+    official_squad_items = {
+        home_team: fetch_official_squad_news(
+            home_team,
+            cache_dir=cache_path,
+            refresh=refresh,
+            timeout_seconds=timeout_seconds,
+        ),
+        away_team: fetch_official_squad_news(
             away_team,
             cache_dir=cache_path,
             refresh=refresh,
@@ -203,6 +276,7 @@ def public_match_context_from_tournament_match(
         refresh=refresh,
         timeout_seconds=timeout_seconds,
         max_articles=2,
+        known_players=known_players,
     )
     x_claims = extract_evidence_claims(
         items=x_items,
@@ -212,6 +286,7 @@ def public_match_context_from_tournament_match(
         refresh=refresh,
         timeout_seconds=timeout_seconds,
         max_articles=4,
+        known_players=known_players,
     )
     camel_claims = extract_evidence_claims(
         items=camel_items,
@@ -221,15 +296,24 @@ def public_match_context_from_tournament_match(
         refresh=refresh,
         timeout_seconds=timeout_seconds,
         max_articles=4,
+        known_players=known_players,
     )
+    result_archive_items = _team_scout_items(team_scout_news, "recent_form", max_per_team=3)
+    tactical_lineup_items = _tactical_items_from_team_scouts(
+        team_scout_news,
+        home_team=home_team,
+        away_team=away_team,
+    )
+    all_tactical_items = _dedupe_items(tactical_items + tactical_lineup_items)
     team_form_claims = extract_evidence_claims(
-        items=_team_scout_items(team_scout_news, "recent_form", max_per_team=3),
+        items=result_archive_items,
         home_team=home_team,
         away_team=away_team,
         cache_dir=cache_path,
         refresh=refresh,
         timeout_seconds=timeout_seconds,
         max_articles=4,
+        known_players=known_players,
     )
     player_form_claims = extract_evidence_claims(
         items=_team_scout_items(team_scout_news, "player_form", max_per_team=3),
@@ -239,6 +323,7 @@ def public_match_context_from_tournament_match(
         refresh=refresh,
         timeout_seconds=timeout_seconds,
         max_articles=4,
+        known_players=known_players,
     )
     squad_depth_claims = extract_evidence_claims(
         items=_team_scout_items(team_scout_news, "squad_depth", max_per_team=3),
@@ -248,6 +333,70 @@ def public_match_context_from_tournament_match(
         refresh=refresh,
         timeout_seconds=timeout_seconds,
         max_articles=4,
+        known_players=known_players,
+    )
+    match_history_claims = extract_evidence_claims(
+        items=match_history_items,
+        home_team=home_team,
+        away_team=away_team,
+        cache_dir=cache_path,
+        refresh=refresh,
+        timeout_seconds=timeout_seconds,
+        max_articles=4,
+        known_players=known_players,
+    )
+    tactical_claims = extract_evidence_claims(
+        items=all_tactical_items,
+        home_team=home_team,
+        away_team=away_team,
+        cache_dir=cache_path,
+        refresh=refresh,
+        timeout_seconds=timeout_seconds,
+        max_articles=4,
+        known_players=known_players,
+    )
+    official_squad_claims = extract_evidence_claims(
+        items=_team_items(official_squad_items, max_per_team=4),
+        home_team=home_team,
+        away_team=away_team,
+        cache_dir=cache_path,
+        refresh=refresh,
+        timeout_seconds=timeout_seconds,
+        max_articles=4,
+    )
+    official_squad_claims = _dedupe_claims(
+        official_squad_claims
+        + _topic_claims_from_items(
+            items=_team_items(official_squad_items, max_per_team=4),
+            claim_type="lineup",
+            home_team=home_team,
+            away_team=away_team,
+            confidence=0.54,
+            known_players=known_players,
+        )
+    )
+    squad_roster_claims = _squad_roster_claims(squad_rosters, home_team=home_team, away_team=away_team)
+    match_history_claims = _dedupe_claims(
+        match_history_claims
+        + _topic_claims_from_items(
+            items=match_history_items + result_archive_items,
+            claim_type="match_history",
+            home_team=home_team,
+            away_team=away_team,
+            confidence=0.48,
+            known_players=known_players,
+        )
+    )
+    tactical_claims = _dedupe_claims(
+        tactical_claims
+        + _topic_claims_from_items(
+            items=all_tactical_items,
+            claim_type="tactical",
+            home_team=home_team,
+            away_team=away_team,
+            confidence=0.48,
+            known_players=known_players,
+        )
     )
 
     market, stats, odds, news = public_probabilities(
@@ -267,6 +416,12 @@ def public_match_context_from_tournament_match(
         team_form_claims=team_form_claims,
         player_form_claims=player_form_claims,
         squad_depth_claims=squad_depth_claims,
+        match_history_items=match_history_items,
+        match_history_claims=match_history_claims,
+        tactical_items=all_tactical_items,
+        tactical_claims=tactical_claims,
+        official_squad_claims=official_squad_claims,
+        known_players=known_players,
     )
     findings = public_findings_for_match(
         round_id=round_id,
@@ -290,8 +445,67 @@ def public_match_context_from_tournament_match(
         team_form_claims=team_form_claims,
         player_form_claims=player_form_claims,
         squad_depth_claims=squad_depth_claims,
+        match_history_items=match_history_items,
+        match_history_claims=match_history_claims,
+        tactical_items=all_tactical_items,
+        official_squad_items=official_squad_items,
+        squad_rosters=squad_rosters,
+        tactical_claims=tactical_claims,
+        official_squad_claims=official_squad_claims,
+        squad_roster_claims=squad_roster_claims,
         include_x=include_x,
         include_camel=include_camel,
+    )
+    if include_telegram:
+        findings.extend(
+            telegram_findings_for_match(
+                round_id=round_id,
+                home_team=home_team,
+                away_team=away_team,
+                market=market,
+                news_probability=news,
+                cache_dir=cache_path,
+                refresh=refresh,
+                timeout_seconds=timeout_seconds,
+            )
+        )
+    if include_polygun:
+        findings.extend(
+            polygun_findings_for_match(
+                round_id=round_id,
+                home_team=home_team,
+                away_team=away_team,
+                market=market,
+                cache_dir=cache_path,
+            )
+        )
+    findings.extend(
+        _focused_rescout_findings(
+            round_id=round_id,
+            home_team=home_team,
+            away_team=away_team,
+            market=market,
+            stats=stats,
+            news=news,
+            targets=rescout_targets or [],
+            home_profile=home_profile,
+            away_profile=away_profile,
+            team_scout_news=team_scout_news,
+            availability_claims=availability_claims,
+            team_form_claims=team_form_claims,
+            player_form_claims=player_form_claims,
+            squad_depth_claims=squad_depth_claims,
+            match_history_claims=match_history_claims,
+            tactical_claims=tactical_claims,
+            official_squad_claims=official_squad_claims,
+            squad_roster_claims=squad_roster_claims,
+            match_history_items=match_history_items,
+            tactical_items=all_tactical_items,
+            known_players=known_players,
+            cache_dir=cache_path,
+            refresh=refresh,
+            timeout_seconds=timeout_seconds,
+        )
     )
     return MatchContext(
         round_id=round_id,
@@ -301,8 +515,307 @@ def public_match_context_from_tournament_match(
         stats_home_signal=stats,
         odds_home_signal=odds,
         news_home_signal=news,
+        match_date=str(attrs.get("date") or ""),
+        match_time=str(attrs.get("time") or ""),
+        group_name=str(attrs.get("group") or ""),
+        stage_name=str(attrs.get("round") or attrs.get("stage") or ""),
+        venue_name=str(attrs.get("ground") or attrs.get("venue") or ""),
+        score=str(attrs.get("score") or ""),
         findings=findings,
     )
+
+
+def _focused_rescout_findings(
+    *,
+    round_id: str,
+    home_team: str,
+    away_team: str,
+    market: float,
+    stats: float,
+    news: float,
+    targets: list[dict],
+    home_profile: TeamProfile,
+    away_profile: TeamProfile,
+    team_scout_news: dict[str, dict[str, list[NewsItem]]],
+    availability_claims: list[EvidenceClaim],
+    team_form_claims: list[EvidenceClaim],
+    player_form_claims: list[EvidenceClaim],
+    squad_depth_claims: list[EvidenceClaim],
+    match_history_claims: list[EvidenceClaim],
+    tactical_claims: list[EvidenceClaim],
+    official_squad_claims: list[EvidenceClaim],
+    squad_roster_claims: list[EvidenceClaim],
+    match_history_items: list[NewsItem],
+    tactical_items: list[NewsItem],
+    known_players: dict[str, list[str]],
+    cache_dir: Path,
+    refresh: bool,
+    timeout_seconds: int,
+) -> list[Finding]:
+    findings: list[Finding] = []
+    for target in targets:
+        team = _match_team_name(str(target.get("team") or ""), home_team=home_team, away_team=away_team)
+        claim_type = _clean_text(str(target.get("claim_type") or ""))
+        if not team or not claim_type:
+            continue
+        claims = _focused_claims_for_target(
+            team=team,
+            claim_type=claim_type,
+            home_team=home_team,
+            away_team=away_team,
+            home_profile=home_profile,
+            away_profile=away_profile,
+            team_scout_news=team_scout_news,
+            availability_claims=availability_claims,
+            team_form_claims=team_form_claims,
+            player_form_claims=player_form_claims,
+            squad_depth_claims=squad_depth_claims,
+            match_history_claims=match_history_claims,
+            tactical_claims=tactical_claims,
+            official_squad_claims=official_squad_claims,
+            squad_roster_claims=squad_roster_claims,
+            match_history_items=match_history_items,
+            tactical_items=tactical_items,
+            known_players=known_players,
+            cache_dir=cache_dir,
+            refresh=refresh,
+            timeout_seconds=timeout_seconds,
+        )
+        claim_dicts = _admissible_evidence_claims([claim.to_dict() for claim in _dedupe_claims(claims)])
+        if not claim_dicts:
+            continue
+        finding_key = f"rescout_{_slug(team)}_{_slug(claim_type)}"
+        findings.append(
+            _finding(
+                round_id=round_id,
+                key=finding_key,
+                scout_name=f"focused_{claim_type}_scout",
+                access_level="public",
+                source_type=_focused_source_type(claim_type),
+                finding_name=f"focused_{claim_type}_rescout",
+                home_probability=stats if claim_type in {"recent_form", "player_form", "match_history", "tactical"} else news,
+                market=market,
+                confidence=0.5,
+                summary=(
+                    f"Focused re-scout for {team} {claim_type}. "
+                    "Only admissible, sourced claims are attached; empty focus results are not written."
+                ),
+                citations=list(dict.fromkeys(str(claim.get("source_url") or "") for claim in claim_dicts if claim.get("source_url")))[:6],
+                evidence_claims=claim_dicts,
+            )
+        )
+    return findings
+
+
+def _focused_claims_for_target(
+    *,
+    team: str,
+    claim_type: str,
+    home_team: str,
+    away_team: str,
+    home_profile: TeamProfile,
+    away_profile: TeamProfile,
+    team_scout_news: dict[str, dict[str, list[NewsItem]]],
+    availability_claims: list[EvidenceClaim],
+    team_form_claims: list[EvidenceClaim],
+    player_form_claims: list[EvidenceClaim],
+    squad_depth_claims: list[EvidenceClaim],
+    match_history_claims: list[EvidenceClaim],
+    tactical_claims: list[EvidenceClaim],
+    official_squad_claims: list[EvidenceClaim],
+    squad_roster_claims: list[EvidenceClaim],
+    match_history_items: list[NewsItem],
+    tactical_items: list[NewsItem],
+    known_players: dict[str, list[str]],
+    cache_dir: Path,
+    refresh: bool,
+    timeout_seconds: int,
+) -> list[EvidenceClaim]:
+    claims: list[EvidenceClaim] = []
+    focused_items = _fetch_focused_rescout_items(
+        team=team,
+        claim_type=claim_type,
+        home_team=home_team,
+        away_team=away_team,
+        cache_dir=cache_dir,
+        refresh=refresh,
+        timeout_seconds=timeout_seconds,
+        known_players=known_players,
+    )
+    if claim_type in {"team_profile", "team_history"}:
+        claims.extend(_team_profile_claims(home_profile, away_profile))
+    elif claim_type == "recent_form":
+        claims.extend(team_form_claims)
+        claims.extend(
+            _topic_claims_from_items(
+                items=team_scout_news.get(team, {}).get("recent_form", []) + focused_items,
+                claim_type="recent_form",
+                home_team=home_team,
+                away_team=away_team,
+                confidence=0.5,
+                known_players=known_players,
+            )
+        )
+    elif claim_type == "player_form":
+        claims.extend(player_form_claims)
+        claims.extend(
+            _topic_claims_from_items(
+                items=team_scout_news.get(team, {}).get("player_form", []) + focused_items,
+                claim_type="player_form",
+                home_team=home_team,
+                away_team=away_team,
+                confidence=0.5,
+                known_players=known_players,
+            )
+        )
+    elif claim_type == "squad_roster":
+        claims.extend(squad_roster_claims)
+    elif claim_type == "injury_availability":
+        claims.extend(availability_claims)
+    elif claim_type == "lineup":
+        claims.extend(squad_depth_claims)
+        claims.extend(official_squad_claims)
+        claims.extend(
+            _topic_claims_from_items(
+                items=team_scout_news.get(team, {}).get("squad_depth", []) + focused_items,
+                claim_type="lineup",
+                home_team=home_team,
+                away_team=away_team,
+                confidence=0.5,
+                known_players=known_players,
+            )
+        )
+    elif claim_type == "match_history":
+        claims.extend(match_history_claims)
+        claims.extend(
+            _topic_claims_from_items(
+                items=match_history_items + team_scout_news.get(team, {}).get("recent_form", []) + focused_items,
+                claim_type="match_history",
+                home_team=home_team,
+                away_team=away_team,
+                confidence=0.5,
+                known_players=known_players,
+            )
+        )
+    elif claim_type == "tactical":
+        claims.extend(tactical_claims)
+        claims.extend(
+            _topic_claims_from_items(
+                items=tactical_items + team_scout_news.get(team, {}).get("squad_depth", []) + focused_items,
+                claim_type="tactical",
+                home_team=home_team,
+                away_team=away_team,
+                confidence=0.5,
+                known_players=known_players,
+            )
+        )
+    return [claim for claim in claims if claim.claim_type == claim_type and _claim_matches_team(claim, team)]
+
+
+def _fetch_focused_rescout_items(
+    *,
+    team: str,
+    claim_type: str,
+    home_team: str,
+    away_team: str,
+    cache_dir: Path,
+    refresh: bool,
+    timeout_seconds: int,
+    known_players: dict[str, list[str]],
+) -> list[NewsItem]:
+    queries = _focused_rescout_queries(team=team, claim_type=claim_type)
+    if not queries:
+        return []
+    items: list[NewsItem] = []
+    for index, query in enumerate(queries):
+        items.extend(
+            _fetch_ddgs_query(
+                query=query,
+                cache_file=cache_dir / f"ddgs_rescout_{_slug(claim_type)}_{index}_{_slug(team)}.json",
+                refresh=refresh,
+                timeout_seconds=timeout_seconds,
+                max_results=5,
+            )
+        )
+    items = _dedupe_items(items)
+    if claim_type == "match_history":
+        match_items = _filter_match_history_items(items, home_team=home_team, away_team=away_team)
+        form_items = _filter_topic_items(items, "recent_form", team=team, known_players=known_players)
+        return _dedupe_items(match_items + form_items)[:8]
+    if claim_type == "recent_form":
+        return _filter_topic_items(items, "recent_form", team=team, known_players=known_players)[:8]
+    if claim_type == "player_form":
+        return _filter_topic_items(items, "player_form", team=team, known_players=known_players)[:8]
+    if claim_type in {"lineup", "injury_availability", "squad_roster"}:
+        return _filter_topic_items(items, "squad_depth", team=team, known_players=known_players)[:8]
+    if claim_type == "tactical":
+        tactical = _filter_tactical_items(items, home_team=home_team, away_team=away_team)
+        squad_depth = _filter_topic_items(items, "squad_depth", team=team, known_players=known_players)
+        return _dedupe_items(tactical + squad_depth)[:8]
+    return items[:8]
+
+
+def _focused_rescout_queries(*, team: str, claim_type: str) -> list[str]:
+    common_suffix = "-prediction -predictions -odds -picks -betting"
+    if claim_type == "recent_form":
+        return [
+            f"{team} national football team recent results fixtures last matches 2025 2026 {common_suffix}",
+            f"{team} football results archive fixtures scores form 2026 {common_suffix}",
+        ]
+    if claim_type == "player_form":
+        return [
+            f"{team} football key players season stats goals assists appearances 2025 2026",
+            f"{team} national team player form club season stats FBref SofaScore Transfermarkt",
+        ]
+    if claim_type == "injury_availability":
+        return [
+            f"{team} national football team injury report squad availability suspension 2026",
+            f"{team} World Cup team news injuries doubtful ruled out squad",
+        ]
+    if claim_type == "lineup":
+        return [
+            f"{team} predicted lineup starting XI squad depth World Cup 2026",
+            f"{team} football lineup squad roles key players 2026",
+        ]
+    if claim_type == "match_history":
+        return [
+            f"{team} national football team results fixtures scores 2025 2026 {common_suffix}",
+            f"{team} national football team last 10 matches results form archive {common_suffix}",
+            f"{team} football results archive match history fixtures scores {common_suffix}",
+        ]
+    if claim_type == "tactical":
+        return [
+            f"{team} football tactics formation pressing transition set pieces 2026",
+            f"{team} national football team tactical analysis formation key players",
+        ]
+    if claim_type == "squad_roster":
+        return [
+            f"{team} national football team current squad roster players clubs positions 2026",
+            f"{team} football federation squad players official roster",
+        ]
+    return []
+
+
+def _claim_matches_team(claim: EvidenceClaim, team: str) -> bool:
+    candidates = [claim.team, claim.subject]
+    team_key = _fold_text(team)
+    return any(_fold_text(str(candidate or "")) == team_key for candidate in candidates)
+
+
+def _match_team_name(value: str, *, home_team: str, away_team: str) -> str:
+    target = _fold_text(value)
+    for team in (home_team, away_team):
+        if _fold_text(team) == target:
+            return team
+    return ""
+
+
+def _focused_source_type(claim_type: str) -> SourceType:
+    if claim_type in {"recent_form", "player_form", "match_history", "tactical", "team_history"}:
+        return "stats"
+    if claim_type in {"squad_roster", "injury_availability", "lineup"}:
+        return "lineup"
+    return "news"
 
 
 def fetch_team_profile(
@@ -326,6 +839,234 @@ def fetch_team_profile(
         extract=_clean_text(str(payload.get("extract") or "")),
         page_url=str(payload.get("content_urls", {}).get("desktop", {}).get("page") or url),
     )
+
+
+def fetch_team_roster(
+    team: str,
+    cache_dir: Path,
+    *,
+    refresh: bool,
+    timeout_seconds: int,
+) -> list[SquadPlayer]:
+    """Fetch a structured current-squad table from Wikipedia wikitext."""
+    title = f"{team} national football team"
+    url = "https://en.wikipedia.org/w/api.php?" + urllib.parse.urlencode(
+        {
+            "action": "parse",
+            "page": title,
+            "prop": "wikitext",
+            "format": "json",
+            "formatversion": "2",
+        }
+    )
+    try:
+        payload = _cached_json(
+            cache_dir / f"wikipedia_roster_{_slug(team)}.json",
+            url,
+            refresh=refresh,
+            timeout_seconds=timeout_seconds,
+        )
+    except Exception:
+        return []
+    wikitext = str(payload.get("parse", {}).get("wikitext") or "")
+    source_title = str(payload.get("parse", {}).get("title") or title)
+    source_url = f"https://en.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'))}"
+    return _parse_wikipedia_squad_players(
+        wikitext,
+        team=team,
+        source_title=source_title,
+        source_url=source_url,
+    )
+
+
+def _parse_wikipedia_squad_players(
+    wikitext: str,
+    *,
+    team: str,
+    source_title: str,
+    source_url: str,
+) -> list[SquadPlayer]:
+    players: list[SquadPlayer] = []
+    current_section = _current_squad_wikitext_section(wikitext)
+    for template_name, template in _extract_wiki_templates(
+        current_section,
+        names={"nat fs player", "nat fs g player", "football squad player"},
+    ):
+        fields = _template_fields(template)
+        name = _clean_wiki_value(fields.get("name") or fields.get("player") or fields.get("p") or "")
+        if not name:
+            continue
+        position = _clean_wiki_value(fields.get("pos") or fields.get("position") or "")
+        club = _clean_wiki_value(fields.get("club") or fields.get("currentclub") or "")
+        players.append(
+            SquadPlayer(
+                team=team,
+                name=name,
+                position=position,
+                club=club,
+                caps=_int_field(fields.get("caps")),
+                goals=_int_field(fields.get("goals")),
+                source_title=source_title,
+                source_url=source_url,
+            )
+        )
+    return _dedupe_squad_players(players)[:32]
+
+
+def _extract_wiki_templates(wikitext: str, *, names: set[str]) -> list[tuple[str, str]]:
+    templates: list[tuple[str, str]] = []
+    lowered = wikitext.lower()
+    index = 0
+    while True:
+        start = lowered.find("{{", index)
+        if start < 0:
+            break
+        name_start = start + 2
+        name_end = name_start
+        while name_end < len(wikitext) and wikitext[name_end] not in "|}\n":
+            name_end += 1
+        template_name = _clean_text(wikitext[name_start:name_end]).lower()
+        if template_name not in names:
+            index = start + 2
+            continue
+        depth = 0
+        cursor = start
+        end = -1
+        while cursor < len(wikitext) - 1:
+            pair = wikitext[cursor : cursor + 2]
+            if pair == "{{":
+                depth += 1
+                cursor += 2
+                continue
+            if pair == "}}":
+                depth -= 1
+                cursor += 2
+                if depth == 0:
+                    end = cursor
+                    break
+                continue
+            cursor += 1
+        if end < 0:
+            break
+        body = wikitext[name_end + 1 : end - 2] if name_end < end else ""
+        templates.append((template_name, body))
+        index = end
+    return templates
+
+
+def _current_squad_wikitext_section(wikitext: str) -> str:
+    match = re.search(r"==+\s*(?:current\s+squad|players|squad)\s*==+([\s\S]*?)(?:\n\s*==[^=]|\Z)", wikitext, re.I)
+    return match.group(1) if match else wikitext
+
+
+def _template_fields(template_body: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    positional: list[str] = []
+    for raw_part in _split_template_parts(template_body):
+        part = raw_part.strip()
+        if not part:
+            continue
+        if "=" not in part:
+            positional.append(part)
+            continue
+        key, value = part.split("=", 1)
+        fields[key.strip().lower()] = value.strip()
+    if positional and "pos" not in fields:
+        fields["pos"] = positional[0]
+    return fields
+
+
+def _split_template_parts(template_body: str) -> list[str]:
+    parts: list[str] = []
+    current: list[str] = []
+    brace_depth = 0
+    link_depth = 0
+    index = 0
+    while index < len(template_body):
+        pair = template_body[index : index + 2]
+        if pair == "{{":
+            brace_depth += 1
+            current.append(pair)
+            index += 2
+            continue
+        if pair == "}}" and brace_depth:
+            brace_depth -= 1
+            current.append(pair)
+            index += 2
+            continue
+        if pair == "[[":
+            link_depth += 1
+            current.append(pair)
+            index += 2
+            continue
+        if pair == "]]" and link_depth:
+            link_depth -= 1
+            current.append(pair)
+            index += 2
+            continue
+        char = template_body[index]
+        if char == "|" and brace_depth == 0 and link_depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+        index += 1
+    parts.append("".join(current))
+    return parts
+
+
+def _clean_wiki_value(value: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", value)
+    text = re.sub(r"\{\{[^{}]*\}\}", " ", text)
+    text = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]+)\]\]", r"\1", text)
+    text = text.replace("&nbsp;", " ")
+    return _clean_text(text.strip(" '\""))
+
+
+def _int_field(value: str | None) -> int | None:
+    if value is None:
+        return None
+    match = re.search(r"\d+", value.replace(",", ""))
+    return int(match.group(0)) if match else None
+
+
+def _dedupe_squad_players(players: list[SquadPlayer]) -> list[SquadPlayer]:
+    seen: set[str] = set()
+    deduped: list[SquadPlayer] = []
+    for player in players:
+        key = player.name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(player)
+    return deduped
+
+
+def _known_players_by_team(squad_rosters: dict[str, list[SquadPlayer]]) -> dict[str, list[str]]:
+    known: dict[str, list[str]] = {}
+    for team, players in squad_rosters.items():
+        aliases = [player.name for player in players if player.name]
+        aliases.extend(STAR_PLAYERS.get(team, []))
+        known[team] = _dedupe_aliases(aliases)
+    return known
+
+
+def _dedupe_aliases(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    aliases: list[str] = []
+    for value in values:
+        alias = _clean_text(value).lower()
+        alias_key = _fold_text(alias)
+        if len(alias_key) < 3 or alias_key in seen:
+            continue
+        seen.add(alias_key)
+        aliases.append(alias)
+        parts = [part for part in re.split(r"\s+", alias) if len(part) >= 4]
+        part_key = _fold_text(parts[-1]) if parts else ""
+        if len(parts) >= 2 and part_key not in seen:
+            seen.add(part_key)
+            aliases.append(parts[-1])
+    return aliases
 
 
 def fetch_news_query(
@@ -362,6 +1103,7 @@ def fetch_team_scout_news(
     cache_dir: Path,
     refresh: bool,
     timeout_seconds: int,
+    known_players: dict[str, list[str]] | None = None,
 ) -> dict[str, list[NewsItem]]:
     """Fetch small team-targeted bundles for form, players, and squad depth."""
     queries = {
@@ -370,8 +1112,8 @@ def fetch_team_scout_news(
             "-prediction -predictions -odds -picks -betting"
         ),
         "player_form": (
-            f"{team} football key players 2025-26 season goals assists club form stats "
-            "-prediction -odds -betting"
+            f"{team} football key players 2025-26 season goals assists minutes club form stats "
+            "ratings FBref SofaScore Transfermarkt -prediction -odds -betting"
         ),
         "squad_depth": f"{team} World Cup squad depth predicted lineup injuries key players 2026",
     }
@@ -388,7 +1130,10 @@ def fetch_team_scout_news(
             for player in STAR_PLAYERS.get(team, [])[:3]:
                 items.extend(
                     _fetch_ddgs_query(
-                        query=f"{player} 2025-26 season goals assists club form stats",
+                        query=(
+                            f"{player} 2025-26 season goals assists minutes appearances club form "
+                            "ratings FBref SofaScore Transfermarkt"
+                        ),
                         cache_file=cache_dir / f"ddgs_player_form_{_slug(team)}_{_slug(player)}.json",
                         refresh=refresh,
                         timeout_seconds=timeout_seconds,
@@ -406,12 +1151,143 @@ def fetch_team_scout_news(
         except Exception:
             news_items = []
         items = _dedupe_items(items + news_items)
-        filtered = _filter_topic_items(items, topic, team=team)
+        filtered = _filter_topic_items(items, topic, team=team, known_players=known_players)
         if topic in {"recent_form", "player_form"}:
             bundles[topic] = filtered[:5]
         else:
-            bundles[topic] = (filtered or items)[:5]
+            bundles[topic] = filtered[:5]
     return bundles
+
+
+def fetch_official_squad_news(
+    team: str,
+    *,
+    cache_dir: Path,
+    refresh: bool,
+    timeout_seconds: int,
+) -> list[NewsItem]:
+    """Fetch official-ish squad, player, and federation sources for one team."""
+    queries = [
+        f"{team} national football team official squad FIFA World Cup 2026",
+        f"{team} football federation squad players injuries official",
+        f"site:fifa.com {team} national football team squad players",
+    ]
+    items: list[NewsItem] = []
+    for index, query in enumerate(queries):
+        items.extend(
+            _fetch_ddgs_query(
+                query=query,
+                cache_file=cache_dir / f"ddgs_official_squad_{index}_{_slug(team)}.json",
+                refresh=refresh,
+                timeout_seconds=timeout_seconds,
+                max_results=4,
+            )
+        )
+        try:
+            items.extend(
+                fetch_news_query(
+                    cache_key=f"official_squad_{index}_{_slug(team)}",
+                    query=query.replace("site:fifa.com ", ""),
+                    cache_dir=cache_dir,
+                    refresh=refresh,
+                    timeout_seconds=timeout_seconds,
+                )[:2]
+            )
+        except Exception:
+            continue
+    return _filter_official_squad_items(_dedupe_items(items), team=team)[:8]
+
+
+def fetch_match_history_news(
+    *,
+    home_team: str,
+    away_team: str,
+    cache_dir: Path,
+    refresh: bool,
+    timeout_seconds: int,
+) -> list[NewsItem]:
+    """Fetch head-to-head and recent historical match context for both sides."""
+    queries = [
+        (
+            f"{home_team} {away_team} head to head results previous meetings football "
+            "World Cup history last matches"
+        ),
+        f"{home_team} national football team last 10 matches results form 2025 2026",
+        f"{away_team} national football team last 10 matches results form 2025 2026",
+    ]
+    items: list[NewsItem] = []
+    for index, query in enumerate(queries):
+        items.extend(
+            _fetch_ddgs_query(
+                query=query,
+                cache_file=cache_dir
+                / f"ddgs_match_history_{index}_{_slug(home_team)}_{_slug(away_team)}.json",
+                refresh=refresh,
+                timeout_seconds=timeout_seconds,
+                max_results=5,
+            )
+        )
+        try:
+            items.extend(
+                fetch_news_query(
+                    cache_key=f"match_history_{index}_{_slug(home_team)}_{_slug(away_team)}",
+                    query=query,
+                    cache_dir=cache_dir,
+                    refresh=refresh,
+                    timeout_seconds=timeout_seconds,
+                )[:3]
+            )
+        except Exception:
+            continue
+    return _filter_match_history_items(_dedupe_items(items), home_team=home_team, away_team=away_team)[:10]
+
+
+def fetch_tactical_matchup_news(
+    *,
+    home_team: str,
+    away_team: str,
+    cache_dir: Path,
+    refresh: bool,
+    timeout_seconds: int,
+) -> list[NewsItem]:
+    """Fetch tactical, formation, set-piece, and style-of-play matchup context."""
+    queries = [
+        f"{home_team} {away_team} tactical preview formations pressing set pieces football",
+        f"{home_team} football tactics formation pressing transition set pieces 2026",
+        f"{away_team} football tactics formation pressing transition set pieces 2026",
+        f"{home_team} {away_team} predicted lineup tactical analysis key matchups World Cup",
+    ]
+    items: list[NewsItem] = []
+    for index, query in enumerate(queries):
+        items.extend(
+            _fetch_ddgs_query(
+                query=query,
+                cache_file=cache_dir / f"ddgs_tactical_{index}_{_slug(home_team)}_{_slug(away_team)}.json",
+                refresh=refresh,
+                timeout_seconds=timeout_seconds,
+                max_results=5,
+            )
+        )
+        try:
+            items.extend(
+                fetch_news_query(
+                    cache_key=f"tactical_{index}_{_slug(home_team)}_{_slug(away_team)}",
+                    query=query,
+                    cache_dir=cache_dir,
+                    refresh=refresh,
+                    timeout_seconds=timeout_seconds,
+                )[:2]
+            )
+        except Exception:
+            continue
+    return _filter_tactical_items(_dedupe_items(items), home_team=home_team, away_team=away_team)[:10]
+
+
+def _team_items(items_by_team: dict[str, list[NewsItem]], *, max_per_team: int) -> list[NewsItem]:
+    items: list[NewsItem] = []
+    for items_for_team in items_by_team.values():
+        items.extend(items_for_team[:max_per_team])
+    return _dedupe_items(items)
 
 
 def _team_scout_items(
@@ -426,7 +1302,42 @@ def _team_scout_items(
     return _dedupe_items(items)
 
 
-def _filter_topic_items(items: list[NewsItem], topic: str, *, team: str) -> list[NewsItem]:
+def _tactical_items_from_team_scouts(
+    team_scout_news: dict[str, dict[str, list[NewsItem]]],
+    *,
+    home_team: str,
+    away_team: str,
+) -> list[NewsItem]:
+    candidates = _team_scout_items(team_scout_news, "squad_depth", max_per_team=4)
+    tactical_items: list[NewsItem] = []
+    markers = (
+        "lineup",
+        "line-up",
+        "predicted xi",
+        "starting xi",
+        "formation",
+        "tactic",
+        "tactics",
+        "key players",
+    )
+    for item in candidates:
+        text = f"{item.title} {item.source} {item.link}".lower()
+        if _is_noisy_public_item(text) or _is_weak_scouting_source_text(text):
+            continue
+        if not (home_team.lower() in text or away_team.lower() in text):
+            continue
+        if any(marker in text for marker in markers):
+            tactical_items.append(item)
+    return _dedupe_items(tactical_items)
+
+
+def _filter_topic_items(
+    items: list[NewsItem],
+    topic: str,
+    *,
+    team: str,
+    known_players: dict[str, list[str]] | None = None,
+) -> list[NewsItem]:
     filtered: list[NewsItem] = []
     for item in items:
         text = f"{item.title} {item.source} {item.link}".lower()
@@ -435,7 +1346,7 @@ def _filter_topic_items(items: list[NewsItem], topic: str, *, team: str) -> list
         if topic == "recent_form":
             if any(noisy in text for noisy in ("prediction", "predictions", "odds", "pick", "betting", "tips")):
                 continue
-            if not _item_mentions_team_or_player(text, team):
+            if not _item_mentions_team_or_player(text, team, known_players=known_players):
                 continue
             if not any(
                 marker in text
@@ -456,7 +1367,7 @@ def _filter_topic_items(items: list[NewsItem], topic: str, *, team: str) -> list
         elif topic == "player_form":
             if any(noisy in text for noisy in ("prediction", "odds", "pick", "betting", "tips")):
                 continue
-            if not _item_mentions_team_or_player(text, team):
+            if not _item_mentions_team_or_player(text, team, known_players=known_players):
                 continue
             if not any(
                 marker in text
@@ -473,8 +1384,148 @@ def _filter_topic_items(items: list[NewsItem], topic: str, *, team: str) -> list
                 )
             ):
                 continue
+        elif topic == "squad_depth":
+            if _is_weak_scouting_source_text(text):
+                continue
+            if not _item_mentions_team_or_player(text, team, known_players=known_players):
+                continue
+            if not any(
+                marker in text
+                for marker in (
+                    "squad",
+                    "roster",
+                    "lineup",
+                    "line-up",
+                    "starting xi",
+                    "predicted xi",
+                    "injury",
+                    "injuries",
+                    "availability",
+                    "called up",
+                    "call-up",
+                    "players",
+                    "fifa",
+                    "federation",
+                )
+            ):
+                continue
         filtered.append(item)
     return filtered
+
+
+def _filter_official_squad_items(items: list[NewsItem], *, team: str) -> list[NewsItem]:
+    filtered: list[NewsItem] = []
+    for item in items:
+        text = f"{item.title} {item.source} {item.link}".lower()
+        if _is_noisy_public_item(text):
+            continue
+        if not _item_mentions_team_or_player(text, team):
+            continue
+        if _is_weak_scouting_source_text(text):
+            continue
+        if not any(
+            marker in text
+            for marker in (
+                "official",
+                "fifa",
+                "federation",
+                "squad",
+                "roster",
+                "players",
+                "called up",
+                "call-up",
+                "injury",
+                "injuries",
+                "lineup",
+                "line-up",
+            )
+        ):
+            continue
+        filtered.append(item)
+    return filtered
+
+
+def _filter_match_history_items(items: list[NewsItem], *, home_team: str, away_team: str) -> list[NewsItem]:
+    filtered: list[NewsItem] = []
+    for item in items:
+        text = f"{item.title} {item.source} {item.link}".lower()
+        if _is_noisy_public_item(text):
+            continue
+        if home_team.lower() not in text and away_team.lower() not in text:
+            continue
+        if not any(
+            marker in text
+            for marker in (
+                "head to head",
+                "head-to-head",
+                "h2h",
+                "previous meeting",
+                "previous meetings",
+                "last 10",
+                "last five",
+                "last matches",
+                "results",
+                "fixtures",
+                "flashscore",
+                "soccerway",
+                "11v11",
+                "worldfootball.net",
+            )
+        ):
+            continue
+        if _is_weak_scouting_source_text(text):
+            continue
+        filtered.append(item)
+    return filtered
+
+
+def _filter_tactical_items(items: list[NewsItem], *, home_team: str, away_team: str) -> list[NewsItem]:
+    filtered: list[NewsItem] = []
+    for item in items:
+        text = f"{item.title} {item.source} {item.link}".lower()
+        if _is_noisy_public_item(text):
+            continue
+        if home_team.lower() not in text and away_team.lower() not in text:
+            continue
+        if _is_weak_scouting_source_text(text):
+            continue
+        if not any(
+            marker in text
+            for marker in (
+                "tactical",
+                "tactics",
+                "formation",
+                "lineup",
+                "line-up",
+                "predicted xi",
+                "pressing",
+                "counter",
+                "transition",
+                "set piece",
+                "set-piece",
+                "analysis",
+                "key matchups",
+                "preview",
+            )
+        ):
+            continue
+        filtered.append(item)
+    return filtered
+
+
+def _is_weak_scouting_source_text(lowered_text: str) -> bool:
+    weak_markers = (
+        "boostmatch",
+        "wc26lineups",
+        "score prediction",
+        "predictions",
+        "best bets",
+        "betting",
+        "tips",
+        "picks",
+        "odds",
+    )
+    return any(marker in lowered_text for marker in weak_markers)
 
 
 def _is_noisy_public_item(lowered_text: str) -> bool:
@@ -489,10 +1540,15 @@ def _is_noisy_public_item(lowered_text: str) -> bool:
     return any(source in lowered_text for source in noisy_sources)
 
 
-def _item_mentions_team_or_player(lowered_text: str, team: str) -> bool:
+def _item_mentions_team_or_player(
+    lowered_text: str,
+    team: str,
+    *,
+    known_players: dict[str, list[str]] | None = None,
+) -> bool:
     if team.lower() in lowered_text:
         return True
-    return any(player in lowered_text for player in STAR_PLAYERS.get(team, []))
+    return any(_alias_in_text(player, lowered_text) for player in _player_aliases_for_team(team, known_players=known_players))
 
 
 def fetch_x_availability(
@@ -599,6 +1655,7 @@ def extract_evidence_claims(
     refresh: bool,
     timeout_seconds: int,
     max_articles: int,
+    known_players: dict[str, list[str]] | None = None,
 ) -> list[EvidenceClaim]:
     claims: list[EvidenceClaim] = []
     for item in items[:max_articles]:
@@ -617,11 +1674,182 @@ def extract_evidence_claims(
                     text=source_text,
                     source_title=item.title,
                     source_url=item.link,
+                    source_published=item.published,
                     home_team=home_team,
                     away_team=away_team,
+                    known_players=known_players,
                 )
             )
     return _dedupe_claims(claims)[:12]
+
+
+def _topic_claims_from_items(
+    *,
+    items: list[NewsItem],
+    claim_type: str,
+    home_team: str,
+    away_team: str,
+    confidence: float,
+    known_players: dict[str, list[str]] | None = None,
+) -> list[EvidenceClaim]:
+    """Create structured claims from already-filtered source titles/snippets."""
+    claims: list[EvidenceClaim] = []
+    for item in items[:8]:
+        text = _clean_text(item.title)
+        if not text:
+            continue
+        subject, team, player = _claim_subject(
+            text,
+            home_team=home_team,
+            away_team=away_team,
+            known_players=known_players,
+        )
+        if team is None and player is None:
+            continue
+        claims.append(
+            EvidenceClaim(
+                claim_type=claim_type,
+                subject=subject,
+                claim=_shorten(text, limit=260),
+                team=team,
+                player=player,
+                impact=_claim_impact(claim_type, team=team, home_team=home_team, away_team=away_team),
+                confidence=round(
+                    max(
+                        min(
+                            confidence
+                            + _source_quality_adjustment(source_title=item.source, source_url=item.link),
+                            0.8,
+                        ),
+                        0.12,
+                    ),
+                    2,
+                ),
+                source_title=item.title,
+                source_url=item.link,
+                **_source_metadata(
+                    source_title=item.title,
+                    source_url=item.link,
+                    source_published=item.published,
+                    extraction_method="filtered_title",
+                ),
+                metrics=_claim_metrics_for_match(
+                    claim_type,
+                    text,
+                    home_team=home_team,
+                    away_team=away_team,
+                ),
+            )
+        )
+    return _dedupe_claims(claims)
+
+
+def _claim_citations(claims: list[EvidenceClaim]) -> list[str]:
+    citations = [claim.source_url for claim in claims if claim.source_url]
+    return list(dict.fromkeys(citations))[:8]
+
+
+def _claim_titles(claims: list[EvidenceClaim], *, count: int = 4) -> str:
+    titles = [claim.source_title for claim in claims if claim.source_title]
+    return "; ".join(list(dict.fromkeys(titles))[:count])
+
+
+def _team_profile_claims(home_profile: TeamProfile, away_profile: TeamProfile) -> list[EvidenceClaim]:
+    claims: list[EvidenceClaim] = []
+    for profile, impact in ((home_profile, "context_home"), (away_profile, "context_away")):
+        extract = _clean_text(profile.extract)
+        if not extract:
+            continue
+        confidence = 0.46 + _source_quality_adjustment(source_title=profile.title, source_url=profile.page_url)
+        claims.append(
+            EvidenceClaim(
+                claim_type="team_profile",
+                subject=profile.team,
+                claim=_shorten(extract, limit=300),
+                team=profile.team,
+                player=None,
+                impact=impact,
+                confidence=round(max(min(confidence, 0.72), 0.18), 2),
+                source_title=profile.title,
+                source_url=profile.page_url,
+                **_source_metadata(
+                    source_title=profile.title,
+                    source_url=profile.page_url,
+                    extraction_method="wikipedia_summary",
+                ),
+            )
+        )
+        history_metrics = _claim_metrics("team_history", extract)
+        if history_metrics:
+            claims.append(
+                EvidenceClaim(
+                    claim_type="team_history",
+                    subject=profile.team,
+                    claim=_shorten(extract, limit=300),
+                    team=profile.team,
+                    player=None,
+                    impact=impact,
+                    confidence=round(max(min(confidence + 0.04, 0.76), 0.18), 2),
+                    source_title=profile.title,
+                    source_url=profile.page_url,
+                    **_source_metadata(
+                        source_title=profile.title,
+                        source_url=profile.page_url,
+                        extraction_method="wikipedia_history_summary",
+                    ),
+                    metrics=history_metrics,
+                )
+            )
+    return _dedupe_claims(claims)
+
+
+def _squad_roster_claims(
+    squad_rosters: dict[str, list[SquadPlayer]],
+    *,
+    home_team: str,
+    away_team: str,
+) -> list[EvidenceClaim]:
+    claims: list[EvidenceClaim] = []
+    for team, impact in ((home_team, "context_home"), (away_team, "context_away")):
+        for player in squad_rosters.get(team, [])[:18]:
+            metrics: dict[str, Any] = {"roster_signal": "current_squad"}
+            if player.position:
+                metrics["position"] = player.position
+            if player.club:
+                metrics["club"] = player.club
+            if player.caps is not None:
+                metrics["international_caps"] = player.caps
+            if player.goals is not None:
+                metrics["international_goals"] = player.goals
+            descriptors = [player.position, player.club]
+            if player.caps is not None:
+                descriptors.append(f"{player.caps} caps")
+            if player.goals is not None:
+                descriptors.append(f"{player.goals} international goals")
+            detail = ", ".join(part for part in descriptors if part)
+            claim_text = f"{player.name} is listed in the current {team} squad"
+            if detail:
+                claim_text = f"{claim_text}: {detail}"
+            claims.append(
+                EvidenceClaim(
+                    claim_type="squad_roster",
+                    subject=player.name,
+                    claim=claim_text,
+                    team=team,
+                    player=player.name,
+                    impact=impact,
+                    confidence=0.52,
+                    source_title=player.source_title,
+                    source_url=player.source_url,
+                    **_source_metadata(
+                        source_title=player.source_title,
+                        source_url=player.source_url,
+                        extraction_method="wikipedia_current_squad_template",
+                    ),
+                    metrics=metrics,
+                )
+            )
+    return _dedupe_claims(claims)
 
 
 def public_probabilities(
@@ -642,6 +1870,12 @@ def public_probabilities(
     team_form_claims: list[EvidenceClaim],
     player_form_claims: list[EvidenceClaim],
     squad_depth_claims: list[EvidenceClaim],
+    match_history_items: list[NewsItem],
+    match_history_claims: list[EvidenceClaim],
+    tactical_items: list[NewsItem],
+    tactical_claims: list[EvidenceClaim],
+    official_squad_claims: list[EvidenceClaim],
+    known_players: dict[str, list[str]] | None = None,
 ) -> tuple[float, float, float, float]:
     market, stats, odds, news = synthetic_probabilities(home_team, away_team)
     profile_shift = _profile_trophy_signal(home_profile.extract) - _profile_trophy_signal(away_profile.extract)
@@ -651,6 +1885,8 @@ def public_probabilities(
     away_form = _form_signal(recent_results_news.get(away_team, []), away_team)
     home_form += _form_signal(team_scout_news.get(home_team, {}).get("recent_form", []), home_team)
     away_form += _form_signal(team_scout_news.get(away_team, {}).get("recent_form", []), away_team)
+    home_form += _form_signal(match_history_items, home_team)
+    away_form += _form_signal(match_history_items, away_team)
     stats = _clamp(stats + (home_form - away_form) * 0.006)
 
     home_mentions = _mention_count(match_news, home_team)
@@ -658,19 +1894,32 @@ def public_probabilities(
     if home_mentions or away_mentions:
         news += (home_mentions - away_mentions) * 0.004
 
-    home_availability_hits = _availability_hits(availability_news, home_team)
-    away_availability_hits = _availability_hits(availability_news, away_team)
+    home_availability_hits = _availability_hits(availability_news, home_team, known_players=known_players)
+    away_availability_hits = _availability_hits(availability_news, away_team, known_players=known_players)
     news += (away_availability_hits - home_availability_hits) * 0.006
 
-    home_x_hits = _availability_hits(x_items, home_team)
-    away_x_hits = _availability_hits(x_items, away_team)
+    home_x_hits = _availability_hits(x_items, home_team, known_players=known_players)
+    away_x_hits = _availability_hits(x_items, away_team, known_players=known_players)
     news += (away_x_hits - home_x_hits) * 0.008
 
     home_research_mentions = _mention_count(camel_items, home_team)
     away_research_mentions = _mention_count(camel_items, away_team)
+    home_tactical_mentions = _mention_count(tactical_items, home_team)
+    away_tactical_mentions = _mention_count(tactical_items, away_team)
     news += (home_research_mentions - away_research_mentions) * 0.002
+    news += (home_tactical_mentions - away_tactical_mentions) * 0.0015
     news += _claim_signal(
-        claims=availability_claims + x_claims + camel_claims + team_form_claims + player_form_claims + squad_depth_claims,
+        claims=(
+            availability_claims
+            + x_claims
+            + camel_claims
+            + team_form_claims
+            + player_form_claims
+            + squad_depth_claims
+            + match_history_claims
+            + tactical_claims
+            + official_squad_claims
+        ),
         home_team=home_team,
         away_team=away_team,
     )
@@ -703,6 +1952,14 @@ def public_findings_for_match(
     team_form_claims: list[EvidenceClaim],
     player_form_claims: list[EvidenceClaim],
     squad_depth_claims: list[EvidenceClaim],
+    match_history_items: list[NewsItem],
+    match_history_claims: list[EvidenceClaim],
+    tactical_items: list[NewsItem],
+    official_squad_items: dict[str, list[NewsItem]],
+    squad_rosters: dict[str, list[SquadPlayer]],
+    tactical_claims: list[EvidenceClaim],
+    official_squad_claims: list[EvidenceClaim],
+    squad_roster_claims: list[EvidenceClaim],
     include_x: bool,
     include_camel: bool,
 ) -> list[Finding]:
@@ -730,30 +1987,32 @@ def public_findings_for_match(
         f"{home_team}: {_titles(team_scout_news.get(home_team, {}).get('squad_depth', []), count=2)} "
         f"{away_team}: {_titles(team_scout_news.get(away_team, {}).get('squad_depth', []), count=2)}"
     )
+    match_history_titles = (
+        _titles(match_history_items, count=4) if match_history_items else _claim_titles(match_history_claims, count=4)
+    )
+    match_history_citations = _claim_citations(match_history_claims) or _citations(match_history_items)
+    tactical_titles = _titles(tactical_items, count=4)
+    tactical_citations = _citations(tactical_items)
+    official_items = _team_items(official_squad_items, max_per_team=3)
+    official_titles = (
+        f"{home_team}: {_titles(official_squad_items.get(home_team, []), count=2)} "
+        f"{away_team}: {_titles(official_squad_items.get(away_team, []), count=2)}"
+    )
+    roster_players = squad_rosters.get(home_team, []) + squad_rosters.get(away_team, [])
+    roster_titles = (
+        f"{home_team}: {_squad_roster_titles(squad_rosters.get(home_team, []), count=4)} "
+        f"{away_team}: {_squad_roster_titles(squad_rosters.get(away_team, []), count=4)}"
+    )
+    roster_citations = list(dict.fromkeys(player.source_url for player in roster_players if player.source_url))[:4]
     availability_titles = _titles(availability_news, count=4)
     availability_citations = _citations(availability_news)
     x_titles = _titles(x_items, count=4)
     x_citations = _citations(x_items)
     camel_titles = _titles(camel_items, count=4)
     camel_citations = _citations(camel_items)
+    profile_claims = _team_profile_claims(home_profile, away_profile)
 
     findings = [
-        _finding(
-            round_id=round_id,
-            key="public_baseline",
-            scout_name="public_baseline_scout",
-            access_level="public",
-            source_type="market",
-            finding_name="public_data_baseline",
-            home_probability=market,
-            market=market,
-            confidence=0.52,
-            summary=(
-                f"Public-data baseline for {home_team} vs {away_team}. It uses the KG match identity plus "
-                "public team profiles and news visibility; it is not a bookmaker odds feed."
-            ),
-            citations=[home_profile.page_url, away_profile.page_url],
-        ),
         _finding(
             round_id=round_id,
             key="team_profiles_recent_results",
@@ -771,6 +2030,7 @@ def public_findings_for_match(
                 f"Recent-result headlines: {recent_titles}"
             ),
             citations=[home_profile.page_url, away_profile.page_url] + recent_citations,
+            evidence_claims=[claim.to_dict() for claim in profile_claims],
         ),
         _finding(
             round_id=round_id,
@@ -840,9 +2100,86 @@ def public_findings_for_match(
             citations=_citations(squad_depth_items),
             evidence_claims=[claim.to_dict() for claim in squad_depth_claims],
         ),
+        _finding(
+            round_id=round_id,
+            key="official_squad_sources",
+            scout_name="official_squad_scout",
+            access_level="public",
+            source_type="lineup",
+            finding_name="official_squad_and_roster_read",
+            home_probability=news,
+            market=market,
+            confidence=0.56 if official_items else 0.12,
+            summary=(
+                "Fetched official-ish squad, roster, federation, FIFA, call-up, and availability sources. "
+                f"Top items: {official_titles}"
+            ),
+            citations=_citations(official_items),
+            evidence_claims=[claim.to_dict() for claim in official_squad_claims],
+        ),
+        _finding(
+            round_id=round_id,
+            key="squad_roster",
+            scout_name="squad_roster_scout",
+            access_level="public",
+            source_type="lineup",
+            finding_name="structured_current_squad_roster_read",
+            home_probability=None,
+            market=market,
+            confidence=0.52 if roster_players else 0.0,
+            summary=(
+                "Fetched structured current-squad roster templates for both teams. "
+                f"Top players: {roster_titles}"
+            ),
+            citations=roster_citations,
+            evidence_claims=[claim.to_dict() for claim in squad_roster_claims],
+        ),
+        _finding(
+            round_id=round_id,
+            key="match_history",
+            scout_name="match_history_scout",
+            access_level="public",
+            source_type="stats",
+            finding_name="head_to_head_and_match_history_read",
+            home_probability=stats,
+            market=market,
+            confidence=0.52 if match_history_items or match_history_claims else 0.14,
+            summary=(
+                "Fetched head-to-head, previous meetings, recent match-history, and result archive sources. "
+                f"Top items: {match_history_titles}"
+            ),
+            citations=match_history_citations,
+            evidence_claims=[claim.to_dict() for claim in match_history_claims],
+        ),
+        _finding(
+            round_id=round_id,
+            key="tactical_matchup",
+            scout_name="tactical_matchup_scout",
+            access_level="public",
+            source_type="stats",
+            finding_name="tactical_style_and_key_matchups_read",
+            home_probability=stats,
+            market=market,
+            confidence=0.48 if tactical_items else 0.12,
+            summary=(
+                "Fetched tactical, lineup, key-player, formation, pressing, transition, set-piece, and matchup sources. "
+                f"Top items: {tactical_titles}"
+            ),
+            citations=tactical_citations,
+            evidence_claims=[claim.to_dict() for claim in tactical_claims],
+        ),
     ]
+    findings = _drop_empty_specialized_findings(
+        findings,
+        {
+            "official_squad_sources": bool(official_items or official_squad_claims),
+            "squad_roster": bool(roster_players or squad_roster_claims),
+            "match_history": bool(match_history_items or match_history_claims),
+            "tactical_matchup": bool(tactical_items or tactical_claims),
+        },
+    )
 
-    if include_x:
+    if include_x and (x_items or x_claims):
         findings.append(
             _finding(
                 round_id=round_id,
@@ -857,27 +2194,24 @@ def public_findings_for_match(
                 summary=(
                     "Fetched X/social availability signals through the configured external endpoint. "
                     f"Top items: {x_titles}"
-                    if x_items
-                    else "X availability scout was enabled, but SCRAPECREATORS_X_SEARCH_URL/COLONY_X_SEARCH_URL "
-                    "and SCRAPECREATORS_API_KEY/COLONY_X_API_KEY are not configured or returned no items."
                 ),
-                citations=x_citations if x_items else ["local://colony/x-scout-not-configured"],
+                citations=x_citations,
                 cost=0.0,
                 evidence_claims=[claim.to_dict() for claim in x_claims],
             )
         )
 
-    if include_camel:
+    if include_camel and (camel_items or camel_claims):
         native_requested = os.environ.get("COLONY_CAMEL_USE_NATIVE", "").strip() == "1"
         native_returned_items = any(item.source.startswith("CAMEL:") for item in camel_items)
         if native_requested and native_returned_items:
             native_status = "native CAMEL ChatAgent + SearchToolkit returned research items"
         elif native_requested and _camel_available():
-            native_status = "native CAMEL was requested but returned no usable structured items; used direct DDGS/web fallback"
+            native_status = "native CAMEL was requested but returned no usable structured items; direct DDGS/web collector produced the usable items"
         elif _camel_available():
-            native_status = "CAMEL package detected, but native mode is disabled; used direct DDGS/web fallback"
+            native_status = "CAMEL package detected, but native mode is disabled; direct DDGS/web collector produced the usable items"
         else:
-            native_status = "CAMEL package not installed; used direct DDGS/web fallback"
+            native_status = "CAMEL package not installed; direct DDGS/web collector produced the usable items"
         findings.append(
             _finding(
                 round_id=round_id,
@@ -902,47 +2236,31 @@ def public_findings_for_match(
     findings.extend(
         [
             _finding(
-            round_id=round_id,
-            key="odds_unavailable",
-            scout_name="odds_availability_scout",
-            access_level="public",
-            source_type="odds",
-            finding_name="odds_unavailable_public_test",
-            home_probability=odds,
-            market=market,
-            confidence=0.22,
-            summary=(
-                "No real odds provider is configured for this public-data test. "
-                "This finding carries a low-confidence calibrated placeholder until an odds API is attached."
+                round_id=round_id,
+                key="google_news",
+                scout_name="google_news_scout",
+                access_level="public",
+                source_type="news",
+                finding_name="news_visibility_read",
+                home_probability=news,
+                market=market,
+                confidence=0.48 if match_news else 0.2,
+                summary=f"Fetched Google News RSS titles for the match query. Top items: {match_titles}",
+                citations=match_citations,
+                evidence_claims=[
+                    claim.to_dict()
+                    for claim in _extract_claims_from_text(
+                        text=match_titles,
+                        source_title="Google News match query",
+                        source_url="https://news.google.com/",
+                        home_team=home_team,
+                        away_team=away_team,
+                    )
+                ],
             ),
-            citations=["local://colony/public-data-mode"],
-        ),
-            _finding(
-            round_id=round_id,
-            key="google_news",
-            scout_name="google_news_scout",
-            access_level="public",
-            source_type="news",
-            finding_name="news_visibility_read",
-            home_probability=news,
-            market=market,
-            confidence=0.48 if match_news else 0.2,
-            summary=f"Fetched Google News RSS titles for the match query. Top items: {match_titles}",
-            citations=match_citations,
-            evidence_claims=[
-                claim.to_dict()
-                for claim in _extract_claims_from_text(
-                    text=match_titles,
-                    source_title="Google News match query",
-                    source_url="https://news.google.com/",
-                    home_team=home_team,
-                    away_team=away_team,
-                )
-            ],
-        ),
         ]
     )
-    return findings
+    return [finding for finding in findings if finding.evidence_claims]
 
 
 def _cached_json(path: Path, url: str, *, refresh: bool, timeout_seconds: int) -> dict[str, Any]:
@@ -1072,8 +2390,10 @@ def _extract_claims_from_text(
     text: str,
     source_title: str,
     source_url: str,
+    source_published: str = "",
     home_team: str,
     away_team: str,
+    known_players: dict[str, list[str]] | None = None,
 ) -> list[EvidenceClaim]:
     claims: list[EvidenceClaim] = []
     for sentence in _sentences(text):
@@ -1081,7 +2401,12 @@ def _extract_claims_from_text(
         claim_type = _claim_type(lowered)
         if claim_type is None:
             continue
-        subject, team, player = _claim_subject(sentence, home_team=home_team, away_team=away_team)
+        subject, team, player = _claim_subject(
+            sentence,
+            home_team=home_team,
+            away_team=away_team,
+            known_players=known_players,
+        )
         if team is None and player is None:
             continue
         if claim_type == "injury_availability" and not _has_negative_availability_signal(lowered):
@@ -1102,6 +2427,18 @@ def _extract_claims_from_text(
                 confidence=_claim_confidence(claim_type, lowered, source_title=source_title, source_url=source_url),
                 source_title=source_title,
                 source_url=source_url,
+                **_source_metadata(
+                    source_title=source_title,
+                    source_url=source_url,
+                    source_published=source_published,
+                    extraction_method="heuristic_sentence",
+                ),
+                metrics=_claim_metrics_for_match(
+                    claim_type,
+                    sentence,
+                    home_team=home_team,
+                    away_team=away_team,
+                ),
             )
         )
     return claims
@@ -1132,9 +2469,24 @@ def _claim_type(lowered_sentence: str) -> str | None:
     if any(
         word in lowered_sentence
         for word in (
+            "head-to-head",
+            "head to head",
+            "h2h",
+            "previous meeting",
+            "previous meetings",
+            "met previously",
+            "last meeting",
+        )
+    ):
+        return "match_history"
+    if any(
+        word in lowered_sentence
+        for word in (
             "recent form",
             "last match",
             "last matches",
+            "last five",
+            "last 10",
             "unbeaten",
             "winning streak",
             "form guide",
@@ -1145,22 +2497,45 @@ def _claim_type(lowered_sentence: str) -> str | None:
         return "recent_form"
     if _has_player_form_signal(lowered_sentence):
         return "player_form"
+    if any(
+        word in lowered_sentence
+        for word in (
+            "tactical",
+            "tactics",
+            "pressing",
+            "counterattack",
+            "counter-attack",
+            "transition",
+            "low block",
+            "high line",
+            "set piece",
+            "set-piece",
+            "key matchup",
+            "key matchups",
+        )
+    ):
+        return "tactical"
     if any(word in lowered_sentence for word in ("lineup", "line-up", "starting 11", "starting xi", "predicted xi", "bench", "formation")):
         return "lineup"
-    if any(word in lowered_sentence for word in ("tactical", "pressing", "counterattack", "counter-attack", "low block", "set piece", "set-piece")):
-        return "tactical"
     if any(word in lowered_sentence for word in ("prediction", "preview", "odds", "pick", "favorite", "favourite")):
         return "market_preview"
     return None
 
 
-def _claim_subject(sentence: str, *, home_team: str, away_team: str) -> tuple[str, str | None, str | None]:
+def _claim_subject(
+    sentence: str,
+    *,
+    home_team: str,
+    away_team: str,
+    known_players: dict[str, list[str]] | None = None,
+) -> tuple[str, str | None, str | None]:
     lowered = sentence.lower()
     for team in (home_team, away_team):
-        players = STAR_PLAYERS.get(team, [])
+        players = sorted(_player_aliases_for_team(team, known_players=known_players), key=len, reverse=True)
         for player in players:
-            if player in lowered:
-                return player.title(), team, player.title()
+            if _alias_in_text(player, lowered):
+                canonical = _canonical_player_name(player, team=team, known_players=known_players)
+                return canonical, team, canonical
     inferred_player = _infer_player_from_availability_sentence(sentence, home_team=home_team, away_team=away_team)
     if inferred_player:
         team = _team_from_sentence(sentence, home_team=home_team, away_team=away_team)
@@ -1169,6 +2544,42 @@ def _claim_subject(sentence: str, *, home_team: str, away_team: str) -> tuple[st
     if team:
         return team, team, None
     return "unknown", None, None
+
+
+def _player_aliases_for_team(team: str, *, known_players: dict[str, list[str]] | None = None) -> list[str]:
+    if known_players and team in known_players:
+        return known_players[team]
+    return STAR_PLAYERS.get(team, [])
+
+
+def _alias_in_text(alias: str, lowered_text: str) -> bool:
+    if not alias:
+        return False
+    folded_alias = _fold_text(alias)
+    folded_text = _fold_text(lowered_text)
+    return re.search(rf"(?<![\w-]){re.escape(folded_alias)}(?![\w-])", folded_text) is not None
+
+
+def _canonical_player_name(alias: str, *, team: str, known_players: dict[str, list[str]] | None = None) -> str:
+    alias_key = _fold_text(alias)
+    candidates: list[str] = []
+    if known_players and team in known_players:
+        candidates.extend(known_players[team])
+    candidates.extend(STAR_PLAYERS.get(team, []))
+    for candidate in candidates:
+        candidate_key = _fold_text(candidate)
+        if " " in candidate_key and candidate_key.endswith(f" {alias_key}"):
+            return candidate.title()
+    for candidate in candidates:
+        candidate_key = _fold_text(candidate)
+        if candidate_key == alias_key:
+            return candidate.title()
+    return alias.title()
+
+
+def _fold_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKD", text.lower())
+    return "".join(char for char in normalized if not unicodedata.combining(char))
 
 
 def _team_from_sentence(sentence: str, *, home_team: str, away_team: str) -> str | None:
@@ -1248,9 +2659,180 @@ def _claim_impact(claim_type: str, *, team: str | None, home_team: str, away_tea
         return "unknown"
     if claim_type == "injury_availability":
         return "negative_home" if team == home_team else "negative_away"
-    if claim_type in {"lineup", "tactical", "market_preview", "recent_form", "player_form"}:
+    if claim_type in {
+        "lineup",
+        "tactical",
+        "market_preview",
+        "recent_form",
+        "player_form",
+        "squad_roster",
+        "match_history",
+        "team_profile",
+        "team_history",
+    }:
         return "context_home" if team == home_team else "context_away"
     return "unknown"
+
+
+def _claim_metrics(claim_type: str, text: str) -> dict[str, Any]:
+    lowered = text.lower()
+    metrics: dict[str, Any] = {}
+    if claim_type == "injury_availability":
+        status = _availability_status(lowered)
+        if status:
+            metrics["availability_status"] = status
+        body_part = _injury_body_part(lowered)
+        if body_part:
+            metrics["injury_body_part"] = body_part
+    if claim_type in {"player_form", "recent_form"}:
+        for key, pattern in (
+            ("goals", r"\b(\d+(?:\.\d+)?)\s+goals?\b"),
+            ("assists", r"\b(\d+(?:\.\d+)?)\s+assists?\b"),
+            ("appearances", r"\b(\d+(?:\.\d+)?)\s+(?:appearances?|matches|games)\b"),
+            ("minutes", r"\b(\d+(?:,\d{3})*(?:\.\d+)?)\s+minutes?\b"),
+            ("clean_sheets", r"\b(\d+(?:\.\d+)?)\s+clean sheets?\b"),
+            ("blocked_shots", r"\b(\d+(?:\.\d+)?)\s+blocked shots?\b"),
+            ("key_passes_per_game", r"\b(\d+(?:\.\d+)?)\s+key passes?\s+(?:each|per)\s+game\b"),
+            ("pass_completion_pct", r"\b(\d+(?:\.\d+)?)%\s+pass completion\b"),
+            ("xg", r"\bxg\s*(?:of|output is|=|:)?\s*(\d+(?:\.\d+)?)\b"),
+            ("xa", r"\bxa\s*(?:of|output is|=|:)?\s*(\d+(?:\.\d+)?)\b"),
+        ):
+            value = _metric_number(pattern, lowered)
+            if value is not None:
+                metrics[key] = value
+        if "top scorer" in lowered or "leading goalscorer" in lowered:
+            metrics["role_signal"] = "top_scorer"
+    if claim_type == "match_history":
+        value = _metric_number(r"\blast\s+(\d+)\b", lowered)
+        if value is not None:
+            metrics["sample_matches"] = int(value)
+        season = _metric_number(r"\b(20\d{2})\s+results?\b", lowered)
+        if season is not None:
+            metrics["results_season_year"] = int(season)
+        if any(marker in lowered for marker in ("results", "scores", "fixtures", "schedule")):
+            metrics["archive_signal"] = "results_archive"
+    if claim_type in {"tactical", "lineup"}:
+        formation = _formation_pattern(lowered)
+        if formation:
+            metrics["formation"] = formation
+    if claim_type == "tactical":
+        if any(marker in lowered for marker in ("lineup", "line-up", "predicted xi", "starting xi")):
+            metrics["tactical_signal"] = "lineup"
+        elif "formation" in lowered:
+            metrics["tactical_signal"] = "formation"
+        elif "tactic" in lowered or "tactics" in lowered:
+            metrics["tactical_signal"] = "tactics"
+        elif "key players" in lowered:
+            metrics["tactical_signal"] = "key_players"
+    if claim_type == "team_history":
+        fifa_year = _metric_number(r"\bfifa since\s+(\d{4})\b", lowered)
+        if fifa_year is not None:
+            metrics["fifa_member_since_year"] = int(fifa_year)
+        confederation_year = _metric_number(
+            r"\b(?:conmebol|confederation of african football|caf)\s+since\s+(\d{4})\b",
+            lowered,
+        )
+        if confederation_year is None:
+            confederation_year = _metric_number(r"\bfounding member of [a-z ,]+ in\s+(\d{4})\b", lowered)
+        if confederation_year is not None:
+            metrics["confederation_member_since_year"] = int(confederation_year)
+    return metrics
+
+
+def _claim_metrics_for_match(
+    claim_type: str,
+    text: str,
+    *,
+    home_team: str,
+    away_team: str,
+) -> dict[str, Any]:
+    metrics = _claim_metrics(claim_type, text)
+    if claim_type == "match_history":
+        metrics.update(_historical_score_metrics(text, home_team=home_team, away_team=away_team))
+    return metrics
+
+
+def _historical_score_metrics(text: str, *, home_team: str, away_team: str) -> dict[str, Any]:
+    cleaned = _clean_text(text)
+    folded = _fold_text(cleaned)
+    home = _fold_text(home_team)
+    away = _fold_text(away_team)
+    patterns = (
+        (home_team, away_team, rf"\b{re.escape(home)}\b\D{{0,50}}\b(\d{{1,2}})\s*[-–]\s*(\d{{1,2}})\b\D{{0,50}}\b{re.escape(away)}\b"),
+        (away_team, home_team, rf"\b{re.escape(away)}\b\D{{0,50}}\b(\d{{1,2}})\s*[-–]\s*(\d{{1,2}})\b\D{{0,50}}\b{re.escape(home)}\b"),
+        (home_team, away_team, rf"\b{re.escape(home)}\b\D{{0,24}}\b(?:beat|defeated|won|lost|drew|draw)\b\D{{0,24}}\b{re.escape(away)}\b\D{{0,24}}\b(\d{{1,2}})\s*[-–]\s*(\d{{1,2}})\b"),
+        (away_team, home_team, rf"\b{re.escape(away)}\b\D{{0,24}}\b(?:beat|defeated|won|lost|drew|draw)\b\D{{0,24}}\b{re.escape(home)}\b\D{{0,24}}\b(\d{{1,2}})\s*[-–]\s*(\d{{1,2}})\b"),
+    )
+    for team_a, team_b, pattern in patterns:
+        match = re.search(pattern, folded)
+        if not match:
+            continue
+        score_a = int(match.group(1))
+        score_b = int(match.group(2))
+        return {
+            "historical_team_a": team_a,
+            "historical_team_b": team_b,
+            "historical_team_a_score": score_a,
+            "historical_team_b_score": score_b,
+            "historical_result_label": f"{team_a} {score_a}-{score_b} {team_b}",
+            "historical_result_signal": "explicit_score",
+        }
+    return {}
+
+
+def _availability_status(lowered_text: str) -> str:
+    if any(marker in lowered_text for marker in ("ruled out", "to miss", "misses", "unavailable", "withdrawn")):
+        return "out"
+    if any(marker in lowered_text for marker in ("doubtful", "doubt", "game-time")):
+        return "doubtful"
+    if any(marker in lowered_text for marker in ("injured", "injury", "sidelined")):
+        return "injured"
+    return ""
+
+
+def _injury_body_part(lowered_text: str) -> str:
+    body_parts = (
+        ("hamstring", "hamstring"),
+        ("calf", "calf"),
+        ("knee ligament", "knee_ligament"),
+        ("acl", "acl"),
+        ("knee", "knee"),
+        ("groin", "groin"),
+        ("ankle", "ankle"),
+        ("thigh", "thigh"),
+        ("foot", "foot"),
+        ("shoulder", "shoulder"),
+        ("pubalgia", "pubalgia"),
+        ("muscle", "muscle"),
+    )
+    for marker, label in body_parts:
+        if marker in lowered_text:
+            return label
+    return ""
+
+
+def _formation_pattern(lowered_text: str) -> str:
+    match = re.search(r"\b([1-5](?:-[1-5]){2,4})\b", lowered_text)
+    if not match:
+        return ""
+    parts = [int(part) for part in match.group(1).split("-")]
+    if not 8 <= sum(parts) <= 11:
+        return ""
+    return match.group(1)
+
+
+def _metric_number(pattern: str, lowered_text: str) -> float | int | None:
+    match = re.search(pattern, lowered_text)
+    if not match:
+        return None
+    raw = match.group(1).replace(",", "")
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    if value.is_integer():
+        return int(value)
+    return round(value, 4)
 
 
 def _has_negative_availability_signal(lowered_sentence: str) -> bool:
@@ -1343,6 +2925,13 @@ def _has_player_form_signal(lowered_sentence: str) -> bool:
         "leading goalscorer",
         "performance",
         "performances",
+        "rating",
+        "ratings",
+        "xg",
+        "xa",
+        "shots",
+        "chances created",
+        "progressive passes",
     )
     generic_only = (
         "key player",
@@ -1364,9 +2953,12 @@ def _claim_confidence(claim_type: str, lowered_sentence: str, *, source_title: s
         "injury_availability": 0.72,
         "recent_form": 0.56,
         "player_form": 0.54,
+        "match_history": 0.5,
         "lineup": 0.58,
         "tactical": 0.45,
         "market_preview": 0.35,
+        "team_profile": 0.46,
+        "team_history": 0.5,
     }.get(claim_type, 0.3)
     if "confirmed" in lowered_sentence:
         confidence += 0.08
@@ -1409,6 +3001,141 @@ def _source_quality_adjustment(*, source_title: str, source_url: str) -> float:
     if any(marker in source for marker in weak):
         adjustment -= 0.08
     return adjustment
+
+
+def _source_metadata(
+    *,
+    source_title: str,
+    source_url: str,
+    source_published: str = "",
+    extraction_method: str,
+) -> dict[str, Any]:
+    domain = _source_domain(source_url)
+    recency = _source_recency_metadata(source_published)
+    return {
+        "source_published": source_published,
+        **recency,
+        "source_domain": domain,
+        "source_kind": _source_kind(source_title=source_title, source_url=source_url, domain=domain),
+        "source_quality": _source_quality_label(source_title=source_title, source_url=source_url, domain=domain),
+        "extraction_method": extraction_method,
+    }
+
+
+def _source_recency_metadata(source_published: str, *, today: date | None = None) -> dict[str, Any]:
+    published_date = _parse_source_date(source_published)
+    if published_date is None:
+        return {
+            "source_published_date": "",
+            "source_recency_days": None,
+            "source_recency_bucket": "",
+        }
+    today_value = today or date.today()
+    recency_days = max((today_value - published_date).days, 0)
+    return {
+        "source_published_date": published_date.isoformat(),
+        "source_recency_days": recency_days,
+        "source_recency_bucket": _source_recency_bucket(recency_days),
+    }
+
+
+def _parse_source_date(source_published: str) -> date | None:
+    raw = _clean_text(source_published)
+    if not raw:
+        return None
+    try:
+        parsed = parsedate_to_datetime(raw)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        parsed = None
+    if parsed is not None:
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc)
+        return parsed.date()
+    for pattern in ("%Y-%m-%d", "%Y/%m/%d", "%d %b %Y", "%d %B %Y"):
+        try:
+            return datetime.strptime(raw[:32], pattern).date()
+        except ValueError:
+            continue
+    iso_match = re.search(r"\b(20\d{2})[-/](\d{1,2})[-/](\d{1,2})\b", raw)
+    if iso_match:
+        try:
+            return date(int(iso_match.group(1)), int(iso_match.group(2)), int(iso_match.group(3)))
+        except ValueError:
+            return None
+    return None
+
+
+def _source_recency_bucket(recency_days: int) -> str:
+    if recency_days <= 7:
+        return "last_7_days"
+    if recency_days <= 30:
+        return "last_30_days"
+    if recency_days <= 180:
+        return "last_180_days"
+    if recency_days <= 365:
+        return "last_year"
+    return "older"
+
+
+def _source_domain(source_url: str) -> str:
+    if not source_url:
+        return ""
+    parsed = urllib.parse.urlparse(source_url)
+    return parsed.netloc.lower().removeprefix("www.")
+
+
+def _source_kind(*, source_title: str, source_url: str, domain: str) -> str:
+    source = f"{source_title} {source_url} {domain}".lower()
+    if source_url.startswith("telegram://"):
+        return "social"
+    if any(marker in source for marker in ("fifa.com", "federation", "official", ".ma", ".br")):
+        return "official"
+    if "wikipedia" in source:
+        return "reference"
+    if any(marker in source for marker in ("espn", "bbc", "reuters", "apnews", "associated press", "the athletic")):
+        return "news"
+    if any(marker in source for marker in ("fbref", "transfermarkt", "sofascore", "flashscore", "statbunker", "opta")):
+        return "stats"
+    if "google" in source or "duckduckgo" in source or "ddgs" in source:
+        return "search"
+    return "web"
+
+
+def _source_quality_label(*, source_title: str, source_url: str, domain: str) -> str:
+    source = f"{source_title} {source_url} {domain}".lower()
+    strong = (
+        "fifa.com",
+        "bbc",
+        "espn",
+        "reuters",
+        "apnews",
+        "associated press",
+        "the athletic",
+        "rotowire",
+        "flashscore",
+        "fbref",
+        "transfermarkt",
+        "sofascore",
+        "opta",
+    )
+    weak = (
+        "tiktok",
+        "youtube",
+        "reddit",
+        "pinterest",
+        "prediction",
+        "predictions",
+        "boostmatch",
+        "tips",
+        "betting",
+        "pick",
+        "wc26lineups",
+    )
+    if any(marker in source for marker in weak):
+        return "weak"
+    if any(marker in source for marker in strong):
+        return "strong"
+    return "medium"
 
 
 def _claim_signal(*, claims: list[EvidenceClaim], home_team: str, away_team: str) -> float:
@@ -1675,6 +3402,7 @@ def _finding(
     cost: float = 0.0,
     evidence_claims: list[dict] | None = None,
 ) -> Finding:
+    admissible_claims = _admissible_evidence_claims(evidence_claims or [])
     return Finding(
         finding_id=f"{round_id}:{key}",
         scout_name=scout_name,
@@ -1687,8 +3415,37 @@ def _finding(
         cost=cost,
         citations=citations,
         summary=summary,
-        evidence_claims=evidence_claims or [],
+        evidence_claims=admissible_claims,
     )
+
+
+def _admissible_evidence_claims(claims: list[dict]) -> list[dict]:
+    admissible: list[dict] = []
+    for claim in claims:
+        if not claim.get("claim_type") or not claim.get("claim"):
+            continue
+        if not claim.get("source_url") and not claim.get("source_title"):
+            continue
+        if str(claim.get("source_quality") or "").lower() == "weak":
+            continue
+        if str(claim.get("source_kind") or "").lower() == "search" and str(
+            claim.get("source_quality") or ""
+        ).lower() != "strong":
+            continue
+        if str(claim.get("impact") or "").lower() == "unknown":
+            continue
+        admissible.append(claim)
+    return admissible
+
+
+def _drop_empty_specialized_findings(findings: list[Finding], keep_by_key: dict[str, bool]) -> list[Finding]:
+    kept: list[Finding] = []
+    for finding in findings:
+        key = finding.finding_id.rsplit(":", 1)[-1]
+        if key in keep_by_key and not keep_by_key[key]:
+            continue
+        kept.append(finding)
+    return kept
 
 
 def _profile_trophy_signal(text: str) -> float:
@@ -1719,26 +3476,38 @@ def _form_signal(items: list[NewsItem], team: str) -> float:
     return max(min(signal, 4.0), -4.0)
 
 
-def _availability_hits(items: list[NewsItem], team: str) -> int:
-    players = STAR_PLAYERS.get(team, [])
+def _availability_hits(
+    items: list[NewsItem],
+    team: str,
+    *,
+    known_players: dict[str, list[str]] | None = None,
+) -> int:
+    players = _player_aliases_for_team(team, known_players=known_players)
     hits = 0
     for item in items:
         title = item.title.lower()
         has_availability_signal = any(word in title for word in ("injury", "injured", "withdraw", "sidelined", "doubt", "miss"))
         mentions_team = team.lower() in title
-        mentions_player = any(player in title for player in players)
+        mentions_player = any(_alias_in_text(player, title) for player in players)
         if has_availability_signal and (mentions_team or mentions_player):
             hits += 1
     return hits
 
 
 def _titles(items: list[NewsItem], count: int = 3) -> str:
-    return "; ".join(item.title for item in items[:count]) or "No Google News RSS items returned."
+    return "; ".join(item.title for item in items[:count])
+
+
+def _squad_roster_titles(players: list[SquadPlayer], count: int = 4) -> str:
+    return "; ".join(
+        " ".join(part for part in (player.name, f"({player.position})" if player.position else "") if part)
+        for player in players[:count]
+    )
 
 
 def _citations(items: list[NewsItem], count: int = 4) -> list[str]:
     citations = [item.link for item in items[:count] if item.link]
-    return citations or ["https://news.google.com/"]
+    return citations
 
 
 def _shorten(text: str, limit: int = 220) -> str:

@@ -17,6 +17,7 @@ proving an ant can actually trade).
 | `pm_client.py` | Builds an authenticated `ClobClient` (wallet + L2 API creds) | Yes |
 | `check_account.py` | Address, derived API creds, USDC balance/allowance; `--approve` sets allowance | Yes |
 | `place_test_trade.py` | Builds + (only on demand) posts ONE tiny order; dry-run by default | Yes |
+| `execute_colony_bets.py` | Converts Colony debate forecasts into a capped 2-3 agent trade plan, then optionally posts orders | Yes for posting |
 | `.env` / `.env.test` | Your real secrets / test-order knobs (both gitignored) | — |
 
 ## Quick start
@@ -42,6 +43,54 @@ python polymarket/place_test_trade.py                       # dry run
 #   ...set PM_DRY_RUN=false in .env.test...
 python polymarket/place_test_trade.py --execute             # real, tiny order
 ```
+
+## Debate-driven bets
+
+After a Colony debate run, use the generated `forecasts.csv` as the input for a
+small Polymarket trade plan. For the first live test, keep the data loop simple:
+let the agents debate with the datasources we already have, then refresh the
+market prices roughly 10 minutes before the game and buy whichever side has the
+better live edge for the strongest few agents.
+
+```bash
+python polymarket/execute_colony_bets.py \
+  --run-dir colony/runs/<run_id> \
+  --home-token-id <HOME_CLOB_TOKEN_ID> \
+  --away-token-id <AWAY_CLOB_TOKEN_ID> \
+  --max-agents 3
+```
+
+If you already copied the 10-minute prices from the order book, pass them
+explicitly to avoid a live price fetch:
+
+```bash
+python polymarket/execute_colony_bets.py \
+  --run-dir colony/runs/<run_id> \
+  --home-token-id <HOME_CLOB_TOKEN_ID> \
+  --away-token-id <AWAY_CLOB_TOKEN_ID> \
+  --home-ask 0.61 \
+  --away-ask 0.42 \
+  --max-agents 3 \
+  --max-total-usdc 2
+```
+
+By default this only prints the plan. To post real orders, the same double guard
+is required:
+
+```bash
+# set PM_DRY_RUN=false in polymarket/.env.test first
+python polymarket/execute_colony_bets.py ... --execute
+```
+
+Useful knobs:
+
+- `--max-agents 2` or `--max-agents 3`: only a few ants make the first real bet.
+- `--max-total-usdc`: hard cap across all selected ants.
+- `--max-per-agent-usdc`: per-ant cap.
+- `--lock-forecast-side`: keep each ant on its original home/away decision instead
+  of reselecting the better side from the latest ask prices.
+- `--include-passes`: allow agents that passed during the debate to become
+  eligible if the late price creates a fresh edge.
 
 ## Wallet setup (the part you own)
 
@@ -73,6 +122,10 @@ Default state is fully safe: dry-run prints the order without posting.
 - **Execution:** `place_test_trade.py` proves the order path end-to-end. Later,
   an ant's `Forecast` (`side` + `stake`) maps onto `OrderArgs` so the colony's
   sealed bets can settle as real CLOB orders.
+- **Debate to trade:** `execute_colony_bets.py` is that first bridge: it reads
+  `forecasts.csv`, recomputes live edge from the current home/away asks, selects
+  at most a few capped agents, and only posts when the dry-run guard is disabled
+  and `--execute` is passed.
 
 ## Notes
 
