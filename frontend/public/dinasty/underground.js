@@ -358,6 +358,49 @@ DN.underground = (function () {
     const list = opts.length ? opts : ns;
     return list[Math.floor(Math.random() * list.length)] || fromId;
   }
+  // ---- A* on the chamber graph ----------------------------------------
+  // Edge weight = euclidean distance between rooms. Heuristic = straight-
+  // line distance to goal. 'ent' is excluded (above-ground).
+  function pathfind(startId, goalId) {
+    if (!ADJ || startId === goalId) return [];
+    const open = new Set([startId]);
+    const came = {};
+    const g = { [startId]: 0 };
+    const h = (id) => {
+      const a = node(id), b = node(goalId);
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    };
+    const f = { [startId]: h(startId) };
+    while (open.size) {
+      // pick the open node with the smallest f
+      let cur = null, bestF = Infinity;
+      for (const id of open) if ((f[id] ?? Infinity) < bestF) { bestF = f[id]; cur = id; }
+      if (cur === null) break;
+      if (cur === goalId) {
+        // reconstruct
+        const path = [];
+        let n = cur;
+        while (came[n]) { path.unshift(n); n = came[n]; }
+        return path; // excludes startId, includes goalId
+      }
+      open.delete(cur);
+      const neighbors = (ADJ[cur] || []).filter(n => n !== 'ent');
+      for (const nb of neighbors) {
+        const a = node(cur), b = node(nb);
+        const w = Math.hypot(a.x - b.x, a.y - b.y);
+        const tentative = (g[cur] ?? Infinity) + w;
+        if (tentative < (g[nb] ?? Infinity)) {
+          came[nb] = cur; g[nb] = tentative; f[nb] = tentative + h(nb);
+          open.add(nb);
+        }
+      }
+    }
+    return []; // unreachable
+  }
+  function pickGoal(fromId) {
+    const candidates = ROOMS.filter(r => r.id !== fromId && r.id !== 'queen' && r.id !== 'nursery');
+    return candidates[Math.floor(Math.random() * candidates.length)].id;
+  }
 
   function buildAgents() {
     buildGraph();
@@ -454,6 +497,9 @@ DN.underground = (function () {
         // Always start milling so initial frame doesn't snap onto a curve.
         mode: 'mill',
         fromId: room.id, toId: pickNeighbor(room.id),
+        // multi-hop plan: list of room ids to traverse (filled in by A*)
+        plan: [],
+        goalId: null,
         t: Math.random(),
         // smooth elliptical orbit inside the room
         orbitR: room.r * (0.35 + Math.random() * 0.4),
@@ -509,6 +555,60 @@ DN.underground = (function () {
 
   U.exit = function () { U.active = false; };
 
+  // ---- WASD pan + scroll-zoom + slight mouse tilt --------------------
+  // While underground is active, hold WASD to pan the camera across the
+  // colony cross-section; scroll wheel zooms in/out by adjusting Z. Tiny
+  // mouse-position-based tilt keeps the view feeling alive.
+  const fpKeys = {};
+  let fpZoom = 0; // -1..1 input; integrates into camera Z
+  let fpMouseTx = 0, fpMouseTy = 0;
+  addEventListener('keydown', e => { fpKeys[e.code] = true; });
+  addEventListener('keyup', e => { fpKeys[e.code] = false; });
+  addEventListener('wheel', e => {
+    if (!U.active) return;
+    fpZoom += Math.sign(e.deltaY) * 0.06;
+    fpZoom = Math.max(-1.2, Math.min(1.2, fpZoom));
+  }, { passive: true });
+  addEventListener('mousemove', e => {
+    if (!U.active) return;
+    fpMouseTx = (e.clientX / innerWidth) * 2 - 1;
+    fpMouseTy = -((e.clientY / innerHeight) * 2 - 1);
+  });
+  U._fpUpdate = function (dt) {
+    if (!camera || !U.active) return;
+    // pan via WASD when camera isn't currently dollying to a focused chamber
+    if (!U._focusTween) {
+      let vx = 0, vy = 0;
+      if (fpKeys['KeyW'] || fpKeys['ArrowUp']) vy += 1;
+      if (fpKeys['KeyS'] || fpKeys['ArrowDown']) vy -= 1;
+      if (fpKeys['KeyA'] || fpKeys['ArrowLeft']) vx -= 1;
+      if (fpKeys['KeyD'] || fpKeys['ArrowRight']) vx += 1;
+      const boost = (fpKeys['ShiftLeft'] || fpKeys['ShiftRight']) ? 2.2 : 1.0;
+      if (vx || vy) {
+        const norm = 1 / Math.hypot(vx, vy);
+        const sp = 22 * boost * dt;
+        camera.position.x += vx * norm * sp;
+        camera.position.y += vy * norm * sp;
+        U._camLook.x += vx * norm * sp;
+        U._camLook.y += vy * norm * sp;
+      }
+      // soft clamp to colony bounds so user can't fly off into the void
+      camera.position.x = Math.max(-50, Math.min(50, camera.position.x));
+      camera.position.y = Math.max(-50, Math.min(20, camera.position.y));
+      U._camLook.x = Math.max(-50, Math.min(50, U._camLook.x));
+      U._camLook.y = Math.max(-50, Math.min(20, U._camLook.y));
+      // scroll zoom integrates camera Z toward target
+      const baseZ = 58;
+      const targetZ = baseZ - fpZoom * 28; // forward when scrolling down
+      camera.position.z += (targetZ - camera.position.z) * Math.min(1, dt * 4);
+    }
+    // micro-tilt the lookAt by the mouse position so the view feels alive
+    const tx = fpMouseTx * 1.2, ty = fpMouseTy * 0.6;
+    const tiltedLook = U._camLook.clone();
+    tiltedLook.x += tx; tiltedLook.y += ty;
+    camera.lookAt(tiltedLook);
+  };
+
   U.pickables = function () {
     return ROOMS.map(r => { const g = U.rooms[r.id]; g.userData.room = r; return g.children[0]; });
   };
@@ -538,10 +638,14 @@ DN.underground = (function () {
         faceAng = Math.atan2(Math.cos(a.orbitPh) * a.orbitR * 0.55, -Math.sin(a.orbitPh) * a.orbitR);
         a.millLeft -= dt;
         if (a.millLeft <= 0) {
-          // start a tunnel walk to a connected neighbor — but first pause
-          // for a moment at the junction with antenna twitch (the body
-          // rotates slightly side-to-side while deciding).
-          const nextId = pickNeighbor(a.roomId);
+          // If no plan, pick a goal and compute multi-hop A* path. Each
+          // tunnel transition just consumes the next hop in plan, no
+          // re-planning between rooms.
+          if (!a.plan || !a.plan.length) {
+            a.goalId = pickGoal(a.roomId);
+            a.plan = pathfind(a.roomId, a.goalId);
+          }
+          const nextId = a.plan && a.plan.length ? a.plan[0] : pickNeighbor(a.roomId);
           const seg = tunnelFor(a.roomId, nextId);
           if (seg) {
             a.mode = 'junction';
@@ -550,6 +654,8 @@ DN.underground = (function () {
             a.twitchPh = 0;
             a.t = 0;
           } else {
+            // dead end — reset and re-plan next tick
+            a.plan = []; a.goalId = null;
             a.millLeft = 3 + Math.random() * 4;
           }
         }
@@ -590,7 +696,14 @@ DN.underground = (function () {
         if (a.t >= 1) {
           a.mode = 'mill';
           a.roomId = a.toId;
-          a.millLeft = 4 + Math.random() * 8;
+          // consume this hop; if plan has more, take a shorter rest before
+          // continuing — agents transit busy chambers briefly when en route
+          if (a.plan && a.plan.length && a.plan[0] === a.toId) a.plan.shift();
+          const arrivedAtGoal = !a.plan || !a.plan.length;
+          a.millLeft = arrivedAtGoal
+            ? (5 + Math.random() * 8)   // long rest at the goal
+            : (1.2 + Math.random() * 1.6); // brief transit pause
+          if (arrivedAtGoal) { a.plan = []; a.goalId = null; }
           const r = node(a.roomId);
           a.orbitR = r.r * (0.35 + Math.random() * 0.45);
           a.orbitW = (Math.random() < 0.5 ? -1 : 1) * (0.5 + Math.random() * 0.5);
@@ -681,6 +794,24 @@ DN.underground = (function () {
       });
     }
 
+    // debug overlay: visualise tracked agent 0's current A* plan
+    if (U.debugVisible && U._debugPathGeo && agents && agents[0]) {
+      const a = agents[0];
+      const nodes = [a.roomId].concat(a.plan || []);
+      const arr = U._debugPathGeo.attributes.position.array;
+      let n = 0;
+      // include current world position as the first point so the line
+      // starts at the ant rather than at the room center
+      arr[n++] = a.px; arr[n++] = a.py; arr[n++] = 1.6;
+      for (let i = 0; i < nodes.length && (n / 3) < 20; i++) {
+        const r = node(nodes[i]);
+        if (!r) continue;
+        arr[n++] = r.x; arr[n++] = r.y; arr[n++] = 1.6;
+      }
+      U._debugPathGeo.attributes.position.needsUpdate = true;
+      U._debugPathGeo.setDrawRange(0, n / 3);
+    }
+
     // chamber focus camera dolly
     if (U._focusTween && U._focusTween.t < 1) {
       const tw = U._focusTween;
@@ -688,8 +819,13 @@ DN.underground = (function () {
       const k = 1 - Math.pow(1 - tw.t, 3);
       camera.position.lerpVectors(tw.fromP, tw.toP, k);
       U._camLook.lerpVectors(tw.fromL, tw.toL, k);
+    } else if (U._focusTween && U._focusTween.t >= 1) {
+      U._focusTween = null; // release so WASD pan resumes
     }
-    if (U._camLook) camera.lookAt(U._camLook);
+    // WASD pan + zoom + mouse tilt — runs every frame, also writes lookAt
+    if (U._fpUpdate) U._fpUpdate(dt);
+    else if (U._camLook) camera.lookAt(U._camLook);
+
   };
 
   // ---- public: focus the camera on a chamber. Called from interactions.js
@@ -708,6 +844,51 @@ DN.underground = (function () {
 
   // ---- hover helpers used by interactions.js for tunnel-glow feedback --
   U.setHoverRoom = function (id) { U._hoverRoomId = id || null; };
+
+  // ---- debug overlay --------------------------------------------------
+  // Visualises the navigation graph: bright spheres at chamber nodes, the
+  // raw tunnel edges (as lines distinct from the pheromone glow), and a
+  // bright cyan polyline tracing one tracked agent's current A* plan. The
+  // overlay is a single Group toggled visible via U.toggleDebug().
+  U.debugVisible = false;
+  function ensureDebug() {
+    if (U.debugGroup) return U.debugGroup;
+    const grp = new THREE.Group();
+    grp.visible = false;
+    // node markers
+    const nodeMat = new THREE.MeshBasicMaterial({ color: 0x66E0FF, transparent: true, opacity: 0.85 });
+    ROOMS.forEach(r => {
+      const sph = new THREE.Mesh(new THREE.SphereGeometry(0.8, 12, 8), nodeMat);
+      sph.position.set(r.x, r.y, 1.5);
+      grp.add(sph);
+    });
+    // edge lines
+    const edgeMat = new THREE.LineBasicMaterial({ color: 0x66E0FF, transparent: true, opacity: 0.45 });
+    TUNNELS.forEach(([aId, bId]) => {
+      const a = node(aId), b = node(bId);
+      const g = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(a.x, a.y, 1.4),
+        new THREE.Vector3(b.x, b.y, 1.4)
+      ]);
+      grp.add(new THREE.Line(g, edgeMat));
+    });
+    // tracked agent path (rebuilt every frame when debug is on)
+    U._debugPathGeo = new THREE.BufferGeometry();
+    U._debugPathGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(20 * 3), 3));
+    U._debugPathGeo.setDrawRange(0, 0);
+    grp.add(new THREE.Line(U._debugPathGeo, new THREE.LineBasicMaterial({
+      color: 0xFF6BD6, transparent: true, opacity: 0.95, linewidth: 2
+    })));
+    scene.add(grp);
+    U.debugGroup = grp;
+    return grp;
+  }
+  U.toggleDebug = function () {
+    ensureDebug();
+    U.debugVisible = !U.debugVisible;
+    U.debugGroup.visible = U.debugVisible;
+    return U.debugVisible;
+  };
 
   U.resize = function () { if (camera) { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); } };
 
