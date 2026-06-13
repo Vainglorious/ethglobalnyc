@@ -1,0 +1,281 @@
+================================================================================
+FRONTEND — STATE OF THE FOLDER, LEARNINGS, AND IMPLEMENTATIONS
+Note date: 2026-06-13
+Path: ethglobalnyc/frontend/
+================================================================================
+
+--------------------------------------------------------------------------------
+0. ONE-LINE
+--------------------------------------------------------------------------------
+"COLONY — Living Intelligence": an interactive 3D (React + Three.js / R3F)
+visualization of the ant-colony forecasting swarm. It renders the colony as a
+living world — ants foraging on procedural terrain, debate pulses flying between
+agents, USDC stake flows arcing to nests — fed either by a local procedural
+simulation or by replaying the Python harness's JSONL event stream. This is the
+"make the loop legible" half of the hackathon thesis (see colony-hackathon-plan.md).
+
+
+--------------------------------------------------------------------------------
+1. TECH STACK
+--------------------------------------------------------------------------------
+- Language:      TypeScript (strict mode, ES2020 target)
+- UI:            React 18.3
+- 3D:            three r0.169 (WebGL2) + @react-three/fiber 8 + @react-three/drei 9
+- Post-FX:       @react-three/postprocessing (Bloom + Vignette)
+- State:         zustand 4.5 (two stores; SoA typed arrays for agents)
+- Math/helpers:  maath, three-mesh-bvh (imported, not heavily used)
+- Build:         Vite 5 (dev :5173, build -> dist/)
+- Screenshots:   Playwright (headless chromium)
+- Path alias:    @/* -> src/*   (tsconfig + vite.config.ts)
+
+Scripts:
+  npm run dev        vite dev server
+  npm run build      tsc --noEmit && vite build
+  npm run typecheck  tsc --noEmit
+  npm run preview    vite preview
+
+NOTE: there is NO top-level frontend README and NO .env file. All config is
+baked into source constants (see §8). The only README under frontend/ is
+webgpu-proto/README.md.
+
+
+--------------------------------------------------------------------------------
+2. ARCHITECTURE (src/)
+--------------------------------------------------------------------------------
+App.tsx        Pure composition: <Experience> (Canvas) + <HUD> + <Crosshair>.
+main.tsx       React root + global CSS import.
+
+components/
+  Experience.tsx   Top-level Canvas. Mounts <Engine> FIRST (so the sim frame
+                   callback runs before any renderer reads buffers), then all
+                   world objects, spatial UI cards, CameraRig, EffectComposer.
+                   Canvas: soft shadows, ACESFilmic tone mapping, high-perf GPU.
+  Engine.tsx       Simulation orchestrator. ONE useFrame (priority so it runs
+                   first) that each frame:
+                     1. stepSimulation(dt)  (hash rebuild -> pheromone ->
+                        domain -> boids)
+                     2. active sim source update (LocalSim or JsonlReplay)
+                     3. commBuffer.update(dt) / flowBuffer.update(dt) (age rings)
+                     4. throttled UI snapshots (~2Hz fps, ~8Hz ant/colony)
+                   Never touches React state in the hot path; writes typed arrays.
+                   Handles local<->replay source switching.
+
+  camera/CameraRig.tsx   Dual-camera state machine:
+                   - explore:   PointerLockControls + WASD, glued to terrain
+                                surface (EYE_HEIGHT 9.5)
+                   - strategic: OrbitControls around colony center
+                   - transition: ~2s lerp between the two; V key toggles.
+                   Key state cached in refs to avoid per-frame re-renders.
+
+  world/   (all InstancedMesh, single draw call each)
+    AntSwarm.tsx       The agents. One InstancedMesh, realistic ant geometry
+                       (gaster/thorax/head/legs/antennae). Per-instance color
+                       from role; verified -> gold tint; selected -> white.
+                       Orientation from velocity quaternion.
+    Colony.tsx         Nests: noise-displaced mounds, glowing hue-coded core,
+                       health ring, brood pile. Click to select colony.
+    Terrain.tsx        1100x1100 plane, 240x240 grid, CPU-displaced by
+                       terrainHeight(); biome color by altitude+slope
+                       (sand->grass->rock->snow). Click -> raycast + spatial-hash
+                       ant picker.
+    Water.tsx          MeshReflectorMaterial plane at WATER_LEVEL (-3.5), bob anim.
+    Vegetation.tsx     Trees/rocks/shrubs, 3 InstancedMeshes, deterministic
+                       mulberry32 scatter (seed 20260613).
+    Atmosphere.tsx     Hemisphere + ambient + directional sun; 320 additive dust
+                       particles.
+    Resources.tsx      Food piles (merged sphere clusters). Energy 0..1 drives
+                       size/color; hover -> ResourceTooltip.
+    CommLinks.tsx      Debate pulses: glowing spheres traveling agent->agent,
+                       bell-curve fade, color blended by P(home). Reads commBuffer.
+    StakeFlows.tsx     Stake particles: quadratic Bezier agent->colony, size ∝
+                       amount, color by side (home green / away blue), winners
+                       accelerate in / losers fade. Reads flowBuffer.
+    PheromoneTrails.tsx Worn-earth paths (Catmull-Rom tubes) colony->best
+                       resources — visual, not a debug heatmap.
+
+  ui/   (DOM overlays + Canvas-anchored cards)
+    HUD.tsx            Screen-space: brand, camera toggle, data-source toggle
+                       (Live/Replay), population slider, FPS, legend, key hints.
+                       Owns the V keybinding.
+    AntCard.tsx        Spatial panel on selected ant: name, role, state, bankroll,
+                       accuracy %, P(home), generation, genome hash (~8Hz update).
+    ColonyCard.tsx     Spatial panel on selected colony: pop, bankroll, accuracy,
+                       growth, verified ratio, health.
+    ResourceTooltip.tsx  Hover label: energy + active foragers.
+    Crosshair.tsx      Center DOM crosshair.
+
+systems/   (pure logic, no React)
+    simulation.ts   Frame orchestrator: hash.rebuild -> pher.update ->
+                    updateDomain -> updateBoids.
+    domain.ts       MEANING layer: foraging loop (pick up food -> carry home ->
+                    deposit), brood growth (queen food->brood, nurse brood->
+                    worker), caste reallocation by need, per-colony aggregates
+                    (pop/bankroll/accuracy/health + legacy prediction stats).
+    boids.ts        Movement: per-caste steering (separation + sight-seek +
+                    pheromone follow + wander), territory repulsion from rival
+                    nests, soft world bounds, per-caste speeds.
+    pheromone.ts    Stigmergy: dual channel per colony (TO_FOOD, TO_HOME), grid
+                    CELL=6, 3-angle gradient look-ahead, evaporation + diffusion.
+    spatialHash.ts  Grid hash (HASH_CELL=8), rebuilt each frame, forEachNeighbor
+                    over 3x3 block -> O(neighbors) not O(n).
+    commBuffer.ts   Ring buffer of debate pulses (MAX 256), zero-alloc typed
+                    arrays.
+    flowBuffer.ts   Ring buffer of stake flows (MAX 384), zero-alloc.
+    raycast.ts      Ant picking via spatial hash within PICK_RADIUS=6.
+
+data/
+    schema.ts       TS mirror of the Python harness models: Side, MatchContext,
+                    DebateClaim, Forecast, BetCommitment, RoundSummary,
+                    AgentRecord, and the ColonyEvent discriminated union. Role /
+                    AntState / AntTask enums.
+    adapter.ts      EventSink + SimSource interfaces. createWorldSink() routes
+                    comm pulses -> commBuffer, stake flows -> flowBuffer, colony
+                    patches -> simStore, and binds the agent roster.
+    jsonlReplay.ts  Implements SimSource. Fetches /data/demo.jsonl, parses
+                    line-delimited JSON, emits timed events through the sink at
+                    ~12 events/sec, loops at end. Binds agent_records up front.
+    localSim.ts     Implements SimSource. Always-on synthetic generator: ~6
+                    debate pulses/sec + ~4 stake flows/sec derived from the live
+                    sim, so the world feels alive with no harness running.
+    wsClient.ts     WebSocket bridge — STUB. Skeleton for live harness feed;
+                    NOT wired into Engine yet (emit() is a no-op).
+
+store/
+    simStore.ts     Non-React sim state, Structure-of-Arrays. Per-agent typed
+                    buffers (MAX_AGENTS=2048): pos/vel/target/role/state/task/
+                    carrying/bankroll/accuracy/homeProb/stake/side/verified/
+                    colonyId/phase/highlight + id/name/genome arrays. Per-colony
+                    ColonyData, per-resource ResourceData, the SpatialHash, sim
+                    clock.
+    worldStore.ts   UI-facing zustand: selection, camera mode/target, snapshots,
+                    agent count, dataSource ('local'|'replay'), replayActive, fps.
+                    Never holds per-frame agent data.
+
+utils/
+    noise.ts        Deterministic value noise + fBm; canonical terrainHeight(x,z)
+                    (shared by CPU sampling AND geometry); terrainSlope;
+                    WATER_LEVEL=-3.5.
+    math.ts         clamp, lerp, smoothstep, mulberry32, TAU, lenXZ.
+    palette.ts      PALETTE, ROLE_COLORS/COLONY_COLORS, labels, biomeColor().
+
+styles/   global.css (resets, Inter + JetBrains Mono), ui.css (glass HUD panels,
+          cards, sliders, legend, responsive).
+
+
+--------------------------------------------------------------------------------
+3. DATA FLOW
+--------------------------------------------------------------------------------
+   LocalSim  /  JsonlReplay  /  WebSocket(stub)
+                     |
+                  EventSink (adapter.createWorldSink)
+            /          |              \
+      commBuffer    flowBuffer      simStore (colony patches + roster bind)
+          |             |
+      CommLinks     StakeFlows   (domain/boids read simStore for sim state)
+
+The hot path is fully decoupled from React: the Engine writes typed arrays,
+renderers read them in the same frame, React state only updates via throttled
+snapshots (2-8 Hz) so selection cards stay live without thrashing the tree.
+
+
+--------------------------------------------------------------------------------
+4. DEMO DATA FORMAT (public/data/demo.jsonl)
+--------------------------------------------------------------------------------
+Newline-delimited JSON, each line a ColonyEvent keyed by event_type. Mirrors
+colony_harness/harness.py write_jsonl. Observed event_type values:
+  - round_summary  (population, speaker_slots, debate/market home prob, bet
+                    counts, passes, total_staked)
+  - agent_record   (agent_id, name, generation, bankroll, accuracy, status,
+                    genome_hash)
+  - debate_claim   (round_id, speaker, stated_home_probability, confidence,
+                    direction, message, evidence_tags, model, persona)
+  - forecast       (agent_id, home_probability, edge, side, stake, bankroll)
+Playback rate in jsonlReplay.ts: ~12 events/sec, auto-loops.
+
+** This JSONL is the contract between colony (producer) and frontend (consumer).
+   schema.ts on the frontend and write_jsonl / events.compact.jsonl on the
+   colony side must stay in sync. **
+
+
+--------------------------------------------------------------------------------
+5. WEBGPU PROTOTYPE (frontend/webgpu-proto/)
+--------------------------------------------------------------------------------
+Self-contained vertical slice proving a WebGPU rendering path. Does NOT touch the
+main app; reuses parent node_modules. Renders under WebGPURenderer (not WebGL):
+TSL sky/fog, TSL-displaced terrain, animated TSL water, 400 instanced ants, soft
+lighting. Key gotcha solved: dual-three-instance issue (uses three/webgpu build).
+  Run:  npx vite --config webgpu-proto/vite.config.ts   (port 5180)
+        node webgpu-proto/screenshot.mjs  -> /tmp/webgpu_proto.png
+Status: PROOF OF CONCEPT, not integrated. Shows the path to GPU-accelerated
+rendering if agent counts need to scale far beyond the WebGL path.
+
+
+--------------------------------------------------------------------------------
+6. SCREENSHOT TOOLING
+--------------------------------------------------------------------------------
+scripts/shot.mjs            single shot (1440x900) -> /tmp/colony.png
+scripts/shot2.mjs           two shots, presses V between to toggle camera mode
+                            -> /tmp/world_overview.png, /tmp/world_alt.png
+webgpu-proto/screenshot.mjs headless WebGPU render (waits for __WEBGPU_PROTO_INITED)
+All Playwright chromium.
+
+
+--------------------------------------------------------------------------------
+7. STATE OF COMPLETENESS
+--------------------------------------------------------------------------------
+WORKING:
+  + Boids + pheromone + domain (foraging, brood, caste) simulation
+  + Spatial hash neighbor lookup, ant/colony picking
+  + JSONL replay (12 ev/s, looping) AND local procedural event synthesis
+  + Dual camera (strategic <-> explore) with smooth transitions
+  + Ant / colony selection cards, resource hover tooltips
+  + Full render: terrain, water, vegetation, colonies, agents, atmosphere, FX
+  + Live visual feedback: comm pulses, stake flows, pheromone trails
+  + Population slider (1-2048), data-source toggle, FPS meter (r3f-perf in DEV)
+
+STUBBED / TODO:
+  ~ wsClient.ts live WebSocket feed — skeleton only, not wired to Engine
+  ~ WebGPU rendering — prototype only, not in main path
+  ~ leva param panel present but not integrated
+  ~ No persistence / save-load, no multiplayer/shared session
+  ~ No agent death/culling in the frontend sim (pop only changes via slider)
+  ~ Resources fixed at init (no dynamic placement)
+  ~ Silent fallback if replay JSONL fails to load
+  ~ Mobile (pointer-lock / WASD) likely unsupported on touch
+
+
+--------------------------------------------------------------------------------
+8. KEY CONSTANTS (no .env — all in source)
+--------------------------------------------------------------------------------
+  simStore.ts:   MAX_AGENTS 2048, MAX_COLONIES 4, NUM_COLONIES 3,
+                 MAX_RESOURCES 24, WORLD_HALF 220, HASH_CELL 8
+  noise.ts:      WATER_LEVEL -3.5, TERRAIN scale 0.01 / amplitude 18 / octaves 4
+  jsonlReplay.ts: EVENTS_PER_SEC 12
+  boids.ts:      PERCEPTION_SQ 64, SEPARATION 3.2, SIGHT 52, TERRITORY 64,
+                 BASE_SPEED 9, MAX_FORCE 26
+  CameraRig.tsx: EYE_HEIGHT 9.5
+  Vegetation:    scatter seed 20260613
+
+
+--------------------------------------------------------------------------------
+9. LEARNINGS / DESIGN NOTES TO REMEMBER
+--------------------------------------------------------------------------------
+- Engine's useFrame MUST run first; renderers read frozen buffers in the same
+  frame. Order is load-bearing.
+- Keep React out of the hot path entirely: typed arrays + throttled snapshots is
+  what holds 60fps at 500-2048 agents.
+- One InstancedMesh per object type = one draw call; geometry pre-merged.
+- terrainHeight() is the single source of truth shared by CPU logic (camera
+  glue, ant placement) and the terrain geometry — never fork it.
+- Pheromone trails are rendered as worn paths, not a heatmap — intentional
+  aesthetic choice.
+- The JSONL schema is the seam with the colony harness; treat it as a contract.
+- WebGPU path exists if/when WebGL can't scale — but it's a separate build.
+
+NEXT MOVES (frontend):
+  1. Wire wsClient.ts to a real harness WebSocket for live (not replay) feed.
+  2. Surface agent death / reproduction visually once the colony harness emits
+     settlement + lineage events.
+  3. Add the survival/lineage charts that the hackathon plan calls the demo's
+     strongest moment (verified vs anonymous bankroll over generations).
+  4. Keep schema.ts aligned with events.compact.jsonl as colony evolves.

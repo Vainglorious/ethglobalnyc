@@ -1,0 +1,274 @@
+================================================================================
+COLONY (HARNESS) — STATE OF THE FOLDER, LEARNINGS, AND IMPLEMENTATIONS
+Note date: 2026-06-13
+Path: ethglobalnyc/colony/
+================================================================================
+
+--------------------------------------------------------------------------------
+0. ONE-LINE
+--------------------------------------------------------------------------------
+The Colony Harness is the Python "brain" of the project: a lightweight,
+MiroFish-inspired (but independent) agent-colony debate engine for World Cup
+match forecasting. It spawns many genome-based predictor "ants," gives each a
+private genome and an access-filtered view of the evidence, runs a bounded
+multi-room debate, then has every predictor forecast and produce a sealed bet
+commitment. This is the "forecasting is the labor" half of the thesis
+(see colony-hackathon-plan.md). It produces the JSONL the frontend replays.
+
+
+--------------------------------------------------------------------------------
+1. CORE LOOP (the shape)
+--------------------------------------------------------------------------------
+   match context
+     -> predictor genomes (cheap, parametric, reproducible)
+     -> access-filtered knowledge views
+     -> bounded debate (rooms -> room syntheses -> final chamber)
+     -> herd-adjusted forecasts
+     -> sealed bet commitments
+
+Design philosophy (important): NOT a full LLM call per agent. Decisions are a
+cheap deterministic function of genome + visible findings, so tens of agents x
+many rounds stays fast and reproducible. LLMs are OPTIONAL flavor:
+  - genomes      = scale + reproducibility (40-100 agents, parametric)
+  - CAMEL scouts = optional tool-using research (few, expensive)
+  - voice        = deterministic templates by default; LLM only if you opt in
+
+
+--------------------------------------------------------------------------------
+2. TECH STACK
+--------------------------------------------------------------------------------
+- Python 3 (core uses ONLY the standard library — runs with no API keys).
+- Optional: CAMEL AI (research scout), ddgs / DuckDuckGo (web search).
+- Optional LLM voice providers (OpenAI-compatible): OpenRouter (recommended,
+  deepseek/deepseek-v4-flash), MiniMax (native Anthropic-compatible endpoint),
+  or any generic OpenAI /chat/completions base URL.
+- Optional X/social: ScrapeCreators API.
+- install: python3 -m pip install -r requirements.txt  (adds CAMEL + ddgs)
+
+
+--------------------------------------------------------------------------------
+3. colony_harness/ PACKAGE (module by module)
+--------------------------------------------------------------------------------
+models.py        Frozen dataclasses for the whole domain:
+                 Finding (structured evidence: scout_name, access_level,
+                 source_type, home_probability/delta, confidence, cost,
+                 citations, evidence_claims), WorldEntity, WorldRelationship,
+                 WorldGraph, MatchContext, KnowledgeView, DebateClaim,
+                 DebateRoom, Forecast, BetCommitment (sha256 commit), RoundResult.
+
+genes.py         Genome (frozen): estimator (poisson|llm), model species label,
+                 risk_appetite (0.02-0.18), edge_threshold (0.01-0.18),
+                 source_weights {stats,odds,news,debate}, herd_bias (-1..+1),
+                 query_budget (0.1-2.0), persona. random_genome() reproducible.
+                 Only genome_hash is public; plaintext revealed later (on death).
+
+agent.py         AntAgent (predictor): id, name, generation, genome, bankroll,
+                 accuracy. public_record() exposes only the hash.
+                 private_baseline_probability() = weighted blend of visible
+                 signals + debate weight x market (+ model tilt for llm
+                 estimators). listen() adjusts by consensus x herd_bias.
+                 speak() -> DebateClaim via VoiceModel. forecast() -> edge vs
+                 threshold -> bet or pass. commit_bet() -> sha256(agent_id |
+                 round_id | side | stake | salt).
+
+knowledge.py     KnowledgeAccessPolicy by query_budget:
+                   <0.75 public | 0.75-1.5 shared | >=1.5 private.
+                 build_knowledge_views() -> per-agent filtered findings +
+                 per-source aggregated probabilities. This is the seam for
+                 future x402 payment / Worldcoin privilege gating.
+
+scouts.py        MOCK findings for offline testing (no network):
+                 mock_findings_from_config(), mock_match_context_from_
+                 tournament_match(), synthetic_probabilities() (team-strength
+                 derived). Produces market/stats/odds/news/lineup/social/weather.
+
+live_scouts.py   REAL lightweight public-data scouts (no social scraping):
+                 Wikipedia summaries, Google News RSS, DuckDuckGo form/recent-
+                 match searches, tracked star-player form, squad depth /
+                 predicted XI / role depth, injury headlines. Returns normalized
+                 Finding objects with evidence_claims + citations. Optional CAMEL
+                 research scout and optional X/social (ScrapeCreators) scout.
+
+world_graph.py   build_world_graph(): round subgraph from MatchContext (+ claims
+                 + forecasts). Entities: teams, match, findings, evidence_claims,
+                 sources, players, predictors, predictions, debate_claims.
+                 Relationships: plays_home/away_in, concerns, has_evidence_claim,
+                 about_team, about_player, evidenced_by, member_of,
+                 made_prediction, published_claim. Auto-deduplicated.
+
+tournament_graph.py  World Cup 2026 KG from OpenFootball:
+                 load_openfootball_schedule() (fetch/cache), build_tournament_
+                 graph() -> tournament + stages + venues + 100+ matches + group
+                 membership. Utilities: graph_summary, write_graph, write_summary,
+                 matches_for_teams. This is the persistent tournament memory;
+                 each round extracts a match subgraph from it.
+
+debate.py        DebateFeed: append claims, consensus_home_probability()
+                 (confidence-weighted), to_jsonl_events().
+
+voice.py         VoiceModel protocol. Implementations:
+                 - TemplateVoiceModel (DEFAULT, deterministic, no API)
+                 - OpenAICompatibleVoiceModel (OpenRouter / OpenAI / custom)
+                 - MiniMaxVoiceModel (native /anthropic/v1/messages, x-api-key)
+                 llm_voice_model_from_env() factory reads COLONY_LLM_PROVIDER.
+
+artifacts.py     write_compact_run_artifacts(): summary.md, debate.md,
+                 rooms.json, forecasts.csv, findings.json, knowledge_views.json,
+                 world_graph.json, events.compact.jsonl, debug.md (--debug).
+                 Logs are intentionally compact: NO raw prompts / responses /
+                 secrets. create_run_dir() -> colony/runs/<ts>_<round_id>/.
+
+harness.py       ColonyHarness orchestration:
+                 _spawn_agents() (N random genomes, randomized bankrolls).
+                 select_debaters() (rank by bankroll*0.7 + accuracy*100*0.3;
+                 elite top half + random wildcards).
+                 run_round(match): build knowledge views -> debate profiles ->
+                 room debates -> final chamber -> all agents forecast -> commit
+                 -> world_graph -> RoundResult.
+                 Room logic: _conversation_venues() detects topics dynamically
+                 (e.g. neymar_availability, market_pricing, team_form,
+                 source_audit, uncertainty); participants clustered by affinity;
+                 speakers get roles (advocate, challenger, source_auditor,
+                 skeptic, room_representative). write_jsonl() legacy export.
+
+env.py           Dependency-free .env loader (sets os.environ if unset).
+
+__init__.py      Exports ColonyHarness as the public API.
+
+
+--------------------------------------------------------------------------------
+4. TOP-LEVEL SCRIPTS
+--------------------------------------------------------------------------------
+run_demo.py    Quick local round from a config JSON. No network needed.
+               python3 colony/run_demo.py [--config ...] [--agents N]
+                 [--speakers N] [--seed N] [--out jsonl] [--debug]
+                 [--voice-mode template|llm] [--env path] [--show-roster]
+               ~1-2s with template voice. Saves compact artifacts by default.
+
+run_match.py   One match from the World Cup KG.
+               python3 colony/run_match.py --match "Brazil vs Morocco"
+                 [--data-mode synthetic|public] [--refresh-data]
+                 [--include-camel] [--include-x] [--agents N] [--speakers N]
+                 [--debug] ...
+               synthetic = mock scouts; public = real public-data scouts (~5-15s).
+
+build_kg.py    Build the tournament KG from OpenFootball.
+               python3 colony/build_kg.py --force-refresh
+               python3 colony/build_kg.py --team Brazil --team Morocco ...
+               Outputs (under colony/data/, git-ignored):
+                 openfootball/worldcup_2026.json (cached source)
+                 world_cup_kg.json
+                 world_cup_kg.summary.md
+
+system_map.html  Self-contained interactive (vanilla HTML/CSS/JS) design board:
+               interaction flow, genome-vs-CAMEL comparison, roles, KG with
+               access zones, an interactive genome parameter explorer, the 9
+               scout types, and the 3 log tiers. Good onboarding / design ref.
+
+
+--------------------------------------------------------------------------------
+5. CONFIG
+--------------------------------------------------------------------------------
+config/example.colony.json — minimal scenario:
+  round_id, match {home_team, away_team, market/stats/odds/news_home_signal},
+  population {agents 40, speaker_slots 6, seed 42}. CLI flags override.
+
+colony/.env.example — all OPTIONAL (template mode needs none):
+  COLONY_LLM_PROVIDER (openrouter|minimax|openai)
+  COLONY_LLM_API_KEY / OPENROUTER_API_KEY, COLONY_LLM_BASE_URL,
+  COLONY_LLM_MODEL (deepseek/deepseek-v4-flash), COLONY_LLM_TIMEOUT_SECONDS
+  OPENROUTER_HTTP_REFERER, OPENROUTER_APP_TITLE
+  SCRAPECREATORS_API_KEY, SCRAPECREATORS_X_SEARCH_URL ({query} GET template
+    OR POST {"query":...})
+  COLONY_CAMEL_USE_NATIVE (0/1), COLONY_CAMEL_MODEL_PLATFORM/MODEL/BASE_URL/API_KEY
+
+
+--------------------------------------------------------------------------------
+6. RUN ARTIFACTS (what one round writes)
+--------------------------------------------------------------------------------
+colony/runs/<YYYYMMDD_HHMMSS>_<round_id>/
+  summary.md            match, population, debate structure, betting summary
+  debate.md             room debates + final chamber claims (with context)
+  rooms.json            room members / reps / synthesis / claims
+  forecasts.csv         every predictor's probability, edge, side, stake,
+                        decision_reason
+  findings.json         normalized findings used
+  knowledge_views.json  per-agent access tier + visible finding counts
+  world_graph.json      round subgraph (entities + relationships)
+  events.compact.jsonl  streaming events (summary, findings, views, claims,
+                        forecasts) — THIS is the family the frontend consumes
+  debug.md              optional (--debug): edges, room internals, selection reasons
+Legacy --out JSONL additionally includes bet commitments (use deliberately).
+
+
+--------------------------------------------------------------------------------
+7. STATE OF COMPLETENESS
+--------------------------------------------------------------------------------
+COMPLETE:
+  + Core predictor loop: genomes, forecasting, edge/threshold bet-or-pass
+  + Two-layer debate: rooms -> syntheses -> final chamber, role assignment
+  + Knowledge graph assembly + access-tier filtering (public/shared/private)
+  + Tournament KG builder (OpenFootball, World Cup 2026, 100+ matches)
+  + Compact artifact logging + optional debug report
+  + Template voice (deterministic) + OpenRouter/MiniMax/OpenAI voice layer
+  + Public-data scouts (Wikipedia, Google News RSS, DuckDuckGo)
+  + Optional CAMEL research scout framework + optional X/social scout framework
+  + sealed bet commitments (sha256 commit/reveal shape)
+
+STUBBED / PLANNED (explicitly NOT in this first harness):
+  ~ Settlement + bankroll updates (commitments exist; reveal/settle missing)
+  ~ Reproduction / death / genetic mutation across epochs (single-round today)
+  ~ Multi-round persistence (each run is ephemeral)
+  ~ x402-gated ClickHouse data purchases (access policy is local deterministic stub)
+  ~ Worldcoin lineage privilege, ENS subname identity, Arc USDC wallets
+  ~ Real bookmaker odds API (odds logged as low-confidence odds_unavailable_scout)
+  ~ Real match oracle / UMA disputes
+  ~ Replay clock + strict timestamp gating (the lookahead-leak guard the plan
+    flags as the cardinal rule) — NOT built here yet
+
+
+--------------------------------------------------------------------------------
+8. HOW IT FITS THE BIGGER PLAN (colony-hackathon-plan.md)
+--------------------------------------------------------------------------------
+The hackathon thesis is ONE loop: forecasting is the labor, the USDC economy is
+the judge. Three planes:
+  - Identity (ENS offchain subnames under colony.eth; genome + life in records)
+  - Economy  (Arc testnet, USDC wallets, staking, payouts, inheritance)
+  - Knowledge (ClickHouse + Polymarket, x402-metered "thinking costs money")
+Sponsor map: ENS (lineage), Worldcoin (verified lineages start richer),
+Arc/Circle (USDC + x402), Polymarket (beat-the-market benchmark), UMA (narrated).
+
+THIS HARNESS implements the cognitive/forecasting core (genomes, debate,
+findings, sealed bets, world graph) WITHOUT the on-chain / payment / replay
+plumbing. The README is explicit: "no ENS, Arc, x402, ClickHouse, or real match
+oracle in this first harness." Those attach once the core loop feels right.
+
+The plan's open decisions still bind colony's next phase:
+  - reward hybrid weights (parimutuel + beat-market bonus + seed gold)
+  - final gene set + mutation rate (genes here are close but un-tuned for evo)
+  - population dynamics (N, carrying cap, death/repro thresholds, inheritance)
+  - replay corpus readiness (need outcomes + Polymarket odds at right timestamps)
+  - strict timestamp gating (ts <= T) — build + test FIRST per the plan
+
+
+--------------------------------------------------------------------------------
+9. LEARNINGS / DESIGN NOTES TO REMEMBER
+--------------------------------------------------------------------------------
+- Genomes, not LLMs, are the substrate — keeps evolution chartable (a trait
+  sweeps because it changes a NUMBER, not a prompt) and the run cheap/repro.
+- Access tiers (public/shared/private) are the prototype of the premium data
+  layer; query_budget is the stand-in for future x402 spend / Worldcoin tier.
+- Speech is scarce but interaction scales: rooms -> reps -> final chamber lets a
+  100-agent colony "interact" with readable logs.
+- Findings are the universal evidence unit; any datasource (mock, public, CAMEL,
+  X, future ClickHouse) just has to emit Finding objects.
+- Sealed bets already have the commit/reveal shape for later on-chain windows.
+- events.compact.jsonl is the contract with the frontend — keep it aligned with
+  frontend src/data/schema.ts.
+
+NEXT STEPS (from README + plan):
+  1. Real datasource adapters emitting Finding objects (incl. ClickHouse/x402).
+  2. Settlement + bankroll updates from revealed bets.
+  3. Reproduction / death / mutation across epochs (the actual evolution).
+  4. Multi-round persistence + replay clock with strict timestamp gating.
+  5. Wire ENS / Worldcoin / Arc planes around the (now stable) core loop.
