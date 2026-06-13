@@ -141,5 +141,5 @@ and we map it to the market id. Then execution = the `pg.py buy ... --confirm` a
 - `polymarket/` — direct-CLOB stack (works but US-geoblocked; kept for an
   allowed-region path).
 - Notes: `notes/2026-06-13-3pm-bet-plan.txt` (ops detail),
-  `notes/polygun.txt` (custody model + decoded trades + automation),
+  `notes/2026-06-13-polygun.txt` (custody model + decoded trades + automation),
   `notes/2026-06-13-polymarketexecution.txt` (geoblock finding + lessons).

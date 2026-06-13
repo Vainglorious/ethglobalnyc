@@ -1,0 +1,71 @@
+2026-06-13 — Colony harness: what's ALREADY implemented (wallets, ENS, Dynamic, settlement)
+
+WHY THIS NOTE
+  Discovered that much of the wallet/identity/economy scaffolding we were "planning" is ALREADY
+  built in colony/. Recording the inventory so we don't rebuild it — and flagging the ONE real gap.
+
+  >>> BIGGEST FLAG: the agent economy is currently a SIMULATED PYTHON FLOAT, not real Arc USDC.
+      `bankroll` is a float updated in JSON by settle_population.py. There are NO real on-chain
+      USDC transfers between ants on Arc yet. Ants have real Arc-capable wallet ADDRESSES, but
+      bets/payouts are numbers in a JSON file, not USDC moving on Arc. <<<
+
+ALREADY IMPLEMENTED
+  Wallet infra — colony/colony_harness/wallets.py
+    - WalletStore.get_or_create(agent_id): creates a wallet on demand per agent (handles spawning).
+    - Two providers (the hybrid we recommended): "local" (eth-account/cast, instant) and "dynamic"
+      (Dynamic V3 WaaS — calls the SAME POST /environments/{env}/waas/create we tested today,
+      extracts the eip155 EVM credential). Select via --wallet-provider local|dynamic.
+    - Only PUBLIC addresses attached to agents. Dynamic store keeps metadata, NO raw private keys.
+      Local store keeps throwaway testnet keys (gitignored). Provider-mismatch guard.
+    - Chain context models BOTH World Chain (480, AgentKit) and Arc testnet on the same EVM address.
+    - Run flags: run_demo.py --agent-wallets --wallet-provider {local,dynamic}
+      --wallet-store colony/secrets/agent-wallets.*.json --dynamic-env dynamic/.env
+
+  Population / lineage state ("the DB") — colony/colony_harness/population.py
+    - JSON persistence per agent: bankroll, accuracy, wallet_address, ens_name, parent_agent_id,
+      lineage_id, lineage_root_agent_id, verified_lineage, world_verified, world_human_id, genome,
+      evolution_role, last_settlement. save/load + lineage normalization/backfill.
+    - This IS the current "database" — flat JSON files. NOT Supabase, NOT Dynamic-as-DB.
+
+  ENS identity — colony/colony_harness/identity.py, register_ens_identities.py (747 lines),
+                 deploy_agents.py, docs/ens-agent-identity.md
+    - Deterministic ENS names per ant (e.g. root-onyx-1.colonny.eth), ENSIP-26-ready records,
+      on-chain ENSv2 subname publication under colonny.eth + agent resolver, run-state reuse.
+    - README claims validated on Sepolia: 7 agents -> 7 Dynamic V3 wallets, 0 stored keys,
+      7 ENSv2 subnames under colonny.eth, resolver addr records read back. (ENS is on Sepolia,
+      separate chain from Arc; the EVM address is reused cross-chain.)
+
+  World AgentKit — colony/register_world_agent.py, colony_harness/world.py
+    - world_verified / world_human_id / world_access_tier fields + registration pipeline.
+
+  Settlement + evolution
+    - settle_population.py: Brier-score forecast scoring, accuracy EWMA, bankroll payout
+      (stake * payout_multiple if correct else -stake), parimutuel-ish summary.
+      >>> ALL SIMULATED: bankroll/stake are Python floats in JSON. No web3, no Arc tx, no USDC. <<<
+    - evolve_population.py: reproduction/mutation across generations.
+    - run_demo.py / run_match.py: harness CLI tying it together.
+
+  On-chain code that DOES exist (but for ENS, not the USDC economy):
+    deploy_agents.py, register_ens_identities.py, cleanup_ens_identities.py — ENS publication only.
+
+ANSWERS TO THE THREE QUESTIONS
+  1. Wallet infra to scale to 500 + spawning?  -> YES, already built (WalletStore.get_or_create,
+     local+dynamic providers). Per-agent creation on spawn. local = instant; dynamic ~355ms/wallet.
+  2. Need Supabase, or Dynamic-as-DB?  -> Neither right now. State persists to JSON files. Dynamic
+     is wallet custody only (correct). Supabase only if/when we want realtime dashboard queries.
+  3. Ready for agent economy on Arc?  -> Everything AROUND it is built (wallets, identity, lineage,
+     settlement logic). The GAP: bankroll is a simulated float, NOT real Arc USDC. The economy is
+     not yet on-chain.
+
+THE ONE GAP TO CLOSE (when we choose to)
+  Wire settle_population.py's float bankroll to REAL Arc USDC using the primitives we proved today:
+    - treasury funds each ant wallet a tiny USDC amount (treasury 0x1be3...2D8F, ~17.998 USDC left)
+    - bets/payouts become real wallet->wallet USDC transfers on Arc (and/or Unlink private)
+    - this is a CONNECTION job, not a from-scratch build (primitives proven 2026-06-13).
+  Decision still open: real on-chain per-ant tx (user's pick) vs keep float-sim with on-chain
+  settlement only at demo checkpoints. Real-per-ant is fine at demo scale (tens-low hundreds).
+
+SEE ALSO
+  colony/colony_harness/wallets.py, population.py, identity.py; colony/settle_population.py;
+  colony/docs/ens-agent-identity.md; notes/2026-06-13-dynamic-wallets.txt;
+  notes/2026-06-13-treasury.txt

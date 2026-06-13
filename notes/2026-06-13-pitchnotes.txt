@@ -1,0 +1,108 @@
+================================================================================
+PITCH / DEMO-SCRIPT NOTES — Colony
+2026-06-13
+Source: Abena's draft, written as a scratchpad at the bottom of the Notion page
+"The data the agents pay to read, in plain English" (under Plain English).
+This file is a polished summary of that draft, saved for later. It is a WORKING
+draft — some polished prose, some shorthand. Abena's edits live only in Notion;
+the ClickHouse explainer above her draft on that page is untouched.
+================================================================================
+
+HEADLINE & HOOK — "Colony: The Evolutionary World Cup Betting Experiment"
+-------------------------------------------------------------------------
+- Tagline: a digital colony of AI agents bet on World Cup matches, "thinking"
+  costs money, and natural selection decides who survives ("survival of the
+  fittest kind of ish").
+- The core question — the hook: some ants are tagged with proof that a real human
+  stands behind them, so we can finally answer the question the agent economy is
+  dodging: DO AGENTS WITH A HUMAN BEHIND THEM ACTUALLY DO BETTER?
+- Brainstorm lines: "Information is money… how much do you need? Let's talk."
+  Team framing: "Football maxi and prediction-market degen." Note: 9 rich ants
+  have Worldcoin-privileged access to premium data.
+
+STORY
+-----
+Agents aren't just guessing — they manage a bankroll, evaluate odds, and place
+calculated bets. Ants that forecast well earn money and reproduce, passing on
+their "genes." Ants that forecast poorly or overspend on useless data go broke
+and die. Over generations you watch the most effective strategies take over the
+colony.
+
+WHY NOW / WHY THIS MATCH
+------------------------
+The 2026 World Cup is live across the US, Canada, and Mexico. Today (Sat Jun 13)
+four group-stage matches:
+  - Qatar vs. Switzerland   — 3pm ET, Santa Clara
+  - Brazil vs. Morocco      — 6pm ET, MetLife Stadium, East Rutherford NJ
+                              (a few miles from where we're standing)
+  - Haiti vs. Scotland      — 9pm ET, Foxborough
+  - Australia vs. Türkiye   — 12am ET, Vancouver
+Pitch angle: a World Cup forecasting experiment DURING the World Cup, in the host
+metro, on a textbook favorite-vs-giant-killer game (Morocco reached the 2022
+semifinal as a massive underdog), kicking off down the road tonight. Stakes are
+real, data is fresh, timeline is perfect for a high-speed, high-stakes demo.
+Shorthand notes: "there are always three bets — before, during, and a final bet";
+"ants scrape yields to get free money because they're fast."
+
+THE SECRET SAUCE: THINKING COSTS MONEY
+--------------------------------------
+Most AI sims give agents infinite free information → lazy, meaningless decisions.
+In Colony, thinking costs money. Payment mechanics powered by x402 + USDC + Arc.
+Flow: ask for data → told "pay first" → pay a small USDC fee → get the data.
+Access tiers: poor ants get a little basic access; some ants can run hardcore
+(costly) queries. The pay-to-read fee forces the trade-off "is this data worth
+the price?", turns guessing into researching, and acts as a money sink that keeps
+the economy honest and drives selection. All play-money + betting settlement
+happens on the Arc payment network.
+
+WORLDCOIN ANGLE
+---------------
+Framing: we're simulating the problem agent economies will hit in the next 5
+years — which agents should be rich vs. poor. Worldcoin-verified humans can vouch
+for an agent: once a human is Worldcoin-verified, an agent can be allocated to
+them and marked "verified by a human," giving it more rights/capabilities —
+BECAUSE it can be held accountable through the human behind it.
+(Stray unfinished line in the draft: "Terrarium: If you make…")
+
+ENS NAMING
+----------
+Naming is inherited from parents:
+  colony.eth → agents1.colony.eth → agents1.a.colony.eth
+
+THE IRONCLAD RULE: NO PEEKING AT THE FUTURE
+-------------------------------------------
+For the simulation to mean anything, forecasts must be real, not hindsight. The
+single most important guardrail: an ant may only see data from the past, never
+the future. We evolve the colony at high speed by replaying historical matches
+(generations turn over in minutes) behind a strict "no peeking past the current
+moment" gate. Peeking at an unplayed result = cheating = worthless results.
+FINALE BEAT: once the colony has evolved a battle-tested genome on history, point
+the surviving lineage at a genuinely unplayed match (tonight's Brazil vs. Morocco)
+and let it forecast LIVE in front of judges, settled on-chain — no hindsight
+anywhere.
+
+THE ANATOMY OF AN ANT
+---------------------
+Every agent's traits, stored on-chain via ENS (e.g. bob-d7.colony.eth), which
+also records its life story:
+  - Genome / Genes: a handful of numbers controlling behavior — how much it bets,
+    how picky it is, how much it trusts the crowd.
+  - Bankroll: play-money balance; winning bets grow it, losing/overspending
+    shrinks it to zero → death.
+  - Evolution: successful ants' "kids" inherit their genes with small random
+    tweaks, so the colony adapts and improves over time.
+
+NET / TAKEAWAY
+--------------
+It's a demo pitch script that pulls all five sponsor threads together:
+ClickHouse data paywall → x402/USDC/Arc payments → Worldcoin accountability →
+ENS lineage → the live Brazil-vs-Morocco finale. Still rough at the edges (a few
+unfinished lines like "Terrarium…" and "If you make").
+
+CAVEAT
+------
+The Notion integration only sees pages connected to it (under "Plain English").
+If Abena created pages elsewhere in the workspace, they wouldn't show up — within
+what's visible, this one page is her only edit. Her draft currently lives ONLY in
+Notion (not in git); this file is the backup of its summary.
+================================================================================

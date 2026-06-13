@@ -1,0 +1,50 @@
+PREDICTIONS LEDGER — plain-text companion to /predictions.json
+================================================================
+
+What this is
+------------
+predictions.json (repo root) is the machine-readable ledger of every Colony
+prediction-market trade. Values are hard on-chain data (Polygon), verified
+against the transaction receipts. polygun/record_trade.py is the script that
+decodes a tx and appends an entry here.
+
+This .txt is the human-readable mirror — skim it instead of parsing JSON.
+
+Venue: PolyGun (custodial relayer that fronts Polymarket; sidesteps the US
+geoblock). Settlement token is pUSD (Polymarket USD, 6 decimals,
+0xc011a7e12a19f7b1f670d46f03b03f3342e82dfb).
+
+Wallets
+-------
+- PolyGun trading address: 0xe9E32Ca24aa1eF725F650b5489281FE621363AA9
+- Treasury:                0xcc16bEC342794f35a32d4Ba2c76BF9D759C131eB
+
+(Both are public addresses. Private keys live only in the gitignored .env files.)
+
+Trades so far
+-------------
+#1  2026-06-13 16:33 UTC · BUY · manual (Adil)
+    "Will France win the 2026 FIFA World Cup?" → Yes (France)
+    12.422359 shares @ 0.161 = 2.07 pUSD total (incl. 0.07032 fee)
+    market 558936 · filled · tx 0x7698fe5d...82b6321 · block 88442287
+
+#2  2026-06-13 17:44 UTC · BUY · AUTO (Claude via pg.py)
+    Same market — "Will France win the 2026 FIFA World Cup?" → Yes (France)
+    12.422359 shares @ 0.161 = 2.07 pUSD total (incl. 0.07032 fee)
+    market 558936 · filled · tx 0x6426d501...823b37 · block 88445112
+    >> First fully-automated trade placed by code (pg.py buy).
+
+#3  2026-06-13 19:02 UTC · BUY · AUTO (Claude) · COLONY PICK · phase: pregame
+    "Will Switzerland win on 2026-06-13?" → Yes (Switzerland)
+    2.38095 shares @ 0.8524 = 2.059158 pUSD total (incl. 0.02958 fee)
+    market 1897048 · filled · tx 0x90413d80...b67eca · block 88448257
+    >> 3pm match Bet 1 of 3 (pre-game); colony consensus = Switzerland.
+
+Notes
+-----
+- #1 vs #2 are the same France bet placed twice: #1 by hand to prove the path,
+  #2 by code to prove automation end-to-end (zero human clicks).
+- #3 is the first real colony-consensus bet (Qatar vs. Switzerland 3pm match,
+  Bet 1 of the planned 3 — see notes/2026-06-13-3pm-bet-plan.txt and
+  notes/2026-06-13-3pm-bets-dev-handoff.md).
+- Keep this in sync with predictions.json when record_trade.py appends a trade.

@@ -1,0 +1,76 @@
+================================================================================
+POLYMARKETANALYTICS.COM — NOTES
+2026-06-13
+================================================================================
+
+WHAT IT IS
+----------
+polymarketanalytics.com is OUR site (we own it). It displays Polymarket data and
+surfaces betting lines that PolyGun's search does NOT show — notably TOTAL GOALS /
+OVER-UNDER markets for individual soccer matches. PolyGun only exposed the 3-way
+match winner (Switzerland / Draw / Qatar) for the 3pm game; the O/U line was found
+on polymarketanalytics instead.
+
+URL pattern (per-match):
+  https://polymarketanalytics.com/sports/soccer/<slug>
+  e.g. the 3pm match:  /sports/soccer/fifwc-qat-che-2026-06-13
+       (fifwc = FIFA World Cup, qat = Qatar, che = Switzerland, date)
+
+WHY IT MATTERS FOR THE COLONY
+-----------------------------
+It's a richer line source than PolyGun. If we can read it programmatically, the
+colony gets more markets to bet (O/U totals, etc.), and we map them back to
+Polymarket token ids to trade via PolyGun.
+
+
+ACCESS PROBLEM (2026-06-13)
+---------------------------
+Automated fetch is blocked: the page sits behind VERCEL "Attack Challenge Mode"
+(a JS bot-challenge firewall). Symptoms when fetching:
+  - WebFetch -> HTTP 403
+  - curl (browser UA) -> HTTP 429, body = "<title>Vercel Security Checkpoint</title>"
+The real content is client-rendered AND gated, so scrapers can't solve the JS
+challenge. (Site is Astro on Vercel; may also have Cloudflare in front.)
+
+
+HOW TO WHITELIST US (we own it)
+-------------------------------
+Do NOT allowlist by IP — our agent's egress IP is not stable. Use a secret
+header/query-param rule instead.
+
+Vercel (the active gate):
+  A. Targeted (recommended): Project -> Firewall -> Custom Rules -> Add Rule
+     - Condition: Query Param `pmkey` equals <secret>  (query param works for any
+       fetcher; a header like `x-pm-bypass` works too but only via curl, not WebFetch)
+     - Action: Allow (skips the challenge)
+     - Deploy, then fetch with  ...?pmkey=<secret>
+  B. Blunt: Firewall -> toggle Attack Challenge Mode OFF (removes checkpoint for
+     everyone; lowers protection).
+
+Cloudflare (if also in front):
+  - Security -> WAF -> Custom rules: (http.request.uri.query contains "pmkey=SECRET")
+    -> Action: Skip -> Managed Challenge / all managed rules.
+  - Or turn off "Under Attack Mode".
+
+
+FASTER ALTERNATIVE (skip scraping)
+----------------------------------
+The O/U is a real Polymarket market; the site just displays it. To trade it we
+only need ONE of:
+  - the polymarket.com/event/<slug> URL or slug, or
+  - the market condition_id / CLOB token ids, or
+  - the exact market title (e.g. "Qatar vs. Switzerland: Over 2.5 goals?") so we
+    can search PolyGun for it.
+With any of those we go straight to Polymarket (Gamma/CLOB) + PolyGun, no firewall.
+
+
+STATUS / TODO
+-------------
+[blocked] Reading the O/U line programmatically (Vercel challenge).
+[option]  Adil sets up the `pmkey` query-param bypass rule on Vercel -> share secret.
+[option]  Adil pastes the O/U market's Polymarket slug/title/token ids from the
+          dashboard -> we trade via PolyGun directly.
+[context] Live match read at the time: Switzerland 94.5c (up from 84c pre-game);
+          our pre-game Switzerland bet is in profit. No O/U line available via
+          PolyGun search for this match.
+================================================================================

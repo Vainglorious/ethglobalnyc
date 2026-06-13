@@ -1,15 +1,8 @@
 import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import { fileURLToPath, URL } from 'node:url'
 
-// https://vitejs.dev/config/
+// Di-nasty is a self-contained static Three.js app (index.html + public/dinasty
+// classic scripts + vendored three in public/vendor). No bundler plugins needed.
 export default defineConfig({
-  plugins: [react()],
-  resolve: {
-    alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
-    },
-  },
   server: {
     port: 5173,
     host: true,

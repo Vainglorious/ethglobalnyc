@@ -13,7 +13,7 @@ Polymarket trade (geoblock-free via PolyGun).
 KICKOFF: 19:00 UTC (3:00 PM ET), 2026-06-13. Venue: Levi's Stadium, Santa Clara.
 
 EXECUTION IS PROVEN: we already placed an automated $2 trade by code earlier today
-(France-to-win, tx 0x6426d501…23b37). See notes/polygun.txt item 10.
+(France-to-win, tx 0x6426d501…23b37). See notes/2026-06-13-polygun.txt item 10.
 
 
 THE MARKET (PolyGun event e_351719 — "Qatar vs. Switzerland (Jun 13)")
@@ -27,6 +27,15 @@ Outcome              market id   price (pre-game)   buy command (--amount N)
 
 FUNDS: PolyGun available balance $31.69 pUSD (after +20 USDC top-up). Keep each
 test small ($2–$5) so we have ammo for all three legs.
+
+
+EXECUTION LOG
+-------------
+[DONE] Bet 1 (PRE-GAME): colony pick = Switzerland. Placed $2 on Switzerland
+       (market 1897048) via pg.py buy --confirm. Filled 2.38095 shares @ 84.0c.
+       tx 0x90413d805b0bd75b38b667a6e15a4b8cb300ae1ace32b5dbe20a8ff630b67eca.
+[TODO] Bet 2 (DURING, ~halftime): re-run colony, trade the gap vs live price.
+[TODO] Bet 3 (LATE, arbitrage): ClickHouse/UMA privileged-info bet.
 
 
 PRE / DURING / AFTER PLAN

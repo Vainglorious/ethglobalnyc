@@ -1,0 +1,113 @@
+================================================================================
+FOLDER CLEANUP / RESTRUCTURE — TODO
+Note date: 2026-06-13
+Goal: collapse the hackathon sprawl into a clean app. The product folders
+(colony, frontend, ...) stay top-level; exploratory spikes, one-off scripts,
+and reference material move into a future tools/ (or reference/) folder.
+DO NOT MOVE ANYTHING YET — this is the plan; we execute the move later.
+================================================================================
+
+--------------------------------------------------------------------------------
+WHY
+--------------------------------------------------------------------------------
+The repo grew ~15 top-level folders during the sprint. Several were integration
+spikes or research that have either (a) already been absorbed into colony, or
+(b) were one-off explorations that aren't part of the final app. We want the
+top level to read like a product, not a scratchpad.
+
+Target end state (roughly):
+  /colony        core "brain" (forecasting + identity + wallets + evolution)
+  /frontend      core 3D visualization
+  /<planes>      the sponsor planes that actually ship in the app
+  /tools         everything exploratory / reference / one-off (NEW)
+  /notes         running notes (stays)
+
+
+--------------------------------------------------------------------------------
+CLASSIFICATION OF CURRENT TOP-LEVEL FOLDERS
+--------------------------------------------------------------------------------
+
+KEEP — core app (stay top-level, clean):
+  [ ] colony/        The brain. Now also contains the ENS identity pipeline,
+                     Dynamic wallets, Worldcoin agentkit hooks, population /
+                     evolution / settlement. This is the real product code.
+  [ ] frontend/      The 3D viz. Real product code.
+
+DECIDE — sponsor "planes" that may ship OR may already be absorbed:
+  [ ] ens/           REDUNDANT. Empty scaffold only (README/.env.example/
+                     .gitignore). The real ENS pipeline lives in colony/
+                     (colony_harness/identity.py, register_ens_identities.py,
+                     docs/ens-agent-identity.md). ACTION: either delete ens/, or
+                     leave a one-line README pointer to colony/ and nothing else.
+  [ ] worldcoin/     World ID / AgentKit exploration. Core flow now lives in
+                     colony/register_world_agent.py. ACTION: keep as reference
+                     docs OR fold notes into colony, move spike to tools/.
+  [ ] dynamic/       Dynamic (dynamicauth.com) wallet provider spike
+                     (combined-route.mjs signing route). Already integrated into
+                     colony/deploy_agents.py. ACTION: move spike to tools/,
+                     keep the integrated path in colony.
+  [ ] arc/           Arc chain scaffold + treasury learnings. ACTION: decide if
+                     Arc settlement ships as its own folder or inside colony.
+  [ ] clickhouse/    Knowledge plane (x402-gated query). Not wired into colony
+                     yet. ACTION: keep if it becomes the real data plane;
+                     otherwise tools/.
+
+MOVE — exploration / tools / reference (-> tools/):
+  [ ] polymarket/    Polymarket trading stack spike (client, connectivity/account
+                     checks, test-trade harness). Has its own .venv (gitignored).
+  [ ] polygun/       Polymarket treasury watcher + trade recorder spike
+                     (pg.py, record_trade.py). Has its own .venv (gitignored).
+                     NOTE: pg.session is a live session blob — confirm it's
+                     gitignored and not committed (secret-bearing).
+  [ ] unlink/        Private-transfer / sweep-to-treasury spike.
+  [ ] notion/        push_to_notion.py — one-off notes->Notion script.
+  [ ] telegram/      Just mtproto-reference.md (pure reference, no code).
+  [ ] plain-english/ Explainer docs (colony/clickhouse/football/worldcoin in
+                     plain english). Reference material.
+
+KEEP AS-IS — notes:
+  [ ] notes/             Running dated notes (this file lives here).
+  [ ] engineering-notes/ Learnings docs. ACTION: decide whether to merge into
+                         notes/ or keep a separate engineering-notes/ at top.
+
+
+--------------------------------------------------------------------------------
+PROPOSED TARGET STRUCTURE
+--------------------------------------------------------------------------------
+  colony/            core brain
+  frontend/          core viz
+  <sponsor planes>/  whichever of {ens, worldcoin, arc, clickhouse} actually
+                     ship as standalone planes (rest fold into colony)
+  tools/             dynamic/, polymarket/, polygun/, unlink/, notion/,
+                     telegram/, plain-english/  (one-off spikes + reference)
+  notes/             notes (+ maybe engineering-notes merged in)
+
+
+--------------------------------------------------------------------------------
+ACTION ITEMS (do later, in this order)
+--------------------------------------------------------------------------------
+[ ] 1. Confirm the KEEP / DECIDE / MOVE classification above with the team.
+[ ] 2. Resolve the ens/ redundancy (delete or pointer-only).
+[ ] 3. Create tools/ and `git mv` the MOVE folders into it (preserve history).
+[ ] 4. For each DECIDE plane: either promote to a clean top-level plane or fold
+       its working code into colony and move the spike to tools/.
+[ ] 5. Update any path references after moves: imports, READMEs, run commands,
+       .env paths, and the notes that cite folder paths (frontend/colony notes).
+[ ] 6. Re-verify .gitignore covers every .venv, .env, secrets/, *.session, and
+       node_modules after the reshuffle. (Spot: polygun/pg.session.)
+[ ] 7. Update the status notes (2026-06-13-frontend.txt / -colony.txt) and the
+       project memory index to reflect the new layout.
+
+
+--------------------------------------------------------------------------------
+NOTES / GOTCHAS
+--------------------------------------------------------------------------------
+- Use `git mv` (not plain mv) so history follows the files.
+- colony has ALREADY absorbed several "planes" (ENS, Dynamic wallets, Worldcoin
+  agentkit). When moving the standalone spike folders, don't delete the
+  integrated versions inside colony.
+- The JSONL event stream is the colony<->frontend contract; folder moves must
+  not break those relative paths (frontend reads public/data/*.jsonl, not colony
+  paths directly, so this should be safe — verify).
+- Secrets check before any public push: .env, secrets/*.local.json, pg.session,
+  agent-wallets stores. Several folders carry live keys (e.g. dynamic/.env).
