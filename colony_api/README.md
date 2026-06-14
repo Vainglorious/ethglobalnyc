@@ -313,6 +313,32 @@ Netherlands vs Japan therefore remains available through `/runs/{run_id}/kg`,
 not yet copied into a database or durable object store, so Railway restarts or
 deploys can remove it unless a persistent volume is mounted at that runs path.
 
+## Scouting Artifact Storage
+
+Each Scout click creates one run directory keyed by the returned `run_id`, for
+example `scout_20260614_023208_27d8138`. The directory holds:
+
+- `metadata.json`: request metadata, status, command, match name, and artifact paths.
+- `events.jsonl`: streaming/status events when the run emits them.
+- `stdout.log` / `stderr.log`: subprocess logs.
+- `compact/.../world_graph.json`: the generated scouting KG.
+- `compact/.../kg_manifest.json`: KG validation/readiness metadata.
+- `compact/.../scouting_audit.json`: coverage and evidence-quality audit.
+
+To inspect a stored scout run:
+
+```bash
+curl https://ethglobalnyc-production.up.railway.app/runs/{run_id}
+curl https://ethglobalnyc-production.up.railway.app/runs/{run_id}/kg
+curl https://ethglobalnyc-production.up.railway.app/runs/{run_id}/kg/manifest
+curl https://ethglobalnyc-production.up.railway.app/runs/{run_id}/scouting-audit
+```
+
+This is run-artifact storage, not yet long-term knowledge storage. If we need
+Netherlands vs Japan or any other scout to survive deploys reliably, mount a
+Railway volume at `COLONY_API_RUNS_DIR` or add a promotion step that writes the
+final KG/audit to durable object storage or a database.
+
 For `POST /runs/demo`, the first integration streams transport/status
 immediately. Most domain events arrive when `run_demo.py` writes `events.jsonl`
 at the end of the harness run. A later harness refactor can emit room/forecast
