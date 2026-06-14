@@ -10,6 +10,7 @@ DN.kgview = (function () {
   let legendEl = null;
   let nodes = new Map();
   let edges = [];
+  let selectedId = null;
   let renderQueued = false;
   const colors = {
     match: '#3FA89F',
@@ -52,6 +53,17 @@ DN.kgview = (function () {
     detailEl = root.querySelector('#kg-detail');
     legendEl = root.querySelector('#kg-legend');
     root.querySelector('#kg-close').addEventListener('click', () => root.classList.remove('show'));
+    svg.addEventListener('click', (event) => {
+      const nodeEl = event.target.closest && event.target.closest('.kg-node');
+      if (!nodeEl) return;
+      selectNode(decodeURIComponent(nodeEl.getAttribute('data-node')));
+    });
+    svg.addEventListener('keydown', (event) => {
+      const nodeEl = event.target.closest && event.target.closest('.kg-node');
+      if (!nodeEl || (event.key !== 'Enter' && event.key !== ' ')) return;
+      event.preventDefault();
+      selectNode(decodeURIComponent(nodeEl.getAttribute('data-node')));
+    });
   }
 
   function escapeHtml(value) {
@@ -78,6 +90,121 @@ DN.kgview = (function () {
   function shortLabel(value) {
     const label = String(value || '');
     return label.length > 30 ? label.slice(0, 28) + '...' : label;
+  }
+
+  function relationLabel(value) {
+    return String(value || 'related_to').replace(/_/g, ' ');
+  }
+
+  function compactValue(value) {
+    if (value == null || value === '') return 'n/a';
+    if (Array.isArray(value)) return value.join(' - ');
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+  }
+
+  function nodeUrl(id) {
+    return '#kg/' + encodeURIComponent(id);
+  }
+
+  function attributesFor(node) {
+    const attrs = node.attributes || {};
+    return Object.keys(attrs)
+      .filter((key) => attrs[key] != null && attrs[key] !== '')
+      .slice(0, 8)
+      .map((key) => ({ key, value: compactValue(attrs[key]) }));
+  }
+
+  function relatedFor(id) {
+    return edges
+      .map((edge) => {
+        const sourceId = edge.source_id || edge.source;
+        const targetId = edge.target_id || edge.target;
+        if (sourceId !== id && targetId !== id) return null;
+        const neighborId = sourceId === id ? targetId : sourceId;
+        const node = nodes.get(neighborId);
+        if (!node) return null;
+        return {
+          edge,
+          node,
+          id: neighborId,
+          outgoing: sourceId === id,
+          relation: relationLabel(edge.relation_type),
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => {
+        const aMatch = typeFor(a.node) === 'match' ? 0 : 1;
+        const bMatch = typeFor(b.node) === 'match' ? 0 : 1;
+        if (aMatch !== bMatch) return aMatch - bMatch;
+        return labelFor(a.node).localeCompare(labelFor(b.node));
+      });
+  }
+
+  function describeNode(node, related) {
+    const type = typeFor(node);
+    if (type === 'team') {
+      const matches = related.filter((item) => typeFor(item.node) === 'match');
+      const home = related.filter((item) => item.edge.relation_type === 'plays_home_in').length;
+      const away = related.filter((item) => item.edge.relation_type === 'plays_away_in').length;
+      return matches.length + ' linked matches · ' + home + ' home · ' + away + ' away';
+    }
+    if (type === 'match') {
+      const attrs = node.attributes || {};
+      const teams = related.filter((item) => typeFor(item.node) === 'team').map((item) => labelFor(item.node));
+      return [teams.join(' vs '), attrs.date, attrs.time, attrs.ground].filter(Boolean).join(' · ');
+    }
+    if (type === 'evidence_claim' || type === 'finding') {
+      return related.length + ' linked KG nodes';
+    }
+    return related.length + ' connected nodes';
+  }
+
+  function renderDetail(id) {
+    const node = nodes.get(id);
+    if (!node || !detailEl) return;
+    const attrs = attributesFor(node);
+    const related = relatedFor(id);
+    const visibleRelated = related.slice(0, 14);
+    const hiddenCount = Math.max(0, related.length - visibleRelated.length);
+    const attrMarkup = attrs.length
+      ? '<div class="kg-attrs">' + attrs.map((item) =>
+        '<div><span>' + escapeHtml(item.key.replace(/_/g, ' ')) + '</span><b>' + escapeHtml(item.value) + '</b></div>'
+      ).join('') + '</div>'
+      : '';
+    const linksMarkup = visibleRelated.length
+      ? '<div class="kg-links">' + visibleRelated.map((item) =>
+        '<a href="' + nodeUrl(item.id) + '" data-kg-jump="' + encodeURIComponent(item.id) + '">' +
+          '<i>' + escapeHtml(typeFor(item.node).replace(/_/g, ' ')) + '</i>' +
+          '<span>' + escapeHtml(shortLabel(labelFor(item.node))) + '</span>' +
+          '<em>' + escapeHtml((item.outgoing ? '-> ' : '<- ') + item.relation) + '</em>' +
+        '</a>'
+      ).join('') + (hiddenCount ? '<div class="kg-more">+' + hiddenCount + ' more linked nodes</div>' : '') + '</div>'
+      : '<div class="kg-more">No loaded links yet.</div>';
+
+    detailEl.innerHTML =
+      '<div class="kg-detail-head">' +
+        '<div><b>' + escapeHtml(typeFor(node).replace(/_/g, ' ')) + '</b><strong>' + escapeHtml(labelFor(node)) + '</strong></div>' +
+        '<a class="kg-url" href="' + nodeUrl(id) + '" data-kg-jump="' + encodeURIComponent(id) + '">' + escapeHtml('kg://' + id) + '</a>' +
+      '</div>' +
+      '<p>' + escapeHtml(describeNode(node, related)) + '</p>' +
+      attrMarkup +
+      '<div class="kg-subhead">Linked nodes</div>' +
+      linksMarkup;
+
+    detailEl.querySelectorAll('[data-kg-jump]').forEach((link) => {
+      link.addEventListener('click', (event) => {
+        event.preventDefault();
+        selectNode(decodeURIComponent(link.getAttribute('data-kg-jump')));
+      });
+    });
+  }
+
+  function selectNode(id) {
+    if (!nodes.has(id)) return;
+    selectedId = id;
+    renderDetail(id);
+    requestRender();
   }
 
   function requestRender() {
@@ -180,6 +307,13 @@ DN.kgview = (function () {
     renderLegend();
     const placed = positionedNodes();
     const byId = new Map(placed.map((item) => [item.node.entity_id || item.node.id, item]));
+    const selectedRelatedIds = selectedId ? new Set(relatedFor(selectedId).map((item) => item.id).concat(selectedId)) : null;
+    const selectedLines = selectedId ? relatedFor(selectedId).slice(0, 28).map((item) => {
+      const a = byId.get(selectedId);
+      const b = byId.get(item.id);
+      if (!a || !b) return '';
+      return '<line class="kg-selected-edge" x1="' + a.x + '" y1="' + a.y + '" x2="' + b.x + '" y2="' + b.y + '"></line>';
+    }).join('') : '';
     const bandMarkup = relationBands(byId).map((band) => {
       const mx = (band.a.x + band.b.x) / 2;
       const my = (band.a.y + band.b.y) / 2 - 48;
@@ -193,30 +327,22 @@ DN.kgview = (function () {
       const color = colors[type] || item.group.color || colors.default;
       const radius = type === 'match' ? 8 : type === 'team' ? 7 : 5;
       const label = item.groupIndex < 3 && (type === 'match' || type === 'team') ? '<text y="' + (radius + 13) + '">' + escapeHtml(shortLabel(labelFor(node))) + '</text>' : '';
-      return '<g class="kg-node" data-node="' + encodeURIComponent(id) + '" transform="translate(' + item.x + ' ' + item.y + ')">' +
+      const classes = 'kg-node' +
+        (id === selectedId ? ' selected' : '') +
+        (selectedRelatedIds && !selectedRelatedIds.has(id) ? ' dim' : '');
+      return '<g class="' + classes + '" data-node="' + encodeURIComponent(id) + '" tabindex="0" role="button" transform="translate(' + item.x + ' ' + item.y + ')">' +
         '<circle r="' + radius + '" fill="' + color + '"></circle>' +
         label +
       '</g>';
     }).join('');
-    svg.innerHTML = groupBackgrounds() + bandMarkup + nodeMarkup;
-    svg.querySelectorAll('.kg-node').forEach((el) => {
-      el.addEventListener('click', () => {
-        const id = decodeURIComponent(el.getAttribute('data-node'));
-        const node = nodes.get(id);
-        if (node) {
-          detailEl.innerHTML =
-            '<b>' + escapeHtml(typeFor(node).replace(/_/g, ' ')) + '</b>' +
-            '<span>' + escapeHtml(labelFor(node)) + '</span>' +
-            '<small>' + escapeHtml(id) + '</small>';
-        }
-      });
-    });
+    svg.innerHTML = groupBackgrounds() + bandMarkup + selectedLines + nodeMarkup;
   }
 
   K.reset = function (title) {
     ensure();
     nodes = new Map();
     edges = [];
+    selectedId = null;
     root.querySelector('#kg-title').textContent = title || 'KG stream';
     statusEl.textContent = 'Waiting for graph events...';
     legendEl.innerHTML = '';
