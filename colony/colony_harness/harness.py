@@ -11,8 +11,15 @@ from pathlib import Path
 from .agent import AntAgent
 from .debate import DebateFeed
 from .decision import build_collective_decision
+from .economy import (
+    EconomyLedger,
+    build_paid_knowledge_views,
+    debit_internal_stakes,
+    market_spec_for_match,
+    settle_internal_pool,
+    settle_room_payments,
+)
 from .genes import random_genome
-from .knowledge import build_knowledge_views
 from .models import DebateClaim, DebateRoom, KnowledgeView, MatchContext, RoundResult
 from .population import normalize_agent_lineages
 from .social import build_social_actions
@@ -128,14 +135,18 @@ class ColonyHarness:
         return [agent for agent, _reason in self.select_debaters()]
 
     def run_round(self, match: MatchContext) -> RoundResult:
-        knowledge_views_by_agent = build_knowledge_views(match, self.agents)
+        market_spec = market_spec_for_match(match)
+        ledger = EconomyLedger(match.round_id)
+        knowledge_views_by_agent = build_paid_knowledge_views(match, self.agents, ledger)
         profiles = self._build_debate_profiles(match, knowledge_views_by_agent)
         self._last_profiles = profiles
         rooms = self._run_room_debates(profiles)
+        settle_room_payments(rooms=rooms, agents=self.agents, ledger=ledger)
         feed = self._run_final_chamber(rooms, match)
 
         debate_signal = feed.consensus_home_probability()
         forecasts = []
+        allow_draw = market_spec.market_type == "three_way"
         for agent in self.agents:
             view = knowledge_views_by_agent[agent.agent_id]
             visible_match = view.to_match_context(match)
@@ -145,8 +156,10 @@ class ColonyHarness:
                     debate_signal,
                     view.access_tier,
                     len(view.visible_findings),
+                    allow_draw=allow_draw,
                 )
             )
+        forecasts = debit_internal_stakes(agents=self.agents, forecasts=forecasts, ledger=ledger)
         forecasts_by_agent = {forecast.agent_id: forecast for forecast in forecasts}
         social_actions = build_social_actions(
             match=match,
@@ -173,9 +186,18 @@ class ColonyHarness:
             agents=self.agents,
             forecasts=forecasts,
         )
+        settlement_summary = settle_internal_pool(
+            market_spec=market_spec,
+            agents=self.agents,
+            ledger=ledger,
+        )
         summary = {
             "population": self.population_size,
             "speaker_slots": self.speaker_slots,
+            "market_type": market_spec.market_type,
+            "market_outcomes": market_spec.outcomes,
+            "market_result_side": market_spec.result_side,
+            "settlement_status": settlement_summary["status"],
             "room_count": len(rooms),
             "room_claims": sum(len(room.claims) for room in rooms),
             "final_claims": len(feed.claims),
@@ -201,12 +223,18 @@ class ColonyHarness:
             "decision_confidence": collective_decision.internal_metrics["confidence"],
             "decision_market_edge": collective_decision.internal_metrics["market_edge"],
             "decision_home_probability": collective_decision.internal_metrics["weighted_home_probability"],
+            "payment_receipts": len(ledger.payment_receipts),
+            "balance_updates": len(ledger.balance_updates),
+            "treasury_balance": settlement_summary.get("treasury_balance", 0.0),
+            "losing_pool": settlement_summary.get("losing_pool", 0.0),
+            "contributor_pool": settlement_summary.get("contributor_pool", 0.0),
         }
         all_debate_claims = [claim for room in rooms for claim in room.claims] + feed.claims
         world_graph = build_world_graph(match, claims=all_debate_claims, forecasts=forecasts)
 
         return RoundResult(
             round_id=match.round_id,
+            market_spec=market_spec,
             claims=feed.claims,
             rooms=rooms,
             social_actions=social_actions,
@@ -217,6 +245,10 @@ class ColonyHarness:
             world_graph=world_graph,
             collective_decision=collective_decision,
             summary=summary,
+            payment_receipts=ledger.payment_receipts,
+            balance_updates=ledger.balance_updates,
+            internal_stakes=ledger.internal_stakes,
+            settlement_summary=settlement_summary,
         )
 
     def write_jsonl(self, result: RoundResult, output_path: str | Path) -> None:
@@ -224,11 +256,14 @@ class ColonyHarness:
         path.parent.mkdir(parents=True, exist_ok=True)
         events = []
         events.append({"event_type": "round_summary", **result.summary})
+        events.append({"event_type": "market_spec", **result.market_spec.to_dict()})
         # Emit the roster up front so a replay consumer can bind agent_id -> index
         # before any debate_claim/forecast/bet_commitment references an agent.
         events.extend(
             {"event_type": "agent_record", **record} for record in self.public_roster()
         )
+        events.extend({"event_type": "payment_receipt", **receipt.to_dict()} for receipt in result.payment_receipts)
+        events.extend({"event_type": "balance_update", **update.to_dict()} for update in result.balance_updates)
         events.extend({"event_type": "finding", **finding.to_dict()} for finding in result.findings)
         events.extend({"event_type": "knowledge_view", **view.to_dict()} for view in result.knowledge_views)
         events.extend({"event_type": "debate_room", **room.to_dict()} for room in result.rooms)
@@ -236,8 +271,10 @@ class ColonyHarness:
         events.append({"event_type": "world_graph", **result.world_graph.to_dict()})
         events.extend({"event_type": "debate_claim", **claim.to_dict()} for claim in result.claims)
         events.extend({"event_type": "forecast", **forecast.to_dict()} for forecast in result.forecasts)
+        events.extend({"event_type": "internal_stake", **stake.to_dict()} for stake in result.internal_stakes)
         events.append({"event_type": "collective_decision", **result.collective_decision.to_dict()})
         events.extend({"event_type": "bet_commitment", **commitment.to_dict()} for commitment in result.commitments)
+        events.append({"event_type": "settlement_summary", **result.settlement_summary})
 
         with path.open("w", encoding="utf-8") as handle:
             for event in events:

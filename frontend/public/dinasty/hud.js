@@ -48,12 +48,116 @@ DN.hud = (function () {
         '<button class="backend-btn secondary" id="backend-kg">Get KG</button>' +
         '<button class="backend-btn secondary" id="backend-scout">Run scouting</button>' +
         '<button class="backend-btn" id="backend-run">Run LLM agents</button>' +
+        '<select class="forecast-game-select" id="forecast-game" aria-label="Game">' +
+          '<option value="match:world_cup_2026:013:2026_06_13_brazil_morocco">Brazil vs Morocco</option>' +
+        '</select>' +
+        '<button class="backend-btn secondary" id="forecast-deploy">Deploy</button>' +
+        '<button class="backend-btn secondary" id="x402-buy">Buy KG</button>' +
+        '<button class="backend-btn secondary" id="forecast-setup">Stake demo</button>' +
+        '<select class="forecast-select" id="forecast-winner" aria-label="Winner">' +
+          '<option value="Brazil">Brazil</option>' +
+          '<option value="Draw">Draw</option>' +
+          '<option value="Morocco">Morocco</option>' +
+        '</select>' +
+        '<button class="backend-btn" id="forecast-settle">Settle</button>' +
       '</div>';
     const btn = $('backend-run');
     const antsBtn = $('backend-ants');
     const kgBtn = $('backend-kg');
     const scoutBtn = $('backend-scout');
+    const forecastDeployBtn = $('forecast-deploy');
+    const x402BuyBtn = $('x402-buy');
+    const forecastSetupBtn = $('forecast-setup');
+    const forecastSettleBtn = $('forecast-settle');
+    const forecastWinner = $('forecast-winner');
+    const forecastGame = $('forecast-game');
     const status = $('backend-status');
+    const forecastCfg = (window.DN_CONFIG && window.DN_CONFIG.FORECAST) || {};
+    let forecastContract = forecastCfg.CONTRACT || '';
+    let forecastMarketKey = '';
+    let forecastStakes = [];
+    let selectedGame = {
+      market_key: 'match:world_cup_2026:013:2026_06_13_brazil_morocco',
+      market_type: 'three_way',
+      home_team: forecastCfg.HOME_TEAM || 'Brazil',
+      away_team: forecastCfg.AWAY_TEAM || 'Morocco',
+      name: (forecastCfg.HOME_TEAM || 'Brazil') + ' vs ' + (forecastCfg.AWAY_TEAM || 'Morocco'),
+    };
+
+    function updateWinnerOptions() {
+      if (!forecastWinner) return;
+      const drawOption = selectedGame.market_type === 'binary' ? '' : '<option value="Draw">Draw</option>';
+      forecastWinner.innerHTML =
+        '<option value="' + selectedGame.home_team + '">' + selectedGame.home_team + '</option>' +
+        drawOption +
+        '<option value="' + selectedGame.away_team + '">' + selectedGame.away_team + '</option>';
+    }
+
+    function shortHash(value) {
+      if (!value || value.length < 12) return value || '';
+      return value.slice(0, 6) + '...' + value.slice(-4);
+    }
+
+    function forecastTx(result) {
+      const receipt = result && result.receipt;
+      if (receipt && receipt.tx_hash) return receipt.tx_hash;
+      const steps = result && result.steps;
+      if (steps && steps.length) {
+        for (let i = steps.length - 1; i >= 0; i--) {
+          const r = steps[i].receipt || {};
+          if (r.tx_hash) return r.tx_hash;
+          if (r.transactions && r.transactions.length) return r.transactions[r.transactions.length - 1].tx_hash;
+        }
+      }
+      return '';
+    }
+
+    function setForecastBusy(busy) {
+      [forecastDeployBtn, x402BuyBtn, forecastSetupBtn, forecastSettleBtn, forecastWinner, forecastGame].forEach((el) => {
+        if (el) el.disabled = busy;
+      });
+    }
+
+    updateWinnerOptions();
+    if (DN.databridge && DN.databridge.fetchForecastConfig) {
+      DN.databridge.fetchForecastConfig()
+        .then((payload) => {
+          forecastContract = forecastContract || payload.contract || '';
+          if (forecastContract) status.textContent = 'Forecast ' + shortHash(forecastContract);
+        })
+        .catch(() => {});
+    }
+    if (DN.databridge && DN.databridge.fetchForecastGames && forecastGame) {
+      DN.databridge.fetchForecastGames()
+        .then((payload) => {
+          const games = payload.games || [];
+          const preferred = games.find((game) => /Brazil vs Morocco/i.test(game.name || '')) || games[0];
+          if (!preferred) return;
+          forecastGame.innerHTML = games.slice(0, 104).map((game) =>
+            '<option value="' + game.market_key + '">' + game.name + '</option>'
+          ).join('');
+          selectedGame = preferred;
+          forecastGame.value = preferred.market_key;
+          updateWinnerOptions();
+        })
+        .catch(() => {});
+      forecastGame.addEventListener('change', () => {
+        const optionText = forecastGame.options[forecastGame.selectedIndex] ? forecastGame.options[forecastGame.selectedIndex].textContent : 'Selected game';
+        selectedGame = {
+          market_key: forecastGame.value,
+          market_type: forecastGame.value.includes('group') ? 'three_way' : selectedGame.market_type,
+          home_team: optionText.split(' vs ')[0] || selectedGame.home_team,
+          away_team: optionText.split(' vs ')[1] || selectedGame.away_team,
+          name: optionText,
+        };
+        const cached = (DN.databridge.forecastGames || []).find((game) => game.market_key === forecastGame.value);
+        if (cached) selectedGame = cached;
+        forecastMarketKey = '';
+        forecastStakes = [];
+        updateWinnerOptions();
+        status.textContent = selectedGame.name;
+      });
+    }
 
     // Auto-fetch ants from the Railway API every 15s, then bind each
     // record (wallet/ENS/etc.) to a scene ant so clicking a worker shows
@@ -202,6 +306,108 @@ DN.hud = (function () {
           if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Run failed: ' + (err.message || err));
         })
         .finally(() => { btn.disabled = false; });
+    });
+
+    forecastDeployBtn.addEventListener('click', () => {
+      if (!DN.databridge || !DN.databridge.deployForecastContract) return;
+      setForecastBusy(true);
+      status.textContent = 'Deploying contract...';
+      H.pushThought('Deploying the Arc forecast market contract.', 'Arc', '#E8A23D');
+      DN.databridge.deployForecastContract()
+        .then((result) => {
+          const receipt = result.receipt || {};
+          forecastContract = result.contract || receipt.contract_address || forecastContract;
+          status.textContent = 'Contract ' + shortHash(forecastContract);
+          H.pushThought('Forecast contract deployed: ' + shortHash(forecastContract) + ' · tx ' + shortHash(receipt.tx_hash || ''), 'Arc', '#3FA89F');
+        })
+        .catch((err) => {
+          status.textContent = 'Deploy error';
+          H.pushThought('Deploy failed: ' + (err.message || err), 'Arc', '#D96E54');
+        })
+        .finally(() => setForecastBusy(false));
+    });
+
+    x402BuyBtn.addEventListener('click', () => {
+      if (!DN.databridge || !DN.databridge.runX402DemoPayment) return;
+      setForecastBusy(true);
+      status.textContent = 'Buying KG...';
+      H.pushThought('ant-0001 is buying a private KG signal for ' + selectedGame.name + ' from ant-0002 through x402.', 'x402', '#E8A23D');
+      DN.databridge.runX402DemoPayment({
+        topic: selectedGame.name,
+        resource_id: 'kg:' + selectedGame.market_key + ':private-scout-signal',
+      })
+        .then((result) => {
+          const tx = result.gateway_transfer_id || '';
+          const amount = result.amount_usdc || '0';
+          status.textContent = 'x402 paid ' + amount + ' USDC';
+          H.pushThought('x402 payment complete: ' + result.money_flow + ' for ' + result.resource_id + (tx ? ' · transfer ' + shortHash(tx) : '') + '.', 'x402', '#3FA89F');
+        })
+        .catch((err) => {
+          status.textContent = 'x402 error';
+          H.pushThought('x402 payment failed: ' + (err.message || err), 'x402', '#D96E54');
+        })
+        .finally(() => setForecastBusy(false));
+    });
+
+    forecastSetupBtn.addEventListener('click', () => {
+      if (!DN.databridge || !DN.databridge.setupForecastDemo) return;
+      forecastMarketKey = selectedGame.market_key + ':demo-' + Date.now();
+      setForecastBusy(true);
+      status.textContent = 'Staking demo...';
+      H.pushThought('Creating a fresh Arc market for ' + selectedGame.name + ' and staking ant votes.', 'Arc', '#E8A23D');
+      DN.databridge.setupForecastDemo({
+        contract: forecastContract || undefined,
+        market_key: forecastMarketKey,
+        market_type: selectedGame.market_type || 'three_way',
+        metadata_uri: selectedGame.market_key,
+        run_id: DN.databridge.runId || undefined,
+      })
+        .then((result) => {
+          forecastContract = result.contract || forecastContract;
+          forecastStakes = result.stakes || [];
+          const totals = result.totals || {};
+          status.textContent = 'Staked ' + (totals.total_usdc || '0') + ' USDC';
+          H.pushThought('Demo market funded on Arc from ' + (result.stake_source || 'fallback') + ': ' + (totals.home_usdc || '0') + ' home · ' + (totals.draw_usdc || '0') + ' draw · ' + (totals.away_usdc || '0') + ' away.', 'Arc', '#3FA89F');
+        })
+        .catch((err) => {
+          status.textContent = 'Stake error';
+          H.pushThought('Stake demo failed: ' + (err.message || err), 'Arc', '#D96E54');
+        })
+        .finally(() => setForecastBusy(false));
+    });
+
+    forecastSettleBtn.addEventListener('click', () => {
+      if (!DN.databridge || !DN.databridge.settleForecastDemo) return;
+      if (!forecastMarketKey) {
+        status.textContent = 'Stake demo first';
+        H.pushThought('Create and stake a demo market before settlement.', 'Arc', '#D96E54');
+        return;
+      }
+      const winner = forecastWinner ? forecastWinner.value : selectedGame.home_team;
+      setForecastBusy(true);
+      status.textContent = 'Settling ' + winner + '...';
+      H.pushThought('Settling the Arc market with winner: ' + winner + '.', 'Arc', '#E8A23D');
+      DN.databridge.settleForecastDemo({
+        contract: forecastContract || undefined,
+        market_key: forecastMarketKey,
+        winner,
+        home_team: selectedGame.home_team,
+        away_team: selectedGame.away_team,
+        winning_agents: forecastStakes
+          .filter((stake) => stake.outcome === (winner === selectedGame.home_team ? 'home' : winner === selectedGame.away_team ? 'away' : 'draw'))
+          .map((stake) => stake.agent),
+      })
+        .then((result) => {
+          const tx = forecastTx(result);
+          const claimed = (result.claimed_agents || []).join(', ') || 'none';
+          status.textContent = 'Settled · ' + result.result;
+          H.pushThought('Settlement complete: winners claimed by ' + claimed + (tx ? ' · tx ' + shortHash(tx) : '') + '.', 'Arc', '#3FA89F');
+        })
+        .catch((err) => {
+          status.textContent = 'Settle error';
+          H.pushThought('Settle failed: ' + (err.message || err), 'Arc', '#D96E54');
+        })
+        .finally(() => setForecastBusy(false));
     });
   }
 

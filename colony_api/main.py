@@ -15,6 +15,8 @@ import re
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,6 +36,11 @@ RUN_MATCH = REPO_ROOT / "colony" / "run_match.py"
 WORLD_CUP_KG = REPO_ROOT / "colony" / "data" / "world_cup_kg.json"
 WORLD_CUP_KG_SUMMARY = REPO_ROOT / "colony" / "data" / "world_cup_kg.summary.md"
 DEFAULT_PUBLIC_WALLET_STORE = "colony/data/agent-wallets.dynamic.200.public.json"
+DEFAULT_LOCAL_WALLET_STORE = "colony/secrets/agent-wallets.local.json"
+FORECAST_CLI = REPO_ROOT / "arc" / "forecast-market.mjs"
+X402_SERVICE_CLI = REPO_ROOT / "arc" / "x402-agent-service.mjs"
+X402_PAY_CLI = REPO_ROOT / "arc" / "x402-agent-pay.mjs"
+DEFAULT_FORECAST_CONTRACT = "0xc40a8f2e29fe061cd4c0fe92cc73b9b43f9ada87"
 
 ENS_ADJECTIVES = [
     "amber",
@@ -93,6 +100,56 @@ class RunRecord(BaseModel):
     run_dir: str
     events_path: str
     compact_runs_dir: str
+
+
+class ForecastDeployRequest(BaseModel):
+    treasury: str | None = None
+
+
+class ForecastCreateMarketRequest(BaseModel):
+    contract: str | None = None
+    market_key: str = "worldcup:2026:brazil-morocco:frontend-demo"
+    market_type: Literal["three_way", "binary"] = "three_way"
+    close_time: int = Field(default=0, ge=0)
+    fee_bps: int = Field(default=1000, ge=0, le=2000)
+    metadata_uri: str = "worldcup:2026:brazil-morocco:frontend-demo"
+
+
+class ForecastStakeInstruction(BaseModel):
+    agent: str
+    outcome: Literal["home", "draw", "away"]
+    amount: str = "0.001"
+
+
+class ForecastDemoSetupRequest(ForecastCreateMarketRequest):
+    wallet_store: str = DEFAULT_LOCAL_WALLET_STORE
+    stakes: list[ForecastStakeInstruction] | None = None
+    run_id: str | None = None
+    max_stakers: int = Field(default=3, ge=1, le=25)
+    stake_scale: float = Field(default=0.0001, gt=0.0, le=1.0)
+
+
+class ForecastSettleRequest(BaseModel):
+    contract: str | None = None
+    market_key: str = "worldcup:2026:brazil-morocco:frontend-demo"
+    winner: str = "home"
+    home_team: str = "Brazil"
+    away_team: str = "Morocco"
+    wallet_store: str = DEFAULT_LOCAL_WALLET_STORE
+    claim_winners: bool = True
+    withdraw_treasury: bool = True
+    winning_agents: list[str] | None = None
+
+
+class X402DemoPaymentRequest(BaseModel):
+    buyer: str = "ant_0001"
+    seller: str = "ant_0002"
+    service: Literal["summary", "audit", "finding_shared", "finding_private"] = "finding_private"
+    wallet_store: str = DEFAULT_LOCAL_WALLET_STORE
+    deposit: str | None = None
+    round_id: str = "worldcup:2026:brazil-morocco:x402-demo"
+    resource_id: str = "kg:worldcup:brazil-morocco:private-scout-signal"
+    topic: str = "Brazil vs Morocco"
 
 
 def _utc_now() -> str:
@@ -196,6 +253,12 @@ def _env_int(name: str, default: int) -> int:
         return int(os.environ.get(name, str(default)))
     except ValueError:
         return default
+
+
+def _model_dump(model: BaseModel) -> dict:
+    if hasattr(model, "model_dump"):
+        return model.model_dump()
+    return model.dict()
 
 
 def _default_wallet_store() -> str:
@@ -443,6 +506,377 @@ def _execute_run(run_id: str, command: list[str]) -> None:
     _write_metadata(run_id, metadata)
 
 
+def _forecast_contract_address(value: str | None = None) -> str:
+    contract = (value or os.environ.get("FORECAST_MARKET_ADDRESS") or DEFAULT_FORECAST_CONTRACT).strip()
+    if not re.fullmatch(r"0x[0-9a-fA-F]{40}", contract):
+        raise HTTPException(status_code=400, detail="Invalid forecast contract address")
+    return contract
+
+
+def _forecast_receipt_path(action: str) -> Path:
+    target = RUNS_ROOT / "forecast_receipts" / f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}_{action}.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def _forecast_wallet_store_argument(wallet_store: str) -> str:
+    env_payload = os.environ.get("COLONY_API_FORECAST_WALLETS_JSON")
+    if env_payload:
+        try:
+            parsed = json.loads(env_payload)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=500, detail="COLONY_API_FORECAST_WALLETS_JSON is not valid JSON") from exc
+        target = RUNS_ROOT / "forecast_wallets" / "agent-wallets.env.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(parsed, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return str(target)
+
+    configured = os.environ.get("COLONY_API_FORECAST_WALLET_STORE") or wallet_store
+    return str(_safe_repo_path(configured).relative_to(REPO_ROOT))
+
+
+def _x402_wallet_store_argument(wallet_store: str) -> str:
+    env_payload = os.environ.get("COLONY_API_X402_WALLETS_JSON") or os.environ.get("COLONY_API_FORECAST_WALLETS_JSON")
+    if env_payload:
+        try:
+            parsed = json.loads(env_payload)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=500, detail="COLONY_API_X402_WALLETS_JSON is not valid JSON") from exc
+        target = RUNS_ROOT / "x402_wallets" / "agent-wallets.env.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(parsed, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return str(target)
+
+    configured = os.environ.get("COLONY_API_X402_WALLET_STORE") or wallet_store
+    return str(_safe_repo_path(configured).relative_to(REPO_ROOT))
+
+
+def _x402_receipt_path(action: str, suffix: str) -> Path:
+    target = RUNS_ROOT / "x402_receipts" / f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}_{action}.{suffix}"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def _x402_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("ARC_RPC_URL", "https://rpc.testnet.arc.network")
+    return env
+
+
+def _free_local_port() -> int:
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _wait_for_x402_service(base_url: str, process: subprocess.Popen, timeout: float = 12.0) -> dict:
+    deadline = time.time() + timeout
+    last_error = ""
+    while time.time() < deadline:
+        if process.poll() is not None:
+            raise HTTPException(status_code=500, detail=f"x402 service exited early with code {process.returncode}")
+        try:
+            with urllib.request.urlopen(f"{base_url}/health", timeout=1.0) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            last_error = str(exc)
+            time.sleep(0.2)
+    raise HTTPException(status_code=504, detail=f"x402 service did not become ready: {last_error}")
+
+
+def _run_x402_pay(args: list[str], *, timeout: int = 120) -> dict:
+    if not X402_PAY_CLI.exists():
+        raise HTTPException(status_code=500, detail="arc/x402-agent-pay.mjs is missing")
+    out_path = _x402_receipt_path("pay", "json")
+    command = ["node", str(X402_PAY_CLI), *args, "--out", str(out_path)]
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(REPO_ROOT),
+            env=_x402_env(),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=500, detail="Node.js is required for x402 operations") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail="x402 payment timed out") from exc
+
+    payload: dict = {
+        "ok": completed.returncode == 0,
+        "command": command,
+        "stdout": completed.stdout.strip(),
+        "stderr": completed.stderr.strip(),
+        "returncode": completed.returncode,
+        "receipt_path": str(out_path),
+    }
+    if out_path.exists():
+        try:
+            payload["receipt"] = json.loads(out_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            payload["receipt"] = None
+    if completed.returncode != 0:
+        raise HTTPException(status_code=500, detail=payload)
+    return payload
+
+
+def _latest_jsonl(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    latest = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            latest = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+    return latest
+
+
+def _run_forecast_cli(args: list[str], *, action: str, timeout: int = 120) -> dict:
+    if not FORECAST_CLI.exists():
+        raise HTTPException(status_code=500, detail="arc/forecast-market.mjs is missing")
+    out_path = _forecast_receipt_path(action)
+    command = ["node", str(FORECAST_CLI), *args, "--out", str(out_path)]
+    env = os.environ.copy()
+    env.setdefault("ARC_RPC_URL", "https://rpc.testnet.arc.network")
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(REPO_ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=500, detail="Node.js is required for forecast contract operations") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail=f"Forecast contract operation timed out: {action}") from exc
+
+    payload: dict = {
+        "ok": completed.returncode == 0,
+        "action": action,
+        "command": command,
+        "stdout": completed.stdout.strip(),
+        "stderr": completed.stderr.strip(),
+        "returncode": completed.returncode,
+        "receipt_path": str(out_path),
+    }
+    if out_path.exists():
+        try:
+            payload["receipt"] = json.loads(out_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            payload["receipt"] = None
+    if completed.returncode != 0:
+        raise HTTPException(status_code=500, detail=payload)
+    return payload
+
+
+def _run_forecast_cli_read(args: list[str], *, action: str, timeout: int = 60) -> dict:
+    if not FORECAST_CLI.exists():
+        raise HTTPException(status_code=500, detail="arc/forecast-market.mjs is missing")
+    command = ["node", str(FORECAST_CLI), *args]
+    env = os.environ.copy()
+    env.setdefault("ARC_RPC_URL", "https://rpc.testnet.arc.network")
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(REPO_ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=500, detail="Node.js is required for forecast contract operations") from exc
+    if completed.returncode != 0:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "action": action,
+                "command": command,
+                "stdout": completed.stdout.strip(),
+                "stderr": completed.stderr.strip(),
+                "returncode": completed.returncode,
+            },
+        )
+    stdout = completed.stdout.strip()
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError:
+        data = {"output": stdout}
+    return {
+        "ok": True,
+        "action": action,
+        "command": command,
+        "data": data,
+    }
+
+
+def _winner_to_outcome(winner: str, *, home_team: str, away_team: str) -> str:
+    value = winner.strip().lower().replace("_", " ")
+    home = home_team.strip().lower()
+    away = away_team.strip().lower()
+    if value in {"home", "home win", "home qualifies"} or value == home:
+        return "home"
+    if value in {"away", "away win", "away qualifies"} or value == away:
+        return "away"
+    if value in {"draw", "tie", "null", "nul"}:
+        return "draw"
+    raise HTTPException(status_code=400, detail=f"Winner must be home, away, draw, {home_team}, or {away_team}")
+
+
+def _default_demo_stakes(market_type: str) -> list[ForecastStakeInstruction]:
+    if market_type == "binary":
+        return [
+            ForecastStakeInstruction(agent="ant_0001", outcome="home", amount="0.001"),
+            ForecastStakeInstruction(agent="ant_0002", outcome="away", amount="0.001"),
+            ForecastStakeInstruction(agent="ant_0003", outcome="home", amount="0.002"),
+        ]
+    return [
+        ForecastStakeInstruction(agent="ant_0001", outcome="home", amount="0.001"),
+        ForecastStakeInstruction(agent="ant_0002", outcome="draw", amount="0.001"),
+        ForecastStakeInstruction(agent="ant_0003", outcome="away", amount="0.001"),
+    ]
+
+
+def _winning_agents_for(stakes: list[ForecastStakeInstruction], outcome: str) -> list[str]:
+    return [stake.agent for stake in stakes if stake.outcome == outcome]
+
+
+def _wallet_agent_ids(wallet_store: str) -> set[str]:
+    path = Path(wallet_store)
+    if not path.is_absolute():
+        path = REPO_ROOT / wallet_store
+    if not path.exists():
+        return set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return set()
+    wallets = payload.get("wallets") or {}
+    return {
+        agent_id
+        for agent_id, wallet in wallets.items()
+        if wallet.get("private_key") or wallet.get("privateKey")
+    }
+
+
+def _format_usdc_amount(value: float) -> str:
+    text = f"{max(value, 0.0):.6f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _stake_instructions_from_run(
+    *,
+    run_id: str,
+    wallet_store: str,
+    market_type: str,
+    max_stakers: int,
+    stake_scale: float,
+) -> list[ForecastStakeInstruction]:
+    signable_agents = _wallet_agent_ids(wallet_store)
+    if not signable_agents:
+        return []
+    forecasts = [
+        event
+        for event in _read_events(run_id)
+        if event.get("event_type") == "forecast" and event.get("agent_id") in signable_agents
+    ]
+    forecasts.sort(key=lambda item: (float(item.get("stake") or 0.0), abs(float(item.get("edge") or 0.0))), reverse=True)
+    stakes: list[ForecastStakeInstruction] = []
+    seen: set[str] = set()
+    for forecast in forecasts:
+        agent_id = str(forecast.get("agent_id") or "")
+        if not agent_id or agent_id in seen:
+            continue
+        side = str(forecast.get("side") or "pass")
+        if side not in {"home", "draw", "away"}:
+            continue
+        if market_type == "binary" and side == "draw":
+            continue
+        raw_stake = float(forecast.get("stake") or 0.0)
+        amount = min(max(raw_stake * stake_scale, 0.0001), 0.002)
+        stakes.append(ForecastStakeInstruction(agent=agent_id, outcome=side, amount=_format_usdc_amount(amount)))
+        seen.add(agent_id)
+        if len(stakes) >= max_stakers:
+            break
+    return stakes
+
+
+def _x402_services() -> list[dict]:
+    return [
+        {
+            "service": "finding_private",
+            "price_usdc": "0.00012",
+            "resource": "private KG/scout signal",
+            "money_flow": "buyer ant -> seller scout ant via Circle Gateway",
+        },
+        {
+            "service": "finding_shared",
+            "price_usdc": "0.00005",
+            "resource": "shared KG/scout signal",
+            "money_flow": "buyer ant -> seller scout ant via Circle Gateway",
+        },
+        {
+            "service": "summary",
+            "price_usdc": "0.0003",
+            "resource": "room summary",
+            "money_flow": "buyer ant -> seller representative ant via Circle Gateway",
+        },
+        {
+            "service": "audit",
+            "price_usdc": "0.0005",
+            "resource": "grounded challenge/audit",
+            "money_flow": "buyer ant -> seller auditor ant via Circle Gateway",
+        },
+    ]
+
+
+def _forecast_games_from_kg(limit: int = 104) -> list[dict]:
+    if not WORLD_CUP_KG.exists():
+        return []
+    graph = json.loads(WORLD_CUP_KG.read_text(encoding="utf-8"))
+    games: list[dict] = []
+    for entity in graph.get("entities") or []:
+        if entity.get("entity_type") != "match":
+            continue
+        attrs = entity.get("attributes") or {}
+        home = str(attrs.get("team1") or "").strip()
+        away = str(attrs.get("team2") or "").strip()
+        if not home or not away:
+            continue
+        group = str(attrs.get("group") or "").strip()
+        market_type = "three_way" if group else "binary"
+        games.append(
+            {
+                "match_id": entity.get("entity_id"),
+                "market_key": entity.get("entity_id"),
+                "name": entity.get("name") or f"{home} vs {away}",
+                "home_team": home,
+                "away_team": away,
+                "market_type": market_type,
+                "outcomes": ["home", "draw", "away"] if market_type == "three_way" else ["home", "away"],
+                "date": attrs.get("date"),
+                "time": attrs.get("time"),
+                "stage": attrs.get("round"),
+                "group": group,
+                "venue": attrs.get("ground"),
+                "score": attrs.get("score"),
+            }
+        )
+    games.sort(key=lambda item: (str(item.get("date") or ""), str(item.get("time") or ""), str(item.get("name") or "")))
+    return games[:limit]
+
+
 def _cors_origins() -> list[str]:
     raw = os.environ.get("COLONY_API_CORS_ORIGINS", "*")
     return [origin.strip() for origin in raw.split(",") if origin.strip()]
@@ -493,6 +927,15 @@ def get_config() -> dict:
             "run_kg": "/runs/{run_id}/kg",
             "run_kg_manifest": "/runs/{run_id}/kg/manifest",
             "run_scouting_audit": "/runs/{run_id}/scouting-audit",
+            "forecast_config": "/forecast/config",
+            "forecast_deploy": "/forecast/deploy",
+            "forecast_games": "/forecast/games",
+            "forecast_market": "/forecast/market",
+            "forecast_demo_setup": "/forecast/demo-setup",
+            "forecast_settle": "/forecast/settle",
+            "forecast_totals": "/forecast/totals",
+            "x402_config": "/x402/config",
+            "x402_demo_payment": "/x402/demo-payment",
         },
         "defaults": {
             "agents": _env_int("COLONY_API_DEFAULT_AGENTS", 200),
@@ -519,6 +962,380 @@ def get_config() -> dict:
             "genome_id",
             "lineage_id",
         ],
+    }
+
+
+@app.get("/forecast/config")
+def get_forecast_config() -> dict:
+    contract = _forecast_contract_address()
+    return {
+        "network": {
+            "name": "Arc Testnet",
+            "chain_id": 5042002,
+            "rpc_url": os.environ.get("ARC_RPC_URL", "https://rpc.testnet.arc.network"),
+            "explorer": os.environ.get("ARC_EXPLORER", "https://explorer.testnet.arc.network"),
+            "usdc": os.environ.get("ARC_USDC_ADDRESS", "0x3600000000000000000000000000000000000000"),
+        },
+        "contract": contract,
+        "default_market": {
+            "market_key": "worldcup:2026:brazil-morocco:frontend-demo",
+            "market_type": "three_way",
+            "home_team": "Brazil",
+            "away_team": "Morocco",
+            "fee_bps": 1000,
+            "stakes": [_model_dump(stake) for stake in _default_demo_stakes("three_way")],
+        },
+        "endpoints": {
+            "deploy": "/forecast/deploy",
+            "games": "/forecast/games",
+            "market": "/forecast/market",
+            "demo_setup": "/forecast/demo-setup",
+            "settle": "/forecast/settle",
+            "totals": "/forecast/totals",
+        },
+    }
+
+
+@app.get("/forecast/games")
+def get_forecast_games(limit: int = 104) -> dict:
+    games = _forecast_games_from_kg(limit=max(1, min(limit, 104)))
+    return {
+        "count": len(games),
+        "source": str(WORLD_CUP_KG.relative_to(REPO_ROOT)),
+        "games": games,
+    }
+
+
+@app.post("/forecast/deploy")
+def deploy_forecast_contract(request: ForecastDeployRequest) -> dict:
+    args = ["deploy"]
+    if request.treasury:
+        args.extend(["--treasury", request.treasury])
+    result = _run_forecast_cli(args, action="deploy", timeout=180)
+    receipt = result.get("receipt") or {}
+    if receipt.get("contract_address"):
+        result["contract"] = receipt["contract_address"]
+    return result
+
+
+@app.post("/forecast/market")
+def create_forecast_market(request: ForecastCreateMarketRequest) -> dict:
+    contract = _forecast_contract_address(request.contract)
+    args = [
+        "create-market",
+        "--contract",
+        contract,
+        "--market-key",
+        request.market_key,
+        "--market-type",
+        request.market_type,
+        "--close-time",
+        str(request.close_time),
+        "--fee-bps",
+        str(request.fee_bps),
+        "--metadata-uri",
+        request.metadata_uri,
+    ]
+    result = _run_forecast_cli(args, action="create-market", timeout=120)
+    result["contract"] = contract
+    return result
+
+
+@app.post("/forecast/demo-setup")
+def setup_forecast_demo(request: ForecastDemoSetupRequest) -> dict:
+    contract = _forecast_contract_address(request.contract)
+    wallet_store = _forecast_wallet_store_argument(request.wallet_store)
+    stakes = request.stakes
+    stake_source = "request"
+    if stakes is None and request.run_id:
+        stakes = _stake_instructions_from_run(
+            run_id=request.run_id,
+            wallet_store=wallet_store,
+            market_type=request.market_type,
+            max_stakers=request.max_stakers,
+            stake_scale=request.stake_scale,
+        )
+        stake_source = f"run:{request.run_id}" if stakes else "fallback"
+    if stakes is None or not stakes:
+        stakes = _default_demo_stakes(request.market_type)
+        stake_source = "fallback"
+    steps: list[dict] = []
+
+    market_request = ForecastCreateMarketRequest(
+        contract=contract,
+        market_key=request.market_key,
+        market_type=request.market_type,
+        close_time=request.close_time,
+        fee_bps=request.fee_bps,
+        metadata_uri=request.metadata_uri,
+    )
+    steps.append(create_forecast_market(market_request))
+
+    for stake in stakes:
+        if request.market_type == "binary" and stake.outcome == "draw":
+            raise HTTPException(status_code=400, detail="Binary markets do not accept draw stakes")
+        args = [
+            "stake",
+            "--contract",
+            contract,
+            "--wallet-store",
+            wallet_store,
+            "--agent",
+            stake.agent,
+            "--market-key",
+            request.market_key,
+            "--outcome",
+            stake.outcome,
+            "--amount",
+            stake.amount,
+        ]
+        steps.append(_run_forecast_cli(args, action=f"stake-{stake.agent}", timeout=120))
+
+    totals = _run_forecast_cli_read(
+        ["totals", "--contract", contract, "--market-key", request.market_key],
+        action="totals",
+    )
+    return {
+        "ok": True,
+        "contract": contract,
+        "market_key": request.market_key,
+        "market_type": request.market_type,
+        "stake_source": stake_source,
+        "stakes": [_model_dump(stake) for stake in stakes],
+        "steps": steps,
+        "totals": totals.get("data"),
+    }
+
+
+@app.post("/forecast/settle")
+def settle_forecast_demo(request: ForecastSettleRequest) -> dict:
+    contract = _forecast_contract_address(request.contract)
+    wallet_store = _forecast_wallet_store_argument(request.wallet_store)
+    outcome = _winner_to_outcome(request.winner, home_team=request.home_team, away_team=request.away_team)
+    steps: list[dict] = []
+
+    steps.append(
+        _run_forecast_cli(
+            [
+                "settle",
+                "--contract",
+                contract,
+                "--market-key",
+                request.market_key,
+                "--result",
+                outcome,
+            ],
+            action="settle",
+            timeout=120,
+        )
+    )
+
+    winning_agents = request.winning_agents
+    if winning_agents is None:
+        winning_agents = _winning_agents_for(_default_demo_stakes("three_way"), outcome)
+    if request.claim_winners:
+        for agent_id in winning_agents:
+            steps.append(
+                _run_forecast_cli(
+                    [
+                        "claim",
+                        "--contract",
+                        contract,
+                        "--wallet-store",
+                        wallet_store,
+                        "--agent",
+                        agent_id,
+                        "--market-key",
+                        request.market_key,
+                    ],
+                    action=f"claim-{agent_id}",
+                    timeout=120,
+                )
+            )
+
+    if request.withdraw_treasury:
+        steps.append(
+            _run_forecast_cli(
+                [
+                    "withdraw-treasury",
+                    "--contract",
+                    contract,
+                    "--market-key",
+                    request.market_key,
+                ],
+                action="withdraw-treasury",
+                timeout=120,
+            )
+        )
+
+    totals = _run_forecast_cli_read(
+        ["totals", "--contract", contract, "--market-key", request.market_key],
+        action="totals",
+    )
+    return {
+        "ok": True,
+        "contract": contract,
+        "market_key": request.market_key,
+        "winner": request.winner,
+        "result": outcome,
+        "claimed_agents": winning_agents if request.claim_winners else [],
+        "steps": steps,
+        "totals": totals.get("data"),
+    }
+
+
+@app.get("/forecast/totals")
+def get_forecast_totals(contract: str | None = None, market_key: str = "worldcup:2026:brazil-morocco:frontend-demo") -> dict:
+    resolved_contract = _forecast_contract_address(contract)
+    result = _run_forecast_cli_read(
+        ["totals", "--contract", resolved_contract, "--market-key", market_key],
+        action="totals",
+    )
+    return {
+        "ok": True,
+        "contract": resolved_contract,
+        "market_key": market_key,
+        "totals": result.get("data"),
+    }
+
+
+@app.get("/x402/config")
+def get_x402_config() -> dict:
+    return {
+        "rail": "x402_circle_gateway",
+        "network": {
+            "name": "Arc Testnet",
+            "chain_id": 5042002,
+            "gateway_network": "eip155:5042002",
+            "facilitator": os.environ.get("CIRCLE_GATEWAY_FACILITATOR_URL", "https://gateway-api-testnet.circle.com"),
+        },
+        "purpose": "Agent-to-agent services: KG/scout data, summaries, and grounded audits.",
+        "settlement_contract_role": "Forecast staking and winner redistribution stay in ColonyForecastMarket; x402 is not the betting escrow.",
+        "default_demo": {
+            "buyer": "ant_0001",
+            "seller": "ant_0002",
+            "service": "finding_private",
+            "resource_id": "kg:worldcup:brazil-morocco:private-scout-signal",
+            "money_flow": "ant_0001 pays ant_0002 through Circle Gateway for a private KG/scout signal.",
+        },
+        "services": _x402_services(),
+        "endpoints": {
+            "config": "/x402/config",
+            "demo_payment": "/x402/demo-payment",
+        },
+    }
+
+
+@app.post("/x402/demo-payment")
+def run_x402_demo_payment(request: X402DemoPaymentRequest) -> dict:
+    if not X402_SERVICE_CLI.exists():
+        raise HTTPException(status_code=500, detail="arc/x402-agent-service.mjs is missing")
+    if not X402_PAY_CLI.exists():
+        raise HTTPException(status_code=500, detail="arc/x402-agent-pay.mjs is missing")
+
+    wallet_store = _x402_wallet_store_argument(request.wallet_store)
+    port = _free_local_port()
+    base_url = f"http://127.0.0.1:{port}"
+    service_receipts = _x402_receipt_path("service", "jsonl")
+    stdout_path = _x402_receipt_path("service-stdout", "log")
+    stderr_path = _x402_receipt_path("service-stderr", "log")
+    body = {
+        "round_id": request.round_id,
+        "resource_id": request.resource_id,
+        "topic": request.topic,
+        "room_id": "room_forecast_demo",
+        "finding_id": request.resource_id,
+        "payload": {
+            "kind": "kg_signal",
+            "match": request.topic,
+            "signal": "private_scout_signal",
+            "confidence": 0.72,
+        },
+    }
+    service_process: subprocess.Popen | None = None
+
+    with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open("w", encoding="utf-8") as stderr:
+        try:
+            service_process = subprocess.Popen(
+                [
+                    "node",
+                    str(X402_SERVICE_CLI),
+                    "--wallet-store",
+                    wallet_store,
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(port),
+                    "--receipts",
+                    str(service_receipts),
+                ],
+                cwd=str(REPO_ROOT),
+                env=_x402_env(),
+                stdout=stdout,
+                stderr=stderr,
+                text=True,
+            )
+            health = _wait_for_x402_service(base_url, service_process)
+            pay_args = [
+                "--wallet-store",
+                wallet_store,
+                "--buyer",
+                request.buyer,
+                "--seller",
+                request.seller,
+                "--service",
+                request.service,
+                "--base-url",
+                base_url,
+                "--body-json",
+                json.dumps(body, separators=(",", ":")),
+            ]
+            if request.deposit:
+                pay_args.extend(["--deposit", request.deposit])
+            payment = _run_x402_pay(pay_args, timeout=180)
+        finally:
+            if service_process is not None and service_process.poll() is None:
+                service_process.terminate()
+                try:
+                    service_process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    service_process.kill()
+                    service_process.wait(timeout=3)
+
+    buyer_receipt = payment.get("receipt") or {}
+    service_receipt = _latest_jsonl(service_receipts)
+    receipt = service_receipt or ((buyer_receipt.get("response") or {}).get("receipt") if isinstance(buyer_receipt.get("response"), dict) else None)
+    metadata = (receipt or {}).get("metadata") or {}
+    transfer_id = buyer_receipt.get("transaction") or metadata.get("transaction") or metadata.get("gateway_transfer_id") or ""
+    amount = buyer_receipt.get("paid_amount_usdc") or (receipt or {}).get("amount")
+    product = ((buyer_receipt.get("response") or {}).get("product") if isinstance(buyer_receipt.get("response"), dict) else None) or {}
+
+    return {
+        "ok": True,
+        "rail": "x402_circle_gateway",
+        "network": "Arc Testnet",
+        "buyer": {
+            "agent_id": request.buyer,
+            "wallet": buyer_receipt.get("buyer_wallet") or metadata.get("payer_wallet") or "",
+        },
+        "seller": {
+            "agent_id": request.seller,
+            "wallet": metadata.get("payee_wallet") or "",
+        },
+        "service": request.service,
+        "resource_id": request.resource_id,
+        "amount_usdc": amount,
+        "money_flow": f"{request.buyer} -> {request.seller} via Circle Gateway",
+        "gateway_transfer_id": transfer_id,
+        "receipt": receipt,
+        "product": product,
+        "health": health,
+        "artifacts": {
+            "buyer_receipt": payment.get("receipt_path"),
+            "service_receipts": str(service_receipts),
+            "service_stdout": str(stdout_path),
+            "service_stderr": str(stderr_path),
+        },
     }
 
 

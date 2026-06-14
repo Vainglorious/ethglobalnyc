@@ -145,6 +145,64 @@ The graph response includes convenience counts:
 }
 ```
 
+## Agent Economy Demo
+
+The demo has two real USDC rails with separate jobs:
+
+- `x402_circle_gateway`: agent-to-agent services. A buyer ant pays a seller ant
+  for KG/scout data, room summaries, or audits. The USDC goes to the seller ant
+  through Circle Gateway.
+- `ColonyForecastMarket`: forecast escrow. Ants stake USDC into the Arc contract,
+  then the owner settles the match and correct voters claim winnings.
+
+Inspect the rails:
+
+```bash
+curl https://ethglobalnyc-production.up.railway.app/x402/config
+curl https://ethglobalnyc-production.up.railway.app/forecast/config
+```
+
+Run a real x402 demo payment:
+
+```bash
+curl -X POST https://ethglobalnyc-production.up.railway.app/x402/demo-payment \
+  -H "Content-Type: application/json" \
+  -d '{"buyer":"ant_0001","seller":"ant_0002","service":"finding_private"}'
+```
+
+Default x402 flow:
+
+```text
+ant_0001 -> ant_0002 via Circle Gateway
+resource: kg:worldcup:brazil-morocco:private-scout-signal
+price: 0.00012 USDC
+```
+
+Run the forecast contract demo:
+
+```bash
+curl -X POST https://ethglobalnyc-production.up.railway.app/forecast/demo-setup \
+  -H "Content-Type: application/json" \
+  -d '{"market_key":"worldcup:2026:brazil-morocco:demo-001"}'
+
+curl -X POST https://ethglobalnyc-production.up.railway.app/forecast/settle \
+  -H "Content-Type: application/json" \
+  -d '{"market_key":"worldcup:2026:brazil-morocco:demo-001","winner":"Brazil"}'
+```
+
+Required private env for deployed real payments:
+
+```text
+ARC_TREASURY_PRIVATE_KEY=...
+FORECAST_MARKET_ADDRESS=0xc40a8f2e29fe061cd4c0fe92cc73b9b43f9ada87
+COLONY_API_X402_WALLETS_JSON='{"wallets":{...}}'
+COLONY_API_FORECAST_WALLETS_JSON='{"wallets":{...}}'
+```
+
+The committed Dynamic wallet registry is public-address only. Any endpoint that
+signs x402 payments or contract stakes needs local/test private-key wallets via
+those env vars or a configured private wallet-store path.
+
 ## Run Scouting
 
 The frontend can start a public-data KG scouting run with `POST /scouting/run`.

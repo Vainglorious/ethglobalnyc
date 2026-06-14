@@ -8,6 +8,7 @@ from typing import Literal
 Side = Literal["home", "draw", "away", "pass"]
 AccessLevel = Literal["public", "shared", "private"]
 AccessTier = Literal["public", "shared", "private"]
+MarketType = Literal["three_way", "binary_qualification"]
 SourceType = Literal["market", "stats", "odds", "news", "lineup", "social", "weather", "retrieval", "other"]
 EntityType = Literal[
     "tournament",
@@ -201,6 +202,61 @@ class KnowledgeView:
 
 
 @dataclass(frozen=True)
+class MarketSpec:
+    round_id: str
+    market_type: MarketType
+    outcomes: list[str]
+    result_side: Side = "pass"
+    settlement_status: str = "pending"
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class PaymentReceipt:
+    receipt_id: str
+    round_id: str
+    payer_id: str
+    payee_id: str
+    amount: float
+    payment_type: str
+    resource_id: str
+    description: str
+    metadata: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class BalanceUpdate:
+    round_id: str
+    agent_id: str
+    delta: float
+    balance: float
+    reason: str
+    related_id: str = ""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class InternalStake:
+    round_id: str
+    agent_id: str
+    side: Side
+    amount: float
+    confidence: float
+    status: str = "pending"
+    result_side: Side = "pass"
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class DebateClaim:
     round_id: str
     speaker_id: str
@@ -339,6 +395,7 @@ class CollectiveDecision:
 @dataclass(frozen=True)
 class RoundResult:
     round_id: str
+    market_spec: MarketSpec
     rooms: list[DebateRoom]
     claims: list[DebateClaim]
     social_actions: list[SocialAction]
@@ -349,10 +406,15 @@ class RoundResult:
     world_graph: WorldGraph
     collective_decision: CollectiveDecision
     summary: dict
+    payment_receipts: list[PaymentReceipt] = field(default_factory=list)
+    balance_updates: list[BalanceUpdate] = field(default_factory=list)
+    internal_stakes: list[InternalStake] = field(default_factory=list)
+    settlement_summary: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
             "round_id": self.round_id,
+            "market_spec": self.market_spec.to_dict(),
             "findings": [finding.to_dict() for finding in self.findings],
             "knowledge_views": [view.to_dict() for view in self.knowledge_views],
             "world_graph": self.world_graph.to_dict(),
@@ -362,5 +424,9 @@ class RoundResult:
             "forecasts": [forecast.to_dict() for forecast in self.forecasts],
             "commitments": [commitment.to_dict() for commitment in self.commitments],
             "collective_decision": self.collective_decision.to_dict(),
+            "payment_receipts": [receipt.to_dict() for receipt in self.payment_receipts],
+            "balance_updates": [update.to_dict() for update in self.balance_updates],
+            "internal_stakes": [stake.to_dict() for stake in self.internal_stakes],
+            "settlement_summary": self.settlement_summary,
             "summary": self.summary,
         }

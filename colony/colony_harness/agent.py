@@ -638,6 +638,7 @@ class AntAgent:
         debate_home_probability: float | None,
         access_tier: AccessTier = "public",
         visible_findings: int = 0,
+        allow_draw: bool = True,
     ) -> Forecast:
         baseline_probability = self.private_baseline_probability(match)
         probability = self.listen(match, debate_home_probability)
@@ -645,7 +646,7 @@ class AntAgent:
         away_edge = (1.0 - probability) - (1.0 - match.market_home_probability)
         debate_shift = probability - baseline_probability
 
-        side = _forced_three_way_side(probability, self.genome)
+        side = _forced_three_way_side(probability, self.genome) if allow_draw else ("home" if probability > 0.5 else "away")
         if side == "home":
             edge = home_edge
         elif side == "away":
@@ -653,8 +654,9 @@ class AntAgent:
         else:
             edge = max(0.0025, _draw_band(self.genome) - abs(probability - 0.5))
         risk_profile = _risk_profile(self.genome)
+        market_label = "group-stage" if allow_draw else "knockout qualification"
         decision_reason = (
-            f"{risk_profile} group-stage pick: {_side_label(side, match)}; "
+            f"{risk_profile} {market_label} pick: {_side_label(side, match)}; "
             f"debate moved the read {_qualitative_shift(debate_shift)}; "
             f"top inputs {_top_weight_labels(self.genome)}"
         )

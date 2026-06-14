@@ -9,4 +9,9 @@ window.DN_CONFIG = window.DN_CONFIG || {
     wallet_provider: 'dynamic',
     wallet_store: 'colony/data/agent-wallets.dynamic.200.public.json',
   },
+  FORECAST: {
+    CONTRACT: '0xc40a8f2e29fe061cd4c0fe92cc73b9b43f9ada87',
+    HOME_TEAM: 'Brazil',
+    AWAY_TEAM: 'Morocco',
+  },
 };

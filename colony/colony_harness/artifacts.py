@@ -109,12 +109,16 @@ def _write_summary(path: Path, match: MatchContext, result: RoundResult) -> None
         "",
         "## Betting",
         "",
+        f"- Market type: {summary.get('market_type', 'three_way')}",
+        f"- Settlement status: {summary.get('settlement_status', 'pending')}",
         f"- Home bets: {summary['home_bets']}",
         f"- Draw bets: {summary.get('draw_bets', 0)}",
         f"- Away bets: {summary['away_bets']}",
         f"- Participation: {summary.get('participating_bets', summary['home_bets'] + summary['away_bets'])}/{summary['population']}",
         f"- Technical passes: {summary['passes']}",
         f"- Total staked: {summary['total_staked']}",
+        f"- Economy receipts: {summary.get('payment_receipts', 0)} payments, {summary.get('balance_updates', 0)} balance updates",
+        f"- Treasury: {summary.get('treasury_balance', 0.0)} USDC",
         "",
         "## Collective Decision",
         "",
@@ -1571,6 +1575,9 @@ def _kg_manifest(result: RoundResult) -> dict:
 def _write_compact_events(path: Path, result: RoundResult) -> None:
     entity_counts = _entity_type_counts(result)
     events = [{"event_type": "round_summary", **result.summary}]
+    events.append({"event_type": "market_spec", **result.market_spec.to_dict()})
+    events.extend({"event_type": "payment_receipt", **receipt.to_dict()} for receipt in result.payment_receipts)
+    events.extend({"event_type": "balance_update", **update.to_dict()} for update in result.balance_updates)
     events.extend({"event_type": "finding", **finding.to_dict()} for finding in result.findings)
     events.extend(
         {
@@ -1601,7 +1608,9 @@ def _write_compact_events(path: Path, result: RoundResult) -> None:
     events.extend({"event_type": "social_action", **action.to_dict()} for action in result.social_actions)
     events.extend({"event_type": "debate_claim", **claim.to_dict()} for claim in result.claims)
     events.extend({"event_type": "forecast", **forecast.to_dict()} for forecast in result.forecasts)
+    events.extend({"event_type": "internal_stake", **stake.to_dict()} for stake in result.internal_stakes)
     events.append({"event_type": "collective_decision", **result.collective_decision.to_dict()})
+    events.append({"event_type": "settlement_summary", **result.settlement_summary})
 
     with path.open("w", encoding="utf-8") as handle:
         for event in events:

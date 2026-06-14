@@ -1,0 +1,24 @@
+{
+  "name": "colony-arc-payments",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fund": "node fund-agents.mjs",
+    "plan": "node ledger-to-transfers.mjs",
+    "broadcast": "node ledger-to-transfers.mjs --broadcast",
+    "x402:service": "node x402-agent-service.mjs",
+    "x402:pay": "node x402-agent-pay.mjs",
+    "x402:deposit": "node x402-gateway-deposit.mjs",
+    "x402:transfer": "node x402-transfer-status.mjs",
+    "forecast": "node forecast-market.mjs"
+  },
+  "dependencies": {
+    "@circle-fin/x402-batching": "^3.0.4",
+    "@x402/core": "^2.15.0",
+    "@x402/evm": "^2.15.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "viem": "^2.23.2"
+  }
+}

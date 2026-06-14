@@ -112,6 +112,96 @@ DN.databridge = (function () {
   B.getForecasts = function () { return forecasts.slice(); };
   B.getSummary = function () { return summary; };
   B.getAgent = function (agentId) { return records.find((r) => r.agent_id === agentId) || null; };
+
+  function apiJson(path, options) {
+    if (!apiUrl) return Promise.reject(new Error('No backend API configured.'));
+    return fetch(apiUrl + path, options || {})
+      .then((r) => {
+        if (r.ok) return r.json();
+        return r.text().then((t) => {
+          let message = t || String(r.status);
+          try {
+            const parsed = JSON.parse(t);
+            message = typeof parsed.detail === 'string' ? parsed.detail : JSON.stringify(parsed.detail || parsed);
+          } catch (err) {}
+          throw new Error(message);
+        });
+      });
+  }
+
+  B.fetchForecastConfig = function () {
+    return apiJson('/forecast/config');
+  };
+
+  B.fetchForecastGames = function () {
+    return apiJson('/forecast/games')
+      .then((payload) => {
+        B.forecastGames = payload.games || [];
+        return payload;
+      });
+  };
+
+  B.deployForecastContract = function (opts) {
+    return apiJson('/forecast/deploy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts || {}),
+    });
+  };
+
+  B.setupForecastDemo = function (opts) {
+    const body = Object.assign(
+      {
+        market_type: 'three_way',
+        fee_bps: 1000,
+      },
+      opts || {},
+    );
+    return apiJson('/forecast/demo-setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  };
+
+  B.settleForecastDemo = function (opts) {
+    return apiJson('/forecast/settle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts || {}),
+    });
+  };
+
+  B.fetchForecastTotals = function (opts) {
+    const params = new URLSearchParams();
+    if (opts && opts.contract) params.set('contract', opts.contract);
+    if (opts && opts.market_key) params.set('market_key', opts.market_key);
+    return apiJson('/forecast/totals' + (params.toString() ? '?' + params.toString() : ''));
+  };
+
+  B.fetchX402Config = function () {
+    return apiJson('/x402/config');
+  };
+
+  B.runX402DemoPayment = function (opts) {
+    const body = Object.assign(
+      {
+        buyer: 'ant_0001',
+        seller: 'ant_0002',
+        service: 'finding_private',
+        round_id: 'worldcup:2026:brazil-morocco:x402-demo',
+        resource_id: 'kg:worldcup:brazil-morocco:private-scout-signal',
+        topic: 'Brazil vs Morocco',
+      },
+      opts || {},
+    );
+    return apiJson('/x402/demo-payment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  };
+
   B.fetchAgents = function () {
     if (!apiUrl) return Promise.reject(new Error('No backend API configured.'));
     return fetch(apiUrl + '/ants')
