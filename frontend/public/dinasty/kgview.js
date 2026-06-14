@@ -561,7 +561,6 @@ DN.kgview = (function () {
 
     K.reset(title || 'Completed scouting KG');
     K.status('Replaying completed scout KG · 0 / ' + entities.length + ' entities');
-    if (DN.logTerm) DN.logTerm.push('KG', 'Replaying completed scout KG: ' + entities.length + ' entities, ' + relationships.length + ' links.');
 
     function schedule(fn, ms) {
       const timer = setTimeout(fn, ms);
@@ -572,9 +571,6 @@ DN.kgview = (function () {
       const end = Math.min(entityIndex + entityChunk, entities.length);
       for (; entityIndex < end; entityIndex++) addNode(entities[entityIndex]);
       K.status('Replaying entities · ' + entityIndex + ' / ' + entities.length + ' · ' + edges.length + ' links');
-      if (DN.logTerm && entityIndex && (entityIndex === entities.length || entityIndex % (entityChunk * 5) === 0)) {
-        DN.logTerm.push('KG', 'Replayed ' + entityIndex + ' / ' + entities.length + ' KG entities.');
-      }
       if (entityIndex < entities.length) {
         schedule(replayEntities, delayMs);
       } else {
@@ -586,15 +582,11 @@ DN.kgview = (function () {
       const end = Math.min(relationshipIndex + relationshipChunk, relationships.length);
       for (; relationshipIndex < end; relationshipIndex++) addEdge(relationships[relationshipIndex]);
       K.status('Replaying links · ' + nodes.size + ' entities · ' + relationshipIndex + ' / ' + relationships.length + ' links');
-      if (DN.logTerm && relationshipIndex && (relationshipIndex === relationships.length || relationshipIndex % (relationshipChunk * 5) === 0)) {
-        DN.logTerm.push('KG', 'Replayed ' + relationshipIndex + ' / ' + relationships.length + ' KG links.');
-      }
       if (relationshipIndex < relationships.length) {
         schedule(replayRelationships, delayMs);
       } else {
         render();
         K.status((graph.entity_count || nodes.size) + ' KG entities · ' + (graph.relationship_count || edges.length) + ' links');
-        if (DN.logTerm) DN.logTerm.push('KG', 'Completed KG replay.');
       }
     }
 

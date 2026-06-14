@@ -75,9 +75,6 @@ DN.crystal = (function () {
 
   C.depositOne = function () {
     C._deposits += 1;
-    if (DN.logTerm && (C._deposits % 10 === 0 || C._deposits <= 3)) {
-      DN.logTerm.push('KG', 'Crystal absorbing findings · ' + C._deposits + ' so far');
-    }
   };
   // Inverse of depositOne — called when a converging ant "picks up" a
   // shard. Reducing _deposits feeds the logistic growth target, so the

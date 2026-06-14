@@ -1,8 +1,8 @@
 // Di-nasty — lifecycle controller. State machine for the demo arc:
 //   0 idle → 1 kickoff → 2 scouting → 3 kg_forming → 4 recruitment →
 //   5 converge → 6 ingress → 7 debate → 8 resolution → 9 egress_roam
-// Frontend-paced visual timing. Owns ant activation + crystal show while the
-// backend run uses the selected fixture and public scouting data.
+// Backend-paced lifecycle. Owns ant activation + crystal show while the
+// selected fixture's real run controls when data-dependent phases advance.
 // Resolution wires the run's forecast decisions into the Arc forecast
 // contract and claims payouts for winning ants.
 window.DN = window.DN || {};
@@ -10,28 +10,10 @@ window.DN = window.DN || {};
 console.log('[dinasty] lifecycle.js loaded · build 2026-06-14');
 
 DN.lifecycle = (function () {
-  const L = { phase: 'idle', phaseT: 0, winner: null, settleTxHash: null, runId: null, phaseHold: false };
+  const L = { phase: 'idle', phaseT: 0, winner: null, settleTxHash: null, runId: null, phaseHold: false, pendingAdvance: null };
 
-  // duration per phase in seconds; 'idle' and 'egress_roam' are open-ended
-  // Slower pacing — the previous values cut off the visible round trip
-  // (ants reached the crystal but couldn't walk back before ingress
-  // fired). Everything is roughly 1.5–3× longer, with the biggest bump
-  // going to converge so the entire crystal → home loop completes
-  // on-screen before we dive underground.
-  const DURATIONS = {
-    idle:        Infinity,
-    kickoff:      2.5,
-    scouting:    12.0,
-    kg_forming:  14.0,
-    recruitment:  6.0,
-    converge:    18.0,   // ← big bump so ants complete the round trip
-    ingress:      6.0,
-    debate:      10.0,
-    resolution:   3.0,
-    egress_roam: Infinity
-  };
   const NEXT = {
-    idle:        null,         // entered only via L.start()
+    idle:        null,
     kickoff:    'scouting',
     scouting:   'kg_forming',
     kg_forming: 'recruitment',
@@ -59,6 +41,24 @@ DN.lifecycle = (function () {
   function logPhase(phase) {
     if (!DN.logTerm) return;
     DN.logTerm.push('PHASE', '── ' + LABEL[phase] + ' ──');
+  }
+
+  function requestAdvance(next) {
+    if (!next || L.phase === next) return;
+    L.pendingAdvance = next;
+  }
+
+  function clearAdvance(next) {
+    if (!next || L.pendingAdvance === next) L.pendingAdvance = null;
+  }
+
+  function scriptedWorkersActive() {
+    if (!DN.ants || !DN.ants.list) return false;
+    return DN.ants.list.some((a) => !a.hero && a.state === 'migrating');
+  }
+
+  function debateEventsDrained() {
+    return !DN.commsViz || !DN.commsViz.isIdle || DN.commsViz.isIdle();
   }
 
   function scoutCountPerColony() { return 6; }
@@ -237,6 +237,8 @@ DN.lifecycle = (function () {
   function startBackendRun() {
     if (L.runPromise) return L.runPromise;
     if (!DN.databridge || !DN.databridge.startScoutingRun) {
+      L.runError = new Error('Backend scouting API unavailable.');
+      if (DN.logTerm) DN.logTerm.push('SYSTEM', L.runError.message);
       L.runPromise = Promise.resolve(null);
       return L.runPromise;
     }
@@ -259,6 +261,8 @@ DN.lifecycle = (function () {
       .then((res) => {
         if (res && res.id) {
           L.runId = res.id;
+          L.runResult = res;
+          L.backendDone = true;
           if (DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(res.id);
           if (DN.commsViz && DN.commsViz.reset) DN.commsViz.reset();
           if (DN.hud && DN.hud._pollComms) DN.hud._pollComms();
@@ -268,6 +272,7 @@ DN.lifecycle = (function () {
       })
       .catch((err) => {
         L.runError = err;
+        L.backendDone = false;
         if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Backend run failed: ' + (err && err.message || err));
         return null;
       });
@@ -343,22 +348,20 @@ DN.lifecycle = (function () {
       }
       if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Match: ' + selectedMatch());
       startBackendRun();
+      requestAdvance('scouting');
     },
     scouting: () => {
-      // Kick off the REAL backend scouting run that builds the World
-      // Cup knowledge graph. Fire-and-forget — the request takes longer
-      // than this phase but the KG fetch in the next phase will see
-      // whatever is ready (or the cached deployment build if not).
       if (DN.databridge && DN.databridge.startScoutingRun) {
-        if (DN.logTerm) DN.logTerm.push('SCOUT', 'Selected fixture scouting is running — Railway is mining sources for the KG.');
         if (DN.kgview && DN.kgview.reset) DN.kgview.reset('Live scouting KG');
         startBackendRun().then((result) => {
+          if (!result || L.phase !== 'scouting') return;
           const manifest = (result && result.manifest) || {};
           const ents = manifest.entity_count || 0;
           const links = manifest.relationship_count || 0;
           if (DN.logTerm) DN.logTerm.push('SCOUT', 'Scouting run complete · ' + ents + ' entities · ' + links + ' relationships.');
+          requestAdvance('kg_forming');
         }).catch((err) => {
-          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Scouting run error (using cached KG): ' + (err && err.message || err));
+          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Scouting run error: ' + (err && err.message || err));
         });
       }
       // Wake a small scout party per colony, send each on a dedicated
@@ -398,35 +401,30 @@ DN.lifecycle = (function () {
     },
     kg_forming: () => {
       if (DN.crystal) DN.crystal.show();
-      // Pull the actual built KG from Railway and show it as a live
-      // graph overlay. The 3D crystal in the world is the visual
-      // metaphor; this overlay is the real data the ants are about
-      // to absorb.
-      if (DN.databridge && DN.databridge.fetchWorldCupKg) {
-        DN.databridge.fetchWorldCupKg().then((payload) => {
+      L.phaseHold = true;
+      const runId = L.runId || (L.runResult && L.runResult.id);
+      const runKg = L.runResult && L.runResult.kg
+        ? Promise.resolve(L.runResult.kg)
+        : (DN.databridge && DN.databridge.fetchRunKg && runId
+            ? DN.databridge.fetchRunKg(runId)
+            : Promise.reject(new Error('Run KG artifact unavailable.')));
+      runKg.then((payload) => {
           const ents = payload.entity_count != null ? payload.entity_count : (payload.entities || []).length;
           const links = payload.relationship_count != null ? payload.relationship_count : (payload.relationships || []).length;
-          if (DN.logTerm) DN.logTerm.push('KG', 'KG loaded · ' + ents + ' entities · ' + links + ' relationships. Streaming into the crystal…');
-          // replayGraph animates entities into the panel in chunks
-          // (default 10 per 220ms) with the existing `.kg-node.new`
-          // pulse animation. This is what makes the crystal feel like
-          // it's being woven from scout findings instead of dumped.
-          if (DN.kgview && DN.kgview.replayGraph) {
-            DN.kgview.replayGraph(payload, 'Knowledge Crystal · World Cup KG', {
-              // Bigger chunks at longer intervals so the SVG is rebuilt
-              // ~4× / sec instead of ~4× during each 260ms tick. That
-              // halves the number of full SVG re-renders the box does
-              // while it's populating.
-              entityChunk: 12,
-              relationshipChunk: 40,
-              delayMs: 400
-            });
-          } else if (DN.kgview && DN.kgview.showGraph) {
-            DN.kgview.showGraph(payload, 'Knowledge Crystal · World Cup KG');
+          L.kg = payload;
+          L.kgReady = true;
+          if (DN.logTerm) DN.logTerm.push('KG', 'Run KG ready · ' + ents + ' entities · ' + links + ' relationships.');
+          if (DN.kgview && DN.kgview.showGraph) {
+            DN.kgview.showGraph(payload, 'Knowledge Crystal · Run KG');
           }
-        }).catch(() => { /* no KG yet — crystal still grows from scout deposits */ });
-      }
-      L._depositTimer = 0;
+        }).catch((err) => {
+          L.runError = err;
+          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Run KG error: ' + (err && err.message || err));
+        }).finally(() => {
+          if (L.phase !== 'kg_forming') return;
+          L.phaseHold = false;
+          if (L.kgReady) requestAdvance('recruitment');
+        });
     },
     recruitment: () => {
       // IMPORTANT: don't wake the idle workers here. If we A.activate()
@@ -434,46 +432,11 @@ DN.lifecycle = (function () {
       // frame — that's the "mass pop out of nowhere" the user reported.
       // The converge phase wakes + walks them in one step using a
       // negative-staggered scriptWalk, so they visibly emerge one by
-      // one from each mound. Recruitment is purely a camera + on-chain
-      // staging beat now.
-      if (DN.logTerm) DN.logTerm.push('BIRTH', 'Population staking on the round — emerging next.');
-      if (DN.databridge && DN.databridge.setupForecastDemo) {
-        const meta = selectedGameMeta();
-        const contract = configuredContract();
-        if (DN.logTerm) DN.logTerm.push('STAKE', 'Staking demo market on ' + (meta.home_team || '?') + ' vs ' + (meta.away_team || '?') + ' …');
-        DN.databridge.setupForecastDemo({
-          contract: contract || undefined,
-          market_key: meta.market_key,
-          market_type: meta.market_type || 'three_way',
-          home_team: meta.home_team,
-          away_team: meta.away_team,
-          fee_bps: 1000
-        }).then((res) => {
-          L.marketKey = (res && res.market_key) || meta.market_key;
-          L.forecastStakes = (res && res.stakes) || [];
-          if (DN.logTerm) DN.logTerm.push('STAKE', 'Stakes committed · market_key ' + (L.marketKey || '?').slice(-12));
-        }).catch((err) => {
-          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Stake demo error: ' + (err && err.message || err));
-        });
-      }
+      // one from each mound.
+      requestAdvance('converge');
     },
     converge: () => {
-      // Kick the backend LLM debate run now so it has phases 5→7 (~22s)
-      // to compute while ants walk to the crystal and back.
-      if (DN.databridge && DN.databridge.startDemoRun) {
-        if (DN.logTerm) DN.logTerm.push('SYSTEM', 'LLM debate run kicked off in the background.');
-        DN.databridge.startDemoRun().then(res => {
-          if (res && res.id) {
-            L.runId = res.id;
-            if (DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(res.id);
-            if (DN.commsViz && DN.commsViz.reset) DN.commsViz.reset();
-            if (DN.hud && DN.hud._pollComms) DN.hud._pollComms();
-            if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Backend run ' + res.id + ' complete — debate events ready.');
-          }
-        }).catch(err => {
-          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Backend run failed: ' + (err && err.message || err));
-        });
-      }
+      L.convergeStarted = true;
       // Send every visible worker to the crystal. To make them read as a
       // single-file line per colony (not a chaotic swarm) we:
       //   • bucket workers by colony
@@ -525,6 +488,7 @@ DN.lifecycle = (function () {
       // + the crystal at centre.
     },
     ingress: () => {
+      L.ingressReady = false;
       // Workers who are already on their home leg (a._homing === true)
       // are left alone — they're walking home in single file already.
       // Anyone still outbound or stalled gets snapped onto a fast home
@@ -549,8 +513,13 @@ DN.lifecycle = (function () {
       const col = DN.colony && DN.colony.list && DN.colony.list[0];
       if (col && DN.app && DN.app.enterColony) {
         setTimeout(() => {
-          if (L.phase === 'ingress') DN.app.enterColony(col);
+          if (L.phase === 'ingress') {
+            DN.app.enterColony(col);
+            L.ingressReady = true;
+          }
         }, 2200);
+      } else {
+        L.ingressReady = true;
       }
     },
     debate: () => {
@@ -570,7 +539,7 @@ DN.lifecycle = (function () {
       L.phaseHold = true;
       settleRunEconomy().finally(() => {
         L.phaseHold = false;
-        L.phaseT = 0;
+        requestAdvance('egress_roam');
       });
     },
     egress_roam: () => {
@@ -637,10 +606,14 @@ DN.lifecycle = (function () {
     const walletStore = configuredForecastWalletStore();
     const run = await startBackendRun();
     const runId = (run && run.id) || L.runId || (DN.databridge && DN.databridge.runId) || null;
+    if (!runId) {
+      if (DN.logTerm) DN.logTerm.push('SETTLE', 'Skipping on-chain economy — no completed backend run.');
+      return;
+    }
     const marketKey = runMarketKey(meta, runId);
     L.winner = selectedWinner();
     if (DN.logTerm) {
-      DN.logTerm.push('STAKE', 'Creating Arc market and staking ant forecasts from ' + (runId || 'fallback demo') + ' …');
+      DN.logTerm.push('STAKE', 'Creating Arc market and staking ant forecasts from ' + runId + ' …');
     }
     try {
       const setup = await DN.databridge.setupForecastDemo({
@@ -651,6 +624,7 @@ DN.lifecycle = (function () {
         run_id: runId || undefined,
         wallet_store: walletStore || undefined,
         max_stakers: 12,
+        allow_fallback_stakes: false,
         fee_bps: 1000
       });
       L.marketKey = (setup && setup.market_key) || marketKey;
@@ -758,7 +732,14 @@ DN.lifecycle = (function () {
     L.forecastStakes = [];
     L.runPromise = null;
     L.runError = null;
+    L.runResult = null;
+    L.backendDone = false;
+    L.kgReady = false;
+    L.kg = null;
     L.phaseHold = false;
+    L.pendingAdvance = null;
+    L.convergeStarted = false;
+    L.ingressReady = false;
     if (ENTER.idle) ENTER.idle();
     enter('kickoff');
   };
@@ -773,6 +754,7 @@ DN.lifecycle = (function () {
     L.phase = next;
     L.phaseT = 0;
     L.phaseHold = false;
+    clearAdvance(next);
     logPhase(next);
     try { if (ENTER[next]) ENTER[next](); }
     catch (err) { if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Phase enter error: ' + (err && err.message || err)); }
@@ -781,21 +763,23 @@ DN.lifecycle = (function () {
   L.update = function (dt, elapsed) {
     L.phaseT += dt;
     // Per-phase per-frame work
-    if (L.phase === 'kg_forming' && DN.crystal) {
-      L._depositTimer = (L._depositTimer || 0) + dt;
-      while (L._depositTimer > 0.7) {
-        DN.crystal.depositOne();
-        L._depositTimer -= 0.7;
-      }
-    }
     if (L.phase === 'debate' && DN.underground && DN.underground.tickDebate) {
       DN.underground.tickDebate(dt, elapsed);
     }
     if (L.phaseHold) return;
-    const dur = DURATIONS[L.phase];
-    if (isFinite(dur) && L.phaseT >= dur) {
-      const next = NEXT[L.phase];
-      if (next) enter(next);
+
+    if (L.phase === 'converge' && L.convergeStarted && !scriptedWorkersActive()) {
+      requestAdvance('ingress');
+    } else if (L.phase === 'ingress' && L.ingressReady && !scriptedWorkersActive()) {
+      requestAdvance('debate');
+    } else if (L.phase === 'debate' && debateEventsDrained()) {
+      requestAdvance('resolution');
+    }
+
+    if (L.pendingAdvance) {
+      const next = L.pendingAdvance;
+      if (NEXT[L.phase] === next) enter(next);
+      else clearAdvance(next);
     }
   };
 

@@ -337,10 +337,10 @@ source.addEventListener('done', () => {
 })
 ```
 
-For `POST /scouting/run`, the stream also emits real KG events from the
-generated `world_graph.json` once the scouting subprocess has produced the run
-artifacts. The frontend passes these into the KG overlay and the bottom log
-terminal: `kg_entity` events appear as `KG` rows for new or updated nodes,
+For `POST /scouting/run`, the stream also emits real subprocess output and KG
+events from the generated `world_graph.json`. The frontend passes these into the
+KG overlay and bottom log terminal: `run_log` events appear as `RUN` or
+`STDERR` rows, `kg_entity` events appear as `KG` rows for new or updated nodes,
 `kg_relationship` events appear as linked-node rows, and `kg_stage`,
 `kg_manifest`, and `scouting_audit` events appear as `SCOUT` progress rows.
 
@@ -363,14 +363,13 @@ Scouting stream event types:
 - `kg_relationship`: one actual relationship from the run graph.
 - `kg_manifest`: the generated `kg_manifest.json` payload.
 - `scouting_audit`: the generated `scouting_audit.json` payload plus readiness flags.
+- `run_log`: one real line from the managed subprocess `stdout` or `stderr`.
 
 The KG stream is real run output, not a fake progress animation. It currently
 streams after the scout process writes `world_graph.json`; instrumenting the
 individual scout modules would let the graph grow during source collection too.
-To keep the demo readable before that deeper backend refactor, the frontend
-progressively replays the completed scouting KG artifact in small chunks when
-the final graph arrives, so nodes and links appear over time instead of all in
-one frame.
+The frontend now waits for this real run output before advancing data-dependent
+lifecycle phases.
 
 Run artifacts are stored under `COLONY_API_RUNS_DIR` when that env var is set,
 otherwise under `colony/runs/api` in the running container. A scout such as
@@ -437,10 +436,10 @@ and write the child wallet into
 On Railway, set `COLONY_API_RUNS_DIR` to a mounted volume path if these children
 must survive redeploys/restarts.
 
-For `POST /runs/demo`, the first integration streams transport/status
-immediately. Most domain events arrive when `run_demo.py` writes `events.jsonl`
-at the end of the harness run. A later harness refactor can emit room/forecast
-events during `run_round()`.
+For `POST /runs/demo` and `POST /scouting/run`, transport/status and real
+subprocess `run_log` events stream immediately. Most domain events still arrive
+when the harness writes its compact JSONL artifacts at the end of `run_round()`.
+A later harness refactor can emit room/forecast events during the round itself.
 
 ## Agents And Rooms
 
@@ -512,13 +511,13 @@ frontend/public/dinasty/hud.js
 
 Frontend flow:
 
-1. `databridge.js` loads the latest successful backend run from `GET /runs`.
+1. `databridge.js` loads the latest successful backend run from `GET /runs` when one exists.
 2. The `Get ants` button calls `GET /ants` and binds wallet/ENS identity to visible ants.
 3. The `Get KG` button calls `GET /kg/world-cup` and renders the static tournament KG.
 4. The `Run scouting` button calls `POST /scouting/run`, listens to `GET /runs/{run_id}/stream`, and renders streamed KG entities/relationships.
-5. The `Run LLM agents` button calls `POST /runs/demo`.
-6. When demo events arrive, the frontend seeds colony stats and the thought ticker.
-7. If the backend is unavailable, the frontend falls back to `/data/demo.jsonl`.
+5. The primary `Run` button calls `POST /scouting/run` for the selected fixture and keeps the lifecycle in backend-dependent phases until the run completes.
+6. When real run events arrive, the frontend seeds colony stats, logs backend rows, renders KG/debate/forecast events, and then performs Arc settlement.
+7. If the backend is unavailable or no completed run exists, the frontend reports that state instead of loading `/data/demo.jsonl`.
 
 Minimal browser-side call:
 
