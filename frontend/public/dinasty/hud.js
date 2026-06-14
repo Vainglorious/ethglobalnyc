@@ -542,18 +542,22 @@ DN.hud = (function () {
         });
     });
     btn.addEventListener('click', () => {
-      // The primary Run button now drives the full lifecycle controller,
-      // which orchestrates scout → KG crystal → recruit → debate →
-      // settle in turn. The lifecycle itself calls `startDemoRun` during
-      // its converge phase (see lifecycle.js ENTER.converge).
+      // The primary Run button drives the full lifecycle controller:
+      // scout -> KG crystal -> recruit -> debate -> stake/settle.
       if (DN.lifecycle && DN.lifecycle.start) {
         btn.disabled = true;
         status.textContent = 'Lifecycle running…';
-        H.pushThought('Lifecycle kicked off — Brazil vs Morocco.', 'Lifecycle', '#3FA89F');
+        H.pushThought('Lifecycle kicked off — ' + selectedGame.name + '.', 'Lifecycle', '#3FA89F');
         DN.lifecycle.start();
-        // Re-enable after ~55s (full scripted lifecycle) so the user can
-        // re-trigger if they want to loop through again.
-        setTimeout(() => { btn.disabled = false; status.textContent = 'Roaming · click Run to loop'; }, 56000);
+        const startedAt = Date.now();
+        const timer = setInterval(() => {
+          const phase = DN.lifecycle && DN.lifecycle.getPhase ? DN.lifecycle.getPhase() : '';
+          if (phase === 'egress_roam' || phase === 'idle' || Date.now() - startedAt > 180000) {
+            clearInterval(timer);
+            btn.disabled = false;
+            status.textContent = phase === 'egress_roam' ? 'Roaming · click Run to loop' : 'Run ready';
+          }
+        }, 1000);
       } else if (DN.databridge && DN.databridge.startDemoRun) {
         // Fallback if lifecycle module didn't load: behave as before.
         btn.disabled = true;

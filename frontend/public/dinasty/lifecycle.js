@@ -2,14 +2,14 @@
 //   0 idle → 1 kickoff → 2 scouting → 3 kg_forming → 4 recruitment →
 //   5 converge → 6 ingress → 7 debate → 8 resolution → 9 egress_roam
 // Frontend-paced (synthetic timing). Owns ant activation + crystal show.
-// Phases 4–9 currently no-op except for logging — subsequent passes
-// will wire on-chain calls there.
+// Resolution wires the run's forecast decisions into the Arc forecast
+// contract and claims payouts for winning ants.
 window.DN = window.DN || {};
 
 console.log('[dinasty] lifecycle.js loaded · build 2026-06-14');
 
 DN.lifecycle = (function () {
-  const L = { phase: 'idle', phaseT: 0, winner: null, settleTxHash: null, runId: null };
+  const L = { phase: 'idle', phaseT: 0, winner: null, settleTxHash: null, runId: null, phaseHold: false };
 
   // duration per phase in seconds; 'idle' and 'egress_roam' are open-ended
   const DURATIONS = {
@@ -94,6 +94,63 @@ DN.lifecycle = (function () {
     return { market_key: key, home_team: 'Brazil', away_team: 'Morocco' };
   }
 
+  function winnerSideFor(winner, meta) {
+    const norm = (v) => String(v || '').toLowerCase().trim();
+    if (norm(winner) === norm(meta.home_team) || norm(winner) === 'home') return 'home';
+    if (norm(winner) === norm(meta.away_team) || norm(winner) === 'away') return 'away';
+    if (norm(winner) === 'draw') return 'draw';
+    return 'home';
+  }
+
+  function winnerNameForSide(side, meta) {
+    if (side === 'away') return meta.away_team || 'away';
+    if (side === 'draw') return 'Draw';
+    return meta.home_team || 'home';
+  }
+
+  function sideWithLargestStake(stakes) {
+    const totals = { home: 0, draw: 0, away: 0 };
+    (stakes || []).forEach((stake) => {
+      if (totals[stake.outcome] == null) return;
+      totals[stake.outcome] += Number(stake.amount || 0);
+    });
+    return Object.keys(totals).sort((a, b) => totals[b] - totals[a])[0];
+  }
+
+  function runMarketKey(meta, runId) {
+    return [
+      meta.market_key || selectedMatch(),
+      'run',
+      runId || Date.now()
+    ].join(':');
+  }
+
+  function startBackendRun() {
+    if (L.runPromise) return L.runPromise;
+    if (!DN.databridge || !DN.databridge.startDemoRun) {
+      L.runPromise = Promise.resolve(null);
+      return L.runPromise;
+    }
+    if (DN.logTerm) DN.logTerm.push('SYSTEM', 'LLM debate run kicked off in the background.');
+    L.runPromise = DN.databridge.startDemoRun()
+      .then((res) => {
+        if (res && res.id) {
+          L.runId = res.id;
+          if (DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(res.id);
+          if (DN.commsViz && DN.commsViz.reset) DN.commsViz.reset();
+          if (DN.hud && DN.hud._pollComms) DN.hud._pollComms();
+          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Backend run ' + res.id + ' complete — forecast stakes ready.');
+        }
+        return res || null;
+      })
+      .catch((err) => {
+        L.runError = err;
+        if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Backend run failed: ' + (err && err.message || err));
+        return null;
+      });
+    return L.runPromise;
+  }
+
   // ---- onArrive callbacks for the scripted Bezier walks --------------
   // When a scout reaches its forest target, it walks to the crystal and
   // deposits one finding. When a converger reaches the crystal, it
@@ -154,6 +211,7 @@ DN.lifecycle = (function () {
         DN.camera.flyTo(col.pos, 38, 26, 1.4);
       }
       if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Match: ' + selectedMatch());
+      startBackendRun();
     },
     scouting: () => {
       // Wake a small scout party per colony, send each on a dedicated
@@ -207,49 +265,8 @@ DN.lifecycle = (function () {
       });
       if (DN.logTerm) DN.logTerm.push('BIRTH', 'Population activated (' + total + ' workers across all colonies).');
       if (DN.camera && DN.camera.flyTo) DN.camera.flyTo(new THREE.Vector3(0, 0, 0), 80, 60, 1.6);
-      // On-chain stake setup so the SETTLE call in resolution actually
-      // has a market to resolve. Fire-and-forget — we capture the
-      // returned market_key on L for later.
-      if (DN.databridge && DN.databridge.setupForecastDemo) {
-        const meta = selectedGameMeta();
-        const contract = configuredContract();
-        if (DN.logTerm) DN.logTerm.push('STAKE', 'Staking demo market on ' + (meta.home_team || '?') + ' vs ' + (meta.away_team || '?') + ' …');
-        DN.databridge.setupForecastDemo({
-          contract: contract || undefined,
-          market_key: meta.market_key,
-          market_type: meta.market_type || 'three_way',
-          home_team: meta.home_team,
-          away_team: meta.away_team,
-          fee_bps: 1000
-        }).then((res) => {
-          L.marketKey = (res && res.market_key) || meta.market_key;
-          L.forecastStakes = (res && res.stakes) || [];
-          if (DN.logTerm) DN.logTerm.push('STAKE', 'Stakes committed · market_key ' + (L.marketKey || '?').slice(-12));
-        }).catch((err) => {
-          // Non-fatal — settle will skip if no market_key was captured.
-          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Stake demo error: ' + (err && err.message || err));
-        });
-      }
     },
     converge: () => {
-      // Kick the backend LLM debate run now so it has phases 5→7 (~22s)
-      // to compute while ants walk to the crystal and back. The promise
-      // resolves only when the run FINISHES (streamRun/pollRun), so we
-      // log "ready" then, not "started".
-      if (DN.databridge && DN.databridge.startDemoRun) {
-        if (DN.logTerm) DN.logTerm.push('SYSTEM', 'LLM debate run kicked off in the background.');
-        DN.databridge.startDemoRun().then(res => {
-          if (res && res.id) {
-            L.runId = res.id;
-            if (DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(res.id);
-            if (DN.commsViz && DN.commsViz.reset) DN.commsViz.reset();
-            if (DN.hud && DN.hud._pollComms) DN.hud._pollComms();
-            if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Backend run ' + res.id + ' complete — debate events ready.');
-          }
-        }).catch(err => {
-          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Backend run failed: ' + (err && err.message || err));
-        });
-      }
       // Send every visible worker to the crystal, then home to its
       // colony entrance, where it disappears underground.
       const crystal = DN.crystal ? DN.crystal.position() : new THREE.Vector3(0, 0, 0);
@@ -298,39 +315,14 @@ DN.lifecycle = (function () {
       if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Chambers in session — agents exchanging claims.');
       if (DN.underground && DN.underground.startDebate) DN.underground.startDebate();
     },
-    resolution: async () => {
+    resolution: () => {
       // Stop the in-chamber debate animation; chambers fall quiet.
       if (DN.underground && DN.underground.stopDebate) DN.underground.stopDebate();
-      const winner = selectedWinner();
-      L.winner = winner;
-      if (!L.marketKey) {
-        if (DN.logTerm) DN.logTerm.push('SETTLE', 'Skipping on-chain settle — no market_key captured (stake demo failed?).');
-        return;
-      }
-      const meta = selectedGameMeta();
-      const contract = configuredContract();
-      const winnerSide = WINNER_TO_SIDE[winner] || 'home';
-      const winningAgents = (L.forecastStakes || [])
-        .filter((s) => s.outcome === winnerSide)
-        .map((s) => s.agent);
-      if (DN.logTerm) DN.logTerm.push('SETTLE', 'Settling market with winner = ' + winner + ' …');
-      try {
-        const r = await DN.databridge.settleForecastDemo({
-          contract: contract || undefined,
-          market_key: L.marketKey,
-          winner,
-          home_team: meta.home_team,
-          away_team: meta.away_team,
-          winning_agents: winningAgents
-        });
-        const tx = (r && r.receipt && r.receipt.tx_hash) ||
-                   (r && r.steps && r.steps.length && (r.steps[r.steps.length - 1].receipt || {}).tx_hash) ||
-                   null;
-        L.settleTxHash = tx;
-        if (DN.logTerm) DN.logTerm.push('SETTLE', winner + ' settled' + (tx ? ' · tx ' + tx.slice(0, 8) + '…' + tx.slice(-4) : ''));
-      } catch (err) {
-        if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Settle error: ' + (err && err.message || err));
-      }
+      L.phaseHold = true;
+      settleRunEconomy().finally(() => {
+        L.phaseHold = false;
+        L.phaseT = 0;
+      });
     },
     egress_roam: () => {
       // Back to surface; derive per-agent outcome from settled winner +
@@ -360,11 +352,84 @@ DN.lifecycle = (function () {
     }
   };
 
-  // Map UI winner → backend forecast.side
-  const WINNER_TO_SIDE = { Brazil: 'home', Morocco: 'away', Draw: 'pass' };
+  async function settleRunEconomy() {
+    if (!DN.databridge || !DN.databridge.setupForecastDemo || !DN.databridge.settleForecastDemo) {
+      if (DN.logTerm) DN.logTerm.push('SETTLE', 'Skipping on-chain economy — forecast API unavailable.');
+      return;
+    }
+    const meta = selectedGameMeta();
+    const contract = configuredContract();
+    const run = await startBackendRun();
+    const runId = (run && run.id) || L.runId || (DN.databridge && DN.databridge.runId) || null;
+    const marketKey = runMarketKey(meta, runId);
+    L.winner = selectedWinner();
+    if (DN.logTerm) {
+      DN.logTerm.push('STAKE', 'Creating Arc market and staking ant forecasts from ' + (runId || 'fallback demo') + ' …');
+    }
+    try {
+      const setup = await DN.databridge.setupForecastDemo({
+        contract: contract || undefined,
+        market_key: marketKey,
+        market_type: meta.market_type || 'three_way',
+        metadata_uri: meta.market_key || marketKey,
+        run_id: runId || undefined,
+        max_stakers: 12,
+        fee_bps: 1000
+      });
+      L.marketKey = (setup && setup.market_key) || marketKey;
+      L.forecastStakes = (setup && setup.stakes) || [];
+      const totals = (setup && setup.totals) || {};
+      if (DN.logTerm) {
+        DN.logTerm.push(
+          'STAKE',
+          'Stakes committed from ' + ((setup && setup.stake_source) || 'fallback') +
+            ' · ' + (totals.total_usdc || '?') + ' USDC escrowed.'
+        );
+      }
+
+      let winner = L.winner;
+      let winnerSide = winnerSideFor(winner, meta);
+      let winningAgents = L.forecastStakes
+        .filter((stake) => stake.outcome === winnerSide)
+        .map((stake) => stake.agent);
+      if (!winningAgents.length && L.forecastStakes.length) {
+        winnerSide = sideWithLargestStake(L.forecastStakes);
+        winner = winnerNameForSide(winnerSide, meta);
+        winningAgents = L.forecastStakes
+          .filter((stake) => stake.outcome === winnerSide)
+          .map((stake) => stake.agent);
+        if (DN.logTerm) {
+          DN.logTerm.push('SETTLE', 'Selected winner had no staked ants; resolving to staked side ' + winner + ' so payouts can claim.');
+        }
+      }
+      L.winner = winner;
+      if (DN.logTerm) DN.logTerm.push('SETTLE', 'Settling Arc market with winner = ' + winner + ' …');
+      const settled = await DN.databridge.settleForecastDemo({
+        contract: contract || undefined,
+        market_key: L.marketKey,
+        winner,
+        home_team: meta.home_team,
+        away_team: meta.away_team,
+        winning_agents: winningAgents
+      });
+      const tx = (settled && settled.receipt && settled.receipt.tx_hash) ||
+                 (settled && settled.steps && settled.steps.length && (settled.steps[settled.steps.length - 1].receipt || {}).tx_hash) ||
+                 null;
+      L.settleTxHash = tx;
+      if (DN.logTerm) {
+        DN.logTerm.push(
+          'SETTLE',
+          winner + ' settled · ' + winningAgents.length + ' winners claimed' +
+            (tx ? ' · tx ' + tx.slice(0, 8) + '…' + tx.slice(-4) : '')
+        );
+      }
+    } catch (err) {
+      if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Economy settlement error: ' + (err && err.message || err));
+    }
+  }
 
   function deriveOutcomes() {
-    const winnerSide = WINNER_TO_SIDE[L.winner] || 'home';
+    const winnerSide = winnerSideFor(L.winner, selectedGameMeta());
     const forecasts = (DN.databridge && DN.databridge.getCommunications)
       ? DN.databridge.getCommunications().filter(e => e.event_type === 'forecast') : [];
     let correct = 0, wrong = 0;
@@ -411,6 +476,9 @@ DN.lifecycle = (function () {
     L.runId = null;
     L.marketKey = null;
     L.forecastStakes = [];
+    L.runPromise = null;
+    L.runError = null;
+    L.phaseHold = false;
     if (ENTER.idle) ENTER.idle();
     enter('kickoff');
   };
@@ -424,6 +492,7 @@ DN.lifecycle = (function () {
   function enter(next) {
     L.phase = next;
     L.phaseT = 0;
+    L.phaseHold = false;
     logPhase(next);
     try { if (ENTER[next]) ENTER[next](); }
     catch (err) { if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Phase enter error: ' + (err && err.message || err)); }
@@ -442,6 +511,7 @@ DN.lifecycle = (function () {
     if (L.phase === 'debate' && DN.underground && DN.underground.tickDebate) {
       DN.underground.tickDebate(dt, elapsed);
     }
+    if (L.phaseHold) return;
     const dur = DURATIONS[L.phase];
     if (isFinite(dur) && L.phaseT >= dur) {
       const next = NEXT[L.phase];

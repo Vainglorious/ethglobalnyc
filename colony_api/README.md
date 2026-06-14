@@ -190,6 +190,23 @@ curl -X POST https://ethglobalnyc-production.up.railway.app/forecast/settle \
   -d '{"market_key":"worldcup:2026:brazil-morocco:demo-001","winner":"Brazil"}'
 ```
 
+Frontend `Run` now drives the same real-money forecast rail end to end. When
+the user clicks `Run`, the browser:
+
+1. starts the backend ant forecast run with `POST /runs/demo`;
+2. waits for that run's `forecast` events so stakes come from actual ant
+   decisions instead of fixed demo defaults;
+3. creates a fresh Arc market key using the selected fixture plus the run id;
+4. calls `POST /forecast/demo-setup` with that `run_id`, which signs ant wallet
+   transactions and stakes their USDC into `ColonyForecastMarket`;
+5. reads the selected winner from the UI, calls `POST /forecast/settle`, and
+   claims payouts for the winning ant wallets.
+
+The lifecycle pauses in the resolution phase while the Arc market is created,
+staked, settled, and claimed. If the selected winner has no staked ants, the
+frontend resolves to the side with the largest staked amount so the contract has
+winners and the payout path can still be demonstrated.
+
 Required private env for deployed real payments:
 
 ```text
