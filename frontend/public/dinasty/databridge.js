@@ -159,6 +159,66 @@ DN.databridge = (function () {
       });
   };
 
+  // Recent ant-to-ant communication events (social_action, debate_claim,
+  // forecast) from the latest backend run. The deployed Railway API only
+  // exposes /runs and /runs/{run_id}/events (no /recent_communications
+  // shortcut), so this method: 1) caches the latest run_id from /runs,
+  // 2) downloads the run's events.jsonl, 3) filters client-side.
+  let _commsRunId = null;
+  let _commsRunId_at = 0;
+  function pickLatestRunId() {
+    return fetch(apiUrl + '/runs')
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(payload => {
+        const runs = payload.runs || [];
+        if (!runs.length) return null;
+        // The /runs endpoint sorts newest-first; pick the freshest run
+        // that has an events.jsonl. Prefer the most recent so in-flight
+        // demo runs become visible as soon as they start producing events.
+        for (const r of runs) {
+          if (r.events_path) return r.id;
+        }
+        return runs[0].id;
+      });
+  }
+  B.fetchCommunications = function () {
+    if (!apiUrl) return Promise.reject(new Error('No backend API configured.'));
+    const now = Date.now();
+    const needRunId = !_commsRunId || (now - _commsRunId_at) > 30000;
+    const runIdP = needRunId
+      ? pickLatestRunId().then(id => { _commsRunId = id; _commsRunId_at = now; B.runId = id; return id; })
+      : Promise.resolve(_commsRunId);
+    return runIdP.then(runId => {
+      if (!runId) return { events: [] };
+      return fetch(apiUrl + '/runs/' + encodeURIComponent(runId) + '/events')
+        .then(r => r.ok ? r.text() : Promise.reject(r.status))
+        .then(txt => {
+          const events = parseJsonl(txt).filter(ev => {
+            const t = ev && ev.event_type;
+            return t === 'social_action' || t === 'debate_claim' || t === 'forecast';
+          });
+          B._commsEvents = events;
+          return { run_id: runId, events };
+        });
+    });
+  };
+  B.getCommunications = function () { return B._commsEvents || []; };
+  B.getCommsRunId = function () { return _commsRunId; };
+  // Bust the cached run id so the next fetchCommunications() re-queries
+  // /runs. Called after Run-LLM / scouting completes so we pick up the
+  // freshly-created run instead of sticking with the previous one.
+  B.resetCommsRun = function (newId) {
+    if (newId) {
+      _commsRunId = newId;
+      _commsRunId_at = Date.now();
+      B.runId = newId;
+    } else {
+      _commsRunId = null;
+      _commsRunId_at = 0;
+    }
+    B._commsEvents = [];
+  };
+
   function parseJsonl(txt) {
     return txt
       .split('\n')

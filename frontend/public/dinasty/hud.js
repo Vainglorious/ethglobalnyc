@@ -79,6 +79,45 @@ DN.hud = (function () {
     pollAgents(false);
     setInterval(() => pollAgents(false), 15000);
 
+    // Communication events: poll faster (5s) so debate arcs feel live.
+    // Hands events to commsViz; logTerm rows are emitted by commsViz so
+    // we don't double-log. Errors are surfaced to the log once each.
+    let _commsLastErr = null;
+    let _commsPollCount = 0;
+    function pollComms() {
+      _commsPollCount++;
+      if (!DN.databridge || !DN.databridge.fetchCommunications) {
+        if (DN.logTerm) DN.logTerm.push('SYSTEM', 'databridge.fetchCommunications not loaded — stale cache? Hard refresh (Cmd+Shift+R).');
+        return;
+      }
+      // First poll only: announce it so the user knows the loop is alive
+      if (_commsPollCount === 1 && DN.logTerm) {
+        DN.logTerm.push('SYSTEM', 'Starting communications poll → /runs then /runs/{id}/events…');
+      }
+      DN.databridge.fetchCommunications()
+        .then((payload) => {
+          const events = payload.events || [];
+          const rid = payload.run_id;
+          // Always emit a per-poll summary so the user can see polling is alive.
+          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Poll #' + _commsPollCount + ': run=' + (rid || 'none') + ' events=' + events.length);
+          if (DN.commsViz && DN.commsViz.ingest) DN.commsViz.ingest(events);
+          _commsLastErr = null;
+          if (DN.logTerm && rid && pollComms._loggedRun !== rid) {
+            pollComms._loggedRun = rid;
+          }
+        })
+        .catch((err) => {
+          const msg = (err && err.message) || String(err);
+          if (msg !== _commsLastErr && DN.logTerm) {
+            _commsLastErr = msg;
+            DN.logTerm.push('SYSTEM', 'Comms poll error: ' + msg);
+          }
+        });
+    }
+    pollComms();
+    setInterval(pollComms, 5000);
+    H._pollComms = pollComms; // exposed so Run LLM can kick a fresh poll
+
     antsBtn.addEventListener('click', () => {
       antsBtn.disabled = true;
       status.textContent = 'Getting ants...';
@@ -111,6 +150,7 @@ DN.hud = (function () {
       scoutBtn.disabled = true;
       status.textContent = 'Scouting...';
       H.pushThought('Frontend started a public-data KG scouting run on Railway.', 'Backend', '#3FA89F');
+      if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Scouting run kicked off.');
       DN.databridge.startScoutingRun()
         .then((result) => {
           const manifest = result.manifest || {};
@@ -120,6 +160,11 @@ DN.hud = (function () {
           const ready = manifest.validation && manifest.validation.kg_load_ready === false ? 'needs review' : 'ready';
           status.textContent = 'Scouting ' + ready + ' · ' + entities + ' entities';
           H.pushThought('Scouting finished: ' + entities + ' KG entities and ' + links + ' relationships.', 'Backend', '#3FA89F');
+          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Scouting finished. Re-polling communications.');
+          const newId = (DN.databridge && DN.databridge.runId) || null;
+          if (DN.databridge && DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(newId);
+          if (DN.commsViz && DN.commsViz.reset) DN.commsViz.reset();
+          if (H._pollComms) H._pollComms();
         })
         .catch((err) => {
           status.textContent = 'Scouting error';
@@ -132,16 +177,29 @@ DN.hud = (function () {
       btn.disabled = true;
       status.textContent = 'Starting run...';
       H.pushThought('Frontend requested a new LLM-powered Railway colony run.', 'Backend', '#3FA89F');
+      if (DN.logTerm) DN.logTerm.push('SYSTEM', 'LLM debate run kicked off — debate_claim and social_action events incoming.');
       DN.databridge.startDemoRun()
         .then((result) => {
           const agents = DN.databridge.getAgents ? DN.databridge.getAgents().length : 0;
           const rooms = DN.databridge.getRooms ? DN.databridge.getRooms().length : 0;
           status.textContent = 'Loaded ' + agents + ' agents · ' + rooms + ' rooms';
           H.pushThought('Backend run completed and the colony view loaded its events.', 'Backend', '#3FA89F');
+          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Run complete: ' + agents + ' agents · ' + rooms + ' rooms. Visualising debate.');
+          // Critical: the comms poller caches the run-id for 30s, so
+          // without a reset it will keep returning the OLD run's events
+          // for a while after Run LLM completes. Force the cache to
+          // re-pick the freshest run on the next poll and wipe the
+          // commsViz dedup so every event from the new run dispatches.
+          const newId = (DN.databridge && DN.databridge.runId) || null;
+          if (DN.databridge && DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(newId);
+          if (DN.commsViz && DN.commsViz.reset) DN.commsViz.reset();
+          if (H._pollComms) H._pollComms();
+          if (pollAgents) pollAgents(false);
         })
         .catch((err) => {
           status.textContent = 'Backend error';
           H.pushThought('Backend run failed: ' + (err.message || err), 'Backend', '#D96E54');
+          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Run failed: ' + (err.message || err));
         })
         .finally(() => { btn.disabled = false; });
     });

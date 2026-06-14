@@ -69,6 +69,7 @@ DN.app = (function () {
       DN.colony.update(dt, el);
       DN.ants.update(dt, el, Math.max(0.0001, timeScale));
       DN.trails.update(dt, el);
+      if (DN.commsViz && DN.commsViz.update) DN.commsViz.update(dt, el);
       if (App.following) DN.camera.follow(() => DN.ants.heroPos(App.following));
       DN.camera.update(dt);
       DN.interactions.update();
@@ -246,6 +247,8 @@ DN.app = (function () {
     DN.flora.init(world.scene);
     DN.resources.init(world.scene);
     DN.ants.init(world.scene, DN.colony.list);
+    if (DN.commsViz && DN.commsViz.init) DN.commsViz.init(world.scene);
+    if (DN.logTerm && DN.logTerm.init) DN.logTerm.init();
     DN.trails.init(world.scene, DN.colony.list);
     DN.underground.init();
     DN.camera.init();

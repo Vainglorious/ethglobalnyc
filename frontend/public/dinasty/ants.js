@@ -387,6 +387,14 @@ DN.ants = (function () {
       if (!a.hero && a.state !== 'migrating' && Math.random() < dt * 0.0002 * timeScale) {
         a.state = 'dead';
         a.deadTimer = 2.0;
+        // Rate-limited log emission — at most one DEATH row per ~2s globally.
+        A._lastDeathLog = A._lastDeathLog || 0;
+        const nowMs = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+        if (DN.logTerm && nowMs - A._lastDeathLog > 2000) {
+          A._lastDeathLog = nowMs;
+          const id = (a.agentRecord && a.agentRecord.agent_id) || a.id;
+          DN.logTerm.push('DEATH', id + ' perished mid-route in ' + a.col.name);
+        }
         continue;
       }
 

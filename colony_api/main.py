@@ -630,6 +630,49 @@ def list_runs() -> dict:
     return {"runs": runs}
 
 
+@app.get("/recent_communications")
+def recent_communications(limit: int = 60) -> dict:
+    """
+    Return the most recent ant-to-ant communication events (debate_claim,
+    social_action, forecast) from the latest run's events.jsonl. The
+    frontend polls this endpoint to drive its arc visualization and log
+    terminal — no run_id required.
+    """
+    if not RUNS_ROOT.exists():
+        return {"run_id": None, "events": []}
+    latest_run = None
+    for path in sorted(RUNS_ROOT.iterdir(), reverse=True):
+        if not path.is_dir():
+            continue
+        if (path / "events.jsonl").exists():
+            latest_run = path
+            break
+    if latest_run is None:
+        return {"run_id": None, "events": []}
+    events_path = latest_run / "events.jsonl"
+    interesting = {"debate_claim", "social_action", "forecast"}
+    out: list[dict] = []
+    try:
+        with events_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if ev.get("event_type") in interesting:
+                    out.append(ev)
+    except OSError:
+        return {"run_id": latest_run.name, "events": []}
+    # Keep only the trailing N — the JSONL is append-only so the tail is
+    # the most recent.
+    if limit > 0 and len(out) > limit:
+        out = out[-limit:]
+    return {"run_id": latest_run.name, "events": out}
+
+
 @app.get("/runs/{run_id}")
 def get_run(run_id: str) -> dict:
     metadata = _read_metadata(run_id)

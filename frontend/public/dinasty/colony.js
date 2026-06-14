@@ -174,6 +174,8 @@ DN.colony = (function () {
     }
     const col = C._buildOne(angle, dist, idx, accent, factionName);
 
+    if (DN.logTerm) DN.logTerm.push('FOUND', 'Colony "' + factionName + '" founded.');
+
     // Founder colony: the nearest existing colony whose workers will
     // migrate over to seed the new mound. Without this the new ants
     // would just spawn at the entrance, which feels static.
@@ -240,6 +242,9 @@ DN.colony = (function () {
     if (DN.ants && DN.ants.addColony) {
       DN.ants.addColony(col, parent);
       col._foundAnim.antsSpawned = true;
+      if (DN.logTerm && parent) {
+        DN.logTerm.push('MIGRATE', 'Founder column dispatched from ' + parent.name + ' → ' + factionName + '.');
+      }
     }
     return col;
   };
