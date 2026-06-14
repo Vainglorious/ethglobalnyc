@@ -2028,7 +2028,8 @@ def get_ants() -> dict:
 
 @app.get("/ants/children")
 def get_child_ants() -> dict:
-    children = _read_child_ants()
+    state = _read_ant_state()
+    children = [_apply_ant_state(child, state) for child in _read_child_ants()]
     return {
         "count": len(children),
         "source": str(CHILD_ANTS_PATH),

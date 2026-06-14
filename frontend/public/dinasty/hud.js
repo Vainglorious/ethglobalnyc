@@ -880,9 +880,9 @@ DN.hud = (function () {
           <svg viewBox="0 0 24 24" style="fill:${following ? 'var(--ink)' : '#2a1d08'}"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="${following ? 'var(--ink)' : '#2a1d08'}" stroke-width="2" fill="none"/></svg>
           <span>${following ? 'Stop' : 'Follow'}</span>
         </button>
-        ${canReproduce ? `<button class="btn-primary ant-action reproduce" id="reproduce-ant" title="Create child ant">
+        ${canReproduce ? `<button class="btn-primary ant-action reproduce" id="reproduce-ant" title="Create new ant">
           <svg viewBox="0 0 24 24" style="fill:none;stroke:var(--ink);stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><circle cx="12" cy="5" r="2"/><circle cx="7" cy="19" r="2"/><circle cx="17" cy="19" r="2"/><path d="M12 7v5M12 12l-5 5M12 12l5 5"/></svg>
-          <span>Reproduce</span>
+          <span>New ant</span>
         </button>` : ''}
         ${canKill ? `<button class="btn-primary ant-action danger" id="kill-ant" title="Kill ant">
           <svg viewBox="0 0 24 24" style="fill:none;stroke:var(--ink);stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><path d="M6 6l12 12M18 6L6 18"/><circle cx="12" cy="12" r="9"/></svg>
