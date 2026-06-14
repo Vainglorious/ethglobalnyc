@@ -137,7 +137,7 @@ DN.commsViz = (function () {
     // One event per tick at a slow cadence — bursts of 100+ events from
     // a single comms-poll batch otherwise flood the log faster than the
     // user can read.
-    const TICK_MS = 160;
+    const TICK_MS = 80;
     const tick = () => {
       const ev = V._queue.shift();
       if (ev) {
@@ -229,6 +229,9 @@ DN.commsViz = (function () {
   };
 
   V._handleForecast = function (ev) {
+    // The first forecast event signals "debate over, betting begun" —
+    // the lifecycle uses this to know when to leave the chamber.
+    V._sawForecast = true;
     if (!DN.logTerm) return;
     const aid = ev.ens_name || ev.agent_id || 'agent';
     const side = ev.side || 'pass';
@@ -244,6 +247,8 @@ DN.commsViz = (function () {
     const marketBit = economy.market_key ? ', market ' + economy.market_key : '';
     DN.logTerm.push('FORECAST', aid + ' → ' + side + ' @ ' + prob + ' (edge ' + edge + ', bankroll $' + bank + contractBit + marketBit + ')');
   };
+
+  V.sawForecast = function () { return !!V._sawForecast; };
 
   V._bumpEdge = function (fromId, toId, weight) {
     if (!fromId || !toId || fromId === toId) return;
@@ -373,6 +378,7 @@ DN.commsViz = (function () {
     V._chamberStreamTimers.forEach((t) => clearTimeout(t));
     V._chamberStreamTimers = [];
     V._chamberMsgs.length = 0;
+    V._sawForecast = false;
     V._arcs.length = 0;
     V._edges.clear();
     V._forecastContractLogged = false;
