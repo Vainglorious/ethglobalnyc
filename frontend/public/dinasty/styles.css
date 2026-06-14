@@ -84,7 +84,8 @@ body.underground #atmos {
 .reg-tag { font-size: 10px; color: var(--ink-faint); margin-top: 1px; }
 
 /* ---------- inspector (right) ---------- */
-#inspector { display: none !important; }
+#inspector { display: none; position: absolute; top: 92px; right: 24px; width: 300px; padding: 18px; max-height: calc(100vh - 230px); overflow-y: auto; flex-direction: column; }
+#inspector.has-content { display: flex; }
 #inspector::-webkit-scrollbar { width: 0; }
 .insp-empty { color: var(--ink-faint); font-size: 12.5px; line-height: 1.65; }
 .insp-empty b { color: var(--ink-soft); font-weight: 600; }

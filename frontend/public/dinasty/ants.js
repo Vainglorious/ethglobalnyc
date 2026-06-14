@@ -2,7 +2,7 @@
 window.DN = window.DN || {};
 
 DN.ants = (function () {
-  const A = { perCol: 180, list: [], heroes: [], byMesh: {}, GROUPS: 5 };
+  const A = { perCol: 100, list: [], heroes: [], byMesh: {}, GROUPS: 5 };
   let scene, noise;
   const P = DN.palette;
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _s = new THREE.Vector3(), _p = new THREE.Vector3();

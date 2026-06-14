@@ -60,13 +60,12 @@ DN.hud = (function () {
   // ---------- inspector ----------
   H.clearInspector = function () {
     H._open = null;
-    $('inspector').innerHTML =
-      '<div class="insp-kicker">Inspector</div>' +
-      '<div class="insp-empty" style="margin-top:12px">Hover any colony, agent or cache for live telemetry.<br><br>' +
-      '<b>Click a colony</b> to open it and enter underground. <b>Click an ant</b> to inspect or follow a single agent.</div>';
+    $('inspector').innerHTML = '';
+    $('inspector').classList.remove('has-content');
   };
 
   H.showColony = function (col) {
+    $('inspector').classList.add('has-content');
     H._open = { type: 'colony', col };
     const c = hex(col.accent);
     const roster = DN.ants.heroes.filter(a => a.col === col);
@@ -108,6 +107,7 @@ DN.hud = (function () {
 
   H.showAnt = function (a, following) {
     H._open = { type: 'ant', ant: a };
+    $('inspector').classList.add('has-content');
     const c = hex(a.col.accent);
     const name = a.name || ('Worker ' + a.id.split('-').slice(-1));
     $('inspector').innerHTML =
@@ -151,6 +151,7 @@ DN.hud = (function () {
 
   H.showRoom = function (room, col) {
     H._open = { type: 'room' };
+    $('inspector').classList.add('has-content');
     const c = hex(col.accent);
     const blurbs = {
       queen: 'The queen seeds new forecasting agents. Genetics weight toward the round\'s best-performing lineages.',
