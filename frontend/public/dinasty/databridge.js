@@ -212,6 +212,30 @@ DN.databridge = (function () {
         return payload;
       });
   };
+
+  B.reproduceAnt = function (opts) {
+    const body = Object.assign(
+      {
+        mutation_rate: 0.08,
+        fund_wallet: true,
+        fund_amount: '0.05',
+      },
+      opts || {},
+    );
+    return apiJson('/ants/reproduce', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then((payload) => {
+      const child = payload.child || null;
+      if (child) {
+        records = records.filter((r) => r.agent_id !== child.agent_id).concat([child]);
+        B.agents = records;
+      }
+      return payload;
+    });
+  };
+
   B.fetchWorldCupKg = function () {
     if (!apiUrl) return Promise.reject(new Error('No backend API configured.'));
     return fetch(apiUrl + '/kg/world-cup')

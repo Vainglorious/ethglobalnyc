@@ -604,6 +604,21 @@ DN.ants = (function () {
     }
   };
 
+  A.attachChildRecord = function (parentAnt, record) {
+    if (!record || !A.list.length) return null;
+    const sameCol = parentAnt && parentAnt.col
+      ? A.list.filter(a => a.col === parentAnt.col && a !== parentAnt && !a.hero)
+      : A.list.filter(a => !a.hero);
+    const target = sameCol.find(a => !a.agentRecord || !a.agentRecord.parent_agent_id) || sameCol[0] || null;
+    if (!target) return null;
+    target.agentRecord = record;
+    target.name = record.ens_name || record.name || record.agent_id || target.name;
+    target.role = 'Founder';
+    target.gen = record.generation || ((parentAnt && parentAnt.gen) ? parentAnt.gen + 1 : target.gen);
+    target.scale = Math.max(target.scale || 1, 1.25);
+    return target;
+  };
+
   A.antFromHit = function (mesh, instanceId) {
     const ci = A.byMesh[mesh.uuid];
     if (ci === undefined) return null;

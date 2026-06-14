@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -41,6 +42,15 @@ FORECAST_CLI = REPO_ROOT / "arc" / "forecast-market.mjs"
 X402_SERVICE_CLI = REPO_ROOT / "arc" / "x402-agent-service.mjs"
 X402_PAY_CLI = REPO_ROOT / "arc" / "x402-agent-pay.mjs"
 DEFAULT_FORECAST_CONTRACT = "0xc40a8f2e29fe061cd4c0fe92cc73b9b43f9ada87"
+CHILD_ANTS_PATH = RUNS_ROOT / "child_ants.json"
+FUND_AGENTS_CLI = REPO_ROOT / "arc" / "fund-agents.mjs"
+
+COLONY_SRC = REPO_ROOT / "colony"
+if str(COLONY_SRC) not in sys.path:
+    sys.path.insert(0, str(COLONY_SRC))
+
+from colony_harness.genes import Genome, SourceWeights, mutate_genome  # noqa: E402
+from colony_harness.wallets import WalletStore  # noqa: E402
 
 ENS_ADJECTIVES = [
     "amber",
@@ -150,6 +160,17 @@ class X402DemoPaymentRequest(BaseModel):
     round_id: str = "worldcup:2026:brazil-morocco:x402-demo"
     resource_id: str = "kg:worldcup:brazil-morocco:private-scout-signal"
     topic: str = "Brazil vs Morocco"
+
+
+class AntReproduceRequest(BaseModel):
+    parent_agent_id: str
+    wallet_provider: Literal["local", "dynamic"] | None = None
+    wallet_store: str | None = None
+    mutation_rate: float = Field(default=0.08, ge=0.0, le=0.5)
+    initial_bankroll: float = Field(default=0.05, ge=0.0, le=100.0)
+    fund_amount: str = "0.05"
+    fund_wallet: bool = True
+    broadcast_funding: bool | None = None
 
 
 def _utc_now() -> str:
@@ -279,6 +300,196 @@ def _root_ens_name(agent_id: str) -> str:
     return f"root-{adjective}-{_agent_number(agent_id)}.{parent}"
 
 
+def _ens_parent() -> str:
+    return os.environ.get("COLONY_ENS_PARENT", "colonny.eth").strip().lower().strip(".")
+
+
+def _safe_repo_write_path(path_value: str) -> Path:
+    target = (REPO_ROOT / path_value).resolve() if not Path(path_value).is_absolute() else Path(path_value).resolve()
+    in_repo = target == REPO_ROOT or REPO_ROOT in target.parents
+    in_runs = target == RUNS_ROOT or RUNS_ROOT in target.parents
+    if not in_repo and not in_runs:
+        raise HTTPException(status_code=400, detail="Path escapes repository")
+    return target
+
+
+def _read_child_ants() -> list[dict]:
+    if not CHILD_ANTS_PATH.exists():
+        return []
+    payload = json.loads(CHILD_ANTS_PATH.read_text(encoding="utf-8"))
+    if isinstance(payload, dict):
+        return list(payload.get("agents") or [])
+    if isinstance(payload, list):
+        return payload
+    return []
+
+
+def _write_child_ants(agents: list[dict]) -> None:
+    CHILD_ANTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": 1,
+        "updated_at": _utc_now(),
+        "agents": agents,
+    }
+    CHILD_ANTS_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _genome_tokens(genome_id: str) -> tuple[str, str]:
+    digest = hashlib.sha256(genome_id.encode("utf-8")).digest()
+    nouns = ["oracle", "scout", "striker", "market", "signal", "keeper", "wager", "edge", "lens", "runner", "seer", "vector"]
+    return ENS_ADJECTIVES[digest[0] % len(ENS_ADJECTIVES)], nouns[digest[1] % len(nouns)]
+
+
+def _child_ens_name(agent_id: str, genome_id: str) -> str:
+    first, second = _genome_tokens(genome_id)
+    return f"{first}-{second}-{_agent_number(agent_id)}.{_ens_parent()}"
+
+
+def _personality_genome(seed_value: str) -> Genome:
+    digest = hashlib.sha256(seed_value.encode("utf-8")).digest()
+    total = sum(digest[:4]) + 4
+    personas = [
+        "cold probabilist",
+        "market contrarian",
+        "news-sensitive scout",
+        "risk-on striker",
+        "defensive skeptic",
+        "crowd watcher",
+        "model maximalist",
+        "quiet value hunter",
+    ]
+    return Genome(
+        estimator="poisson" if digest[4] % 5 else "llm",
+        model="parametric" if digest[4] % 5 else "deepseek-v3.2",
+        risk_appetite=round(0.02 + (digest[5] / 255) * 0.22, 4),
+        edge_threshold=round(0.01 + (digest[6] / 255) * 0.16, 4),
+        source_weights=SourceWeights(
+            stats=(digest[0] + 1) / total,
+            odds=(digest[1] + 1) / total,
+            news=(digest[2] + 1) / total,
+            debate=(digest[3] + 1) / total,
+        ).normalized(),
+        herd_bias=round((digest[7] / 127.5) - 1.0, 4),
+        query_budget=round(0.2 + (digest[8] / 255) * 2.2, 4),
+        persona=personas[digest[9] % len(personas)],
+    )
+
+
+def _find_parent_ant(parent_agent_id: str) -> dict:
+    needle = parent_agent_id.strip()
+    if not needle:
+        raise HTTPException(status_code=400, detail="parent_agent_id is required")
+    for ant in _read_public_ants():
+        values = {str(ant.get("agent_id") or ""), str(ant.get("name") or ""), str(ant.get("ens_name") or "")}
+        if needle in values:
+            return ant
+    raise HTTPException(status_code=404, detail=f"Parent ant not found: {parent_agent_id}")
+
+
+def _next_child_agent_id(existing: list[dict]) -> str:
+    max_id = -1
+    for ant in _read_public_ants() + existing:
+        match = re.search(r"(\d+)$", str(ant.get("agent_id") or ""))
+        if match:
+            max_id = max(max_id, int(match.group(1)))
+    return f"ant_{max_id + 1:04d}"
+
+
+def _child_identity_text(child: dict) -> dict:
+    agent_context = {
+        "schema": "ensip-26",
+        "kind": "colony_ant",
+        "agent_id": child["agent_id"],
+        "ens_name": child["ens_name"],
+        "active": True,
+        "generation": child["generation"],
+        "parent": child["parent_ens_name"],
+        "lineage": child["lineage_ens_name"],
+        "wallets": {"evm": child["wallet_address"], "arc_testnet": child["wallet_address"]},
+        "personality": child["personality"],
+    }
+    return {
+        "description": "Colony child ant derived from a high-performing parent personality card.",
+        "agent-context": json.dumps(agent_context, sort_keys=True, separators=(",", ":")),
+        "com.colony.agent_id": child["agent_id"],
+        "com.colony.parent": child["parent_ens_name"],
+        "com.colony.parent_agent_id": child["parent_agent_id"],
+        "com.colony.lineage": child["lineage_ens_name"],
+        "com.colony.generation": str(child["generation"]),
+        "com.colony.genome_id": child["genome_id"],
+        "com.colony.genome_hash": child["genome_hash"],
+        "com.colony.wallet": child["wallet_address"],
+    }
+
+
+def _resolve_reproduction_wallet_store(request: AntReproduceRequest, provider: str) -> Path:
+    configured = (
+        request.wallet_store
+        or os.environ.get("COLONY_API_REPRODUCTION_WALLET_STORE")
+        or ("colony/secrets/agent-wallets.dynamic.200.json" if provider == "dynamic" else DEFAULT_LOCAL_WALLET_STORE)
+    )
+    return _safe_repo_write_path(configured)
+
+
+def _create_child_wallet(agent_id: str, request: AntReproduceRequest) -> tuple[dict, str]:
+    provider = request.wallet_provider or os.environ.get("COLONY_API_REPRODUCTION_WALLET_PROVIDER")
+    if not provider:
+        provider = "dynamic" if os.environ.get("DYNAMIC_ENVIRONMENT_ID") and os.environ.get("DYNAMIC_API_KEY") else "local"
+    provider = provider.strip().lower()
+    wallet_store_path = _resolve_reproduction_wallet_store(request, provider)
+    try:
+        wallet = WalletStore(wallet_store_path, provider=provider).get_or_create(agent_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not create {provider} wallet for {agent_id}: {exc}") from exc
+    return wallet.public_record, str(wallet_store_path)
+
+
+def _fund_child_wallet(agent_id: str, wallet_store: str, request: AntReproduceRequest) -> dict:
+    if not request.fund_wallet:
+        return {"status": "skipped", "reason": "fund_wallet=false"}
+    if not FUND_AGENTS_CLI.exists():
+        return {"status": "skipped", "reason": "arc/fund-agents.mjs is missing"}
+    broadcast = request.broadcast_funding
+    if broadcast is None:
+        broadcast = _env_bool("COLONY_API_REPRODUCTION_BROADCAST_FUNDING", False)
+    out_path = RUNS_ROOT / "funding" / f"fund-{agent_id}-{int(time.time())}.json"
+    command = [
+        "node",
+        str(FUND_AGENTS_CLI),
+        "--wallet-store",
+        wallet_store,
+        "--amount",
+        request.fund_amount,
+        "--agent",
+        agent_id,
+        "--out",
+        str(out_path),
+    ]
+    if broadcast:
+        command.append("--broadcast")
+    try:
+        result = subprocess.run(command, cwd=REPO_ROOT, check=False, capture_output=True, text=True, timeout=180)
+    except Exception as exc:
+        return {"status": "failed", "broadcast": broadcast, "error": str(exc)}
+    receipt = {}
+    if out_path.exists():
+        try:
+            receipt = json.loads(out_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            receipt = {}
+    status = "funded" if broadcast and result.returncode == 0 else "planned" if result.returncode == 0 else "failed"
+    return {
+        "status": status,
+        "broadcast": broadcast,
+        "amount_usdc": request.fund_amount,
+        "receipt_path": str(out_path),
+        "returncode": result.returncode,
+        "stdout": result.stdout[-1200:],
+        "stderr": result.stderr[-1200:],
+        "receipt": receipt,
+    }
+
+
 def _read_public_ants() -> list[dict]:
     store_path = _safe_repo_path(_default_wallet_store())
     payload = json.loads(store_path.read_text(encoding="utf-8"))
@@ -296,7 +507,7 @@ def _read_public_ants() -> list[dict]:
                 "chains": wallet.get("chains") or {},
             }
         )
-    return ants
+    return ants + _read_child_ants()
 
 
 def _build_command(request: DemoRunRequest, run_dir: Path) -> list[str]:
@@ -1349,6 +1560,54 @@ def get_ants() -> dict:
         "count": len(ants),
         "source": _default_wallet_store(),
         "agents": ants,
+    }
+
+
+@app.post("/ants/reproduce")
+def reproduce_ant(request: AntReproduceRequest) -> dict:
+    parent = _find_parent_ant(request.parent_agent_id)
+    children = _read_child_ants()
+    child_agent_id = _next_child_agent_id(children)
+    parent_key = "|".join(str(parent.get(key) or "") for key in ("agent_id", "ens_name", "wallet_address", "genome_hash"))
+    parent_genome = _personality_genome(parent_key)
+    rng_seed = hashlib.sha256(f"{parent_key}|{child_agent_id}|{time.time_ns()}".encode("utf-8")).hexdigest()
+    child_genome = mutate_genome(parent_genome, random.Random(rng_seed), mutation_rate=request.mutation_rate)
+    child_wallet, wallet_store = _create_child_wallet(child_agent_id, request)
+
+    parent_generation = int(parent.get("generation") or 0)
+    parent_ens_name = str(parent.get("ens_name") or _root_ens_name(str(parent.get("agent_id") or request.parent_agent_id)))
+    lineage_ens_name = str(parent.get("lineage_ens_name") or parent.get("lineage") or parent_ens_name)
+    child = {
+        "agent_id": child_agent_id,
+        "name": child_agent_id.replace("_", "-"),
+        "ens_name": _child_ens_name(child_agent_id, child_genome.stable_id()),
+        "wallet_address": str(child_wallet.get("wallet_address") or ""),
+        "wallet_provider": child_wallet.get("wallet_provider") or request.wallet_provider or "",
+        "chains": child_wallet.get("chains") or {},
+        "parent_agent_id": parent.get("agent_id") or request.parent_agent_id,
+        "parent_ens_name": parent_ens_name,
+        "lineage_ens_name": lineage_ens_name,
+        "generation": parent_generation + 1,
+        "bankroll": request.initial_bankroll,
+        "accuracy": parent.get("accuracy", 0),
+        "status": "alive",
+        "genome_id": child_genome.stable_id(),
+        "genome_hash": child_genome.public_hash(),
+        "parent_genome_id": parent.get("genome_id") or "",
+        "personality": child_genome.to_dict(),
+        "created_at": _utc_now(),
+    }
+    child["ens_text_records"] = _child_identity_text(child)
+    child["funding"] = _fund_child_wallet(child_agent_id, wallet_store, request)
+    children.append(child)
+    _write_child_ants(children)
+    return {
+        "status": "created",
+        "parent": parent,
+        "child": child,
+        "wallet_store": wallet_store,
+        "ens_parent": _ens_parent(),
+        "source": str(CHILD_ANTS_PATH),
     }
 
 

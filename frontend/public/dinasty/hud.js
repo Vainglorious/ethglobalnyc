@@ -728,10 +728,15 @@ DN.hud = (function () {
     const wallet = rec && rec.wallet_address;
     const walletShort = wallet ? wallet.slice(0, 6) + '…' + wallet.slice(-4) : null;
     const ens = rec && rec.ens_name;
+    const parentEns = rec && (rec.parent_ens_name || (rec.parent && rec.parent.ens_name));
+    const lineageEns = rec && (rec.lineage_ens_name || (rec.lineage && (rec.lineage.root_name || rec.lineage.ens_name)));
     const identityRows = (ens || wallet) ? `
       ${ens ? `<div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>ENS</span><span style="color:${c};font-family:var(--mono)">${ens}</span></div></div>` : ''}
+      ${parentEns ? `<div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>Parent</span><span style="color:${c};font-family:var(--mono)">${parentEns}</span></div></div>` : ''}
+      ${lineageEns && lineageEns !== parentEns ? `<div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>Lineage</span><span style="color:${c};font-family:var(--mono)">${lineageEns}</span></div></div>` : ''}
       ${wallet ? `<div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>Wallet</span><span style="font-family:var(--mono);cursor:pointer" title="${wallet}" data-copy="${wallet}">${walletShort}</span></div></div>` : ''}
     ` : '';
+    const canReproduce = !!(rec && rec.agent_id && DN.databridge && DN.databridge.reproduceAnt);
     $('inspector').innerHTML =
       `<div class="insp-head"><div class="insp-icon" style="background:${c}22;box-shadow:inset 0 0 0 1px ${c}66">
         <div style="width:13px;height:13px;border-radius:3px;background:${c};box-shadow:0 0 10px ${c}"></div></div>
@@ -750,8 +755,41 @@ DN.hud = (function () {
       <div class="insp-empty" style="font-size:12px">${antBlurb(a)}</div>
       <button class="btn-primary" id="follow-ant" style="background:${following ? 'rgba(255,238,205,0.1)' : ''};color:${following ? 'var(--ink)' : ''};border-color:var(--border-strong)">
         <svg viewBox="0 0 24 24" style="fill:${following ? 'var(--ink)' : '#2a1d08'}"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="${following ? 'var(--ink)' : '#2a1d08'}" stroke-width="2" fill="none"/></svg>
-        ${following ? 'Stop following' : 'Follow agent'}</button>`;
+        ${following ? 'Stop following' : 'Follow agent'}</button>
+      ${canReproduce ? `<button class="btn-primary" id="reproduce-ant" style="margin-top:9px;background:rgba(95,184,74,0.16);color:var(--ink);border-color:rgba(95,184,74,0.5)">
+        <svg viewBox="0 0 24 24" style="fill:none;stroke:var(--ink);stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><circle cx="12" cy="5" r="2"/><circle cx="7" cy="19" r="2"/><circle cx="17" cy="19" r="2"/><path d="M12 7v5M12 12l-5 5M12 12l5 5"/></svg>
+        Create child ant</button>` : ''}`;
     $('follow-ant').addEventListener('click', () => DN.app.toggleFollow(a));
+    const reproduceBtn = $('reproduce-ant');
+    if (reproduceBtn) {
+      const normalHtml = reproduceBtn.innerHTML;
+      reproduceBtn.addEventListener('click', () => {
+        const parentId = rec.agent_id;
+        reproduceBtn.disabled = true;
+        reproduceBtn.textContent = 'Creating child...';
+        H.pushThought('Creating a child ant from ' + (ens || parentId) + ': ENS lineage, wallet, and funding plan.', 'Lineage', '#5FB84A');
+        if (DN.logTerm) DN.logTerm.push('LINEAGE', 'Reproducing ' + (ens || parentId) + ' into a new ENS-linked child ant.');
+        DN.databridge.reproduceAnt({ parent_agent_id: parentId })
+          .then((payload) => {
+            const child = payload.child || {};
+            if (DN.ants && DN.ants.bindAgentRecords && DN.databridge.getAgents) DN.ants.bindAgentRecords(DN.databridge.getAgents());
+            const target = DN.ants && DN.ants.attachChildRecord ? DN.ants.attachChildRecord(a, child) : null;
+            if (target && DN.app && DN.app.selectAnt) DN.app.selectAnt(target);
+            const funding = child.funding || {};
+            const fundStatus = funding.status ? ' · funding ' + funding.status : '';
+            H.pushThought((child.ens_name || child.agent_id) + ' created from parent ' + (child.parent_ens_name || ens || parentId) + fundStatus + '.', 'Lineage', '#5FB84A');
+            if (DN.logTerm) DN.logTerm.push('LINEAGE', (child.ens_name || child.agent_id) + ' parent=' + (child.parent_ens_name || ens || parentId) + fundStatus + '.');
+          })
+          .catch((err) => {
+            H.pushThought('Child ant creation failed: ' + (err.message || err), 'Lineage', '#D96E54');
+            if (DN.logTerm) DN.logTerm.push('LINEAGE', 'Child ant creation failed: ' + (err.message || err));
+          })
+          .finally(() => {
+            reproduceBtn.disabled = false;
+            reproduceBtn.innerHTML = normalHtml;
+          });
+      });
+    }
     // copy-on-click for the truncated wallet
     $('inspector').querySelectorAll('[data-copy]').forEach(el => {
       el.addEventListener('click', () => {

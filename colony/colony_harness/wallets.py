@@ -159,7 +159,10 @@ def create_evm_wallet() -> dict[str, str]:
             "private_key": account.key.hex(),
         }
     except ImportError:
-        return _create_wallet_with_cast()
+        try:
+            return _create_wallet_with_cast()
+        except (FileNotFoundError, subprocess.CalledProcessError, ValueError):
+            return _create_wallet_with_node()
 
 
 def _create_wallet_with_cast() -> dict[str, str]:
@@ -174,6 +177,32 @@ def _create_wallet_with_cast() -> dict[str, str]:
     private_key = payload.get("private_key") or payload.get("privateKey") or payload.get("Private key")
     if not address or not private_key:
         raise ValueError("cast wallet output did not include address/private_key")
+    return {
+        "address": str(address),
+        "private_key": str(private_key),
+    }
+
+
+def _create_wallet_with_node() -> dict[str, str]:
+    arc_dir = Path(__file__).resolve().parents[2] / "arc"
+    script = """
+import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
+const privateKey = generatePrivateKey();
+const account = privateKeyToAccount(privateKey);
+console.log(JSON.stringify({ address: account.address, private_key: privateKey }));
+"""
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        cwd=arc_dir,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+    address = payload.get("address")
+    private_key = payload.get("private_key") or payload.get("privateKey")
+    if not address or not private_key:
+        raise ValueError("node wallet output did not include address/private_key")
     return {
         "address": str(address),
         "private_key": str(private_key),
