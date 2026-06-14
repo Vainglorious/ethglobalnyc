@@ -38,6 +38,7 @@ WORLD_CUP_KG = REPO_ROOT / "colony" / "data" / "world_cup_kg.json"
 WORLD_CUP_KG_SUMMARY = REPO_ROOT / "colony" / "data" / "world_cup_kg.summary.md"
 DEFAULT_PUBLIC_WALLET_STORE = "colony/data/agent-wallets.dynamic.200.public.json"
 DEFAULT_LOCAL_WALLET_STORE = "colony/secrets/agent-wallets.local.json"
+DEFAULT_FORECAST_MARKET_KEY = "worldcup:2026:brazil-morocco:frontend-demo"
 FORECAST_CLI = REPO_ROOT / "arc" / "forecast-market.mjs"
 X402_SERVICE_CLI = REPO_ROOT / "arc" / "x402-agent-service.mjs"
 X402_PAY_CLI = REPO_ROOT / "arc" / "x402-agent-pay.mjs"
@@ -119,11 +120,11 @@ class ForecastDeployRequest(BaseModel):
 
 class ForecastCreateMarketRequest(BaseModel):
     contract: str | None = None
-    market_key: str = "worldcup:2026:brazil-morocco:frontend-demo"
+    market_key: str = DEFAULT_FORECAST_MARKET_KEY
     market_type: Literal["three_way", "binary"] = "three_way"
     close_time: int = Field(default=0, ge=0)
     fee_bps: int = Field(default=1000, ge=0, le=2000)
-    metadata_uri: str = "worldcup:2026:brazil-morocco:frontend-demo"
+    metadata_uri: str = DEFAULT_FORECAST_MARKET_KEY
 
 
 class ForecastStakeInstruction(BaseModel):
@@ -1438,7 +1439,7 @@ def setup_forecast_demo(request: ForecastDemoSetupRequest) -> dict:
         market_type=request.market_type,
         close_time=request.close_time,
         fee_bps=request.fee_bps,
-        metadata_uri=request.metadata_uri,
+        metadata_uri=request.metadata_uri if request.metadata_uri != DEFAULT_FORECAST_MARKET_KEY else request.market_key,
     )
     steps.append(create_forecast_market(market_request))
 

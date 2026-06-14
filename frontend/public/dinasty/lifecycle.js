@@ -437,43 +437,10 @@ DN.lifecycle = (function () {
       // one from each mound. Recruitment is purely a camera + on-chain
       // staging beat now.
       if (DN.logTerm) DN.logTerm.push('BIRTH', 'Population staking on the round — emerging next.');
-      if (DN.databridge && DN.databridge.setupForecastDemo) {
-        const meta = selectedGameMeta();
-        const contract = configuredContract();
-        if (DN.logTerm) DN.logTerm.push('STAKE', 'Staking demo market on ' + (meta.home_team || '?') + ' vs ' + (meta.away_team || '?') + ' …');
-        DN.databridge.setupForecastDemo({
-          contract: contract || undefined,
-          market_key: meta.market_key,
-          market_type: meta.market_type || 'three_way',
-          home_team: meta.home_team,
-          away_team: meta.away_team,
-          fee_bps: 1000
-        }).then((res) => {
-          L.marketKey = (res && res.market_key) || meta.market_key;
-          L.forecastStakes = (res && res.stakes) || [];
-          if (DN.logTerm) DN.logTerm.push('STAKE', 'Stakes committed · market_key ' + (L.marketKey || '?').slice(-12));
-        }).catch((err) => {
-          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Stake demo error: ' + (err && err.message || err));
-        });
-      }
+      if (DN.logTerm) DN.logTerm.push('STAKE', 'Waiting for selected-match forecasts before committing Arc stakes.');
     },
     converge: () => {
-      // Kick the backend LLM debate run now so it has phases 5→7 (~22s)
-      // to compute while ants walk to the crystal and back.
-      if (DN.databridge && DN.databridge.startDemoRun) {
-        if (DN.logTerm) DN.logTerm.push('SYSTEM', 'LLM debate run kicked off in the background.');
-        DN.databridge.startDemoRun().then(res => {
-          if (res && res.id) {
-            L.runId = res.id;
-            if (DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(res.id);
-            if (DN.commsViz && DN.commsViz.reset) DN.commsViz.reset();
-            if (DN.hud && DN.hud._pollComms) DN.hud._pollComms();
-            if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Backend run ' + res.id + ' complete — debate events ready.');
-          }
-        }).catch(err => {
-          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Backend run failed: ' + (err && err.message || err));
-        });
-      }
+      if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Selected fixture run is feeding the debate and economy.');
       // Send every visible worker to the crystal. To make them read as a
       // single-file line per colony (not a chaotic swarm) we:
       //   • bucket workers by colony
