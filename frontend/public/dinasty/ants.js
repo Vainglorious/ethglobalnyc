@@ -432,6 +432,15 @@ DN.ants = (function () {
       // teleported back to the entrance and respawned outbound. Rate is
       // tuned so ~1 ant dies every several seconds across all colonies. ----
       if (a.state === 'dead') {
+        if ((a.permanentDead || a.outcome === 'culled' || (a.agentRecord && (a.agentRecord.status === 'dead' || a.agentRecord.status === 'killed'))) && a.deadTimer <= 0) {
+          _p.set(a.x, -100, a.z);
+          _e.set(0, 0, 0); _q.setFromEuler(_e);
+          _s.setScalar(0);
+          _m.compose(_p, _q, _s);
+          a.mesh.setMatrixAt(a.inst, _m);
+          meshDirty[a.mesh.uuid] = a.mesh;
+          continue;
+        }
         a.deadTimer -= dt;
         const ttl = Math.max(0, a.deadTimer / 2.0);
         const dieScale = a.scale * Math.max(0.18, ttl);
@@ -698,6 +707,7 @@ DN.ants = (function () {
       a.outcome = 'culled';
       a.state = 'dead';
       a.deadTimer = Math.max(a.deadTimer || 0, 2.0);
+      a.permanentDead = true;
     }
   }
 
@@ -731,6 +741,10 @@ DN.ants = (function () {
     target.role = 'Founder';
     target.gen = record.generation || ((parentAnt && parentAnt.gen) ? parentAnt.gen + 1 : target.gen);
     target.scale = Math.max(target.scale || 1, 1.25);
+    target.outcome = null;
+    target.deadTimer = 0;
+    target.permanentDead = false;
+    if (target.state === 'dead') target.state = 'idle';
     return target;
   };
 
@@ -745,6 +759,7 @@ DN.ants = (function () {
     let activated = 0;
     for (const a of A.list) {
       if (a.state !== 'idle') continue;
+      if (a.permanentDead || (a.agentRecord && (a.agentRecord.status === 'dead' || a.agentRecord.status === 'killed'))) continue;
       if (opts.colony && a.col !== opts.colony) continue;
       // jitter the spawn point so they don't all surface in the same pixel
       a.x = a.col.entrance.x + (Math.random() - 0.5) * 1.4;
@@ -792,6 +807,13 @@ DN.ants = (function () {
   A.allIdle = function () {
     for (const a of A.list) {
       if (a.hero) continue; // heroes stay visible
+      if (a.permanentDead || (a.agentRecord && (a.agentRecord.status === 'dead' || a.agentRecord.status === 'killed'))) {
+        a.state = 'dead';
+        a.deadTimer = 0;
+        a.outcome = 'culled';
+        a.permanentDead = true;
+        continue;
+      }
       a.state = 'idle';
       a._idleWritten = false;
       a.trail = null; a.t = 0; a.dir = 1; a.cargo = 0;

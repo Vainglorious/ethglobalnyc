@@ -28,6 +28,7 @@ DN.lifecycle = (function () {
     debateDone: false,
     skipScouting: false,
     scoutMode: 'openfootball',
+    staticMode: true,
   };
 
   // Minimum visual dwell per phase. These values never advance a backend
@@ -42,6 +43,18 @@ DN.lifecycle = (function () {
     ingress:      0.5,
     debate:       0.5,
     resolution:   0.5,
+    egress_roam: Infinity
+  };
+  const STATIC_MIN_DURATIONS = {
+    idle:        Infinity,
+    kickoff:      0.1,
+    scouting:     0.1,
+    kg_forming:   0.8,
+    recruitment:  0.9,
+    converge:     0.9,
+    ingress:      0.8,
+    debate:       1.0,
+    resolution:   0.1,
     egress_roam: Infinity
   };
   const NEXT = {
@@ -105,6 +118,20 @@ DN.lifecycle = (function () {
 
   function configuredRun() {
     return (window.DN_CONFIG && window.DN_CONFIG.RUN) || {};
+  }
+
+  function boundedInt(value, fallback, lo, hi) {
+    const n = Number(value);
+    const picked = Number.isFinite(n) ? Math.round(n) : fallback;
+    return Math.max(lo, Math.min(hi, picked));
+  }
+
+  function fastAgentCount(runCfg) {
+    return boundedInt(runCfg.fast_agents || runCfg.fastAgents || runCfg.demo_agents || runCfg.demoAgents, 24, 1, 60);
+  }
+
+  function fastRoomCount(runCfg) {
+    return boundedInt(runCfg.fast_rooms || runCfg.fastRooms || runCfg.demo_rooms || runCfg.demoRooms, 4, 1, 12);
   }
 
   function configuredForecastWalletStore() {
@@ -260,16 +287,56 @@ DN.lifecycle = (function () {
     }
   }
 
-  function startBackendRun() {
-    if (L.runPromise) return L.runPromise;
-    if (L.skipScouting) {
+  function startAgentRun() {
+    if (!DN.databridge || !DN.databridge.startDemoRun) {
       L.scoutingDone = true;
-      L.scoutingResult = null;
-      L.scoutingError = null;
+      L.runError = new Error('Backend demo run API unavailable.');
+      if (DN.logTerm) DN.logTerm.push('SYSTEM', L.runError.message);
       L.runPromise = Promise.resolve(null);
-      if (DN.logTerm) DN.logTerm.push('SCOUT', 'Backend scouting skipped — using cached KG and fallback economy stakes.');
       return L.runPromise;
     }
+    const runCfg = configuredRun();
+    L.scoutingDone = false;
+    L.scoutingResult = null;
+    L.scoutingError = null;
+    if (DN.logTerm) {
+      DN.logTerm.push('RUN', 'Backend agent run kicked off with no scout step.');
+    }
+    L.runPromise = DN.databridge.startDemoRun({
+      agents: fastAgentCount(runCfg),
+      rooms: fastRoomCount(runCfg),
+      seed: Number.isFinite(Number(runCfg.seed)) ? Number(runCfg.seed) : Math.floor(Math.random() * 10000),
+      voice_mode: runCfg.agent_voice_mode || runCfg.fast_voice_mode || 'template',
+      agent_wallets: runCfg.agent_wallets !== false,
+      wallet_provider: runCfg.wallet_provider,
+      wallet_store: runCfg.wallet_store,
+    })
+      .then((res) => {
+        L.scoutingDone = true;
+        L.scoutingResult = res || null;
+        if (res && res.id) {
+          L.runId = res.id;
+          L.runResult = res;
+          L.backendDone = true;
+          if (DN.hud && DN.hud._pollComms) DN.hud._pollComms();
+          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Backend agent run ' + res.id + ' complete.');
+        }
+        return res || null;
+      })
+      .catch((err) => {
+        L.scoutingDone = true;
+        L.scoutingError = err;
+        L.runError = err;
+        L.backendDone = false;
+        if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Backend agent run failed: ' + (err && err.message || err));
+        return null;
+      });
+    return L.runPromise;
+  }
+
+  function startBackendRun() {
+    if (L.runPromise) return L.runPromise;
+    if (L.skipScouting) return startAgentRun();
     if (!DN.databridge || !DN.databridge.startScoutingRun) {
       L.scoutingDone = true;
       L.runError = new Error('Backend scouting API unavailable.');
@@ -295,8 +362,8 @@ DN.lifecycle = (function () {
       match_id: meta.match_id || meta.market_key,
       data_mode: fastScout ? 'openfootball' : 'public',
       include_deepseek_scout: fastScout ? false : Boolean(runCfg.include_deepseek_scout),
-      agents: fastScout ? Math.min(Number(runCfg.agents || 60), 200) : Math.min(Number(runCfg.agents || 200), 200),
-      rooms: fastScout ? Math.min(Number(runCfg.rooms || 4), 12) : Math.min(Number(runCfg.rooms || 12), 50),
+      agents: fastScout ? fastAgentCount(runCfg) : boundedInt(runCfg.agents, 200, 1, 200),
+      rooms: fastScout ? fastRoomCount(runCfg) : boundedInt(runCfg.rooms, 12, 1, 50),
       seed: Number.isFinite(Number(runCfg.seed)) ? Number(runCfg.seed) : Math.floor(Math.random() * 10000),
       voice_mode: fastScout ? 'template' : (runCfg.voice_mode || 'llm'),
       show_completed_graph: false,
@@ -308,8 +375,6 @@ DN.lifecycle = (function () {
           L.runId = res.id;
           L.runResult = res;
           L.backendDone = true;
-          if (DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(res.id);
-          if (DN.commsViz && DN.commsViz.reset) DN.commsViz.reset();
           if (DN.hud && DN.hud._pollComms) DN.hud._pollComms();
           if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Fixture run ' + res.id + ' complete — selected-match forecast stakes ready.');
         }
@@ -402,7 +467,11 @@ DN.lifecycle = (function () {
     },
     scouting: () => {
       if (L.skipScouting) {
-        if (DN.logTerm) DN.logTerm.push('SCOUT', 'Scouting skipped for fast run.');
+        if (DN.logTerm) DN.logTerm.push('RUN', 'Scout step skipped; backend agent run is the source of truth.');
+        return;
+      }
+      if (L.staticMode) {
+        if (DN.logTerm) DN.logTerm.push('SCOUT', 'Static scout view active — waiting for backend OpenFootball run.');
         return;
       }
       // Previously kicked startScoutingRun() here which streamed SSE
@@ -456,7 +525,10 @@ DN.lifecycle = (function () {
         const ents = payload.entity_count != null ? payload.entity_count : (payload.entities || []).length;
         const links = payload.relationship_count != null ? payload.relationship_count : (payload.relationships || []).length;
         const finish = () => { L.kgReplayDone = true; };
-        if (DN.kgview && DN.kgview.replayGraph) {
+        if (L.staticMode && DN.kgview && DN.kgview.showGraph) {
+          DN.kgview.showGraph(payload, title || 'Selected-match KG');
+          finish();
+        } else if (DN.kgview && DN.kgview.replayGraph) {
           DN.kgview.replayGraph(payload, title || 'Selected-match KG', { onComplete: finish });
         } else if (DN.kgview && DN.kgview.showGraph) {
           DN.kgview.showGraph(payload, title || 'Selected-match KG');
@@ -477,6 +549,10 @@ DN.lifecycle = (function () {
       L._depositTimer = 0;
     },
     recruitment: () => {
+      if (L.staticMode) {
+        if (DN.hud && DN.hud.updateBackendFlow) DN.hud.updateBackendFlow({ stage: 'info', mode: 'Ants getting info' });
+        return;
+      }
       // IMPORTANT: don't wake the idle workers here. If we A.activate()
       // them now they all snap to their entrance position on the next
       // frame — that's the "mass pop out of nowhere" the user reported.
@@ -485,6 +561,13 @@ DN.lifecycle = (function () {
       // one from each mound.
     },
     converge: () => {
+      if (L.staticMode) {
+        L.convergeTarget = 0;
+        L.convergeReturned = 0;
+        if (DN.hud && DN.hud.updateBackendFlow) DN.hud.updateBackendFlow({ stage: 'info', mode: 'Ants getting info' });
+        if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Static review: backend forecasts are ready; ants stay in place for the demo.');
+        return;
+      }
       // Send every visible worker to the crystal. To make them read as a
       // single-file line per colony (not a chaotic swarm) we:
       //   • bucket workers by colony
@@ -541,6 +624,12 @@ DN.lifecycle = (function () {
     },
     ingress: () => {
       L.ingressDone = false;
+      if (L.staticMode) {
+        L.ingressDone = true;
+        if (DN.hud && DN.hud.updateBackendFlow) DN.hud.updateBackendFlow({ stage: 'rooms', mode: 'Ants in rooms' });
+        if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Static view retained; no underground camera move needed.');
+        return;
+      }
       // Workers who are already on their home leg (a._homing === true)
       // are left alone — they're walking home in single file already.
       // Anyone still outbound or stalled gets snapped onto a fast home
@@ -575,6 +664,11 @@ DN.lifecycle = (function () {
     debate: () => {
       L.debateDone = false;
       if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Chambers in session — agents exchanging claims.');
+      if (L.staticMode) {
+        if (DN.hud && DN.hud.updateBackendFlow) DN.hud.updateBackendFlow({ stage: 'rooms', mode: 'Ants in rooms' });
+        L.debateDone = !DN.commsViz || !DN.commsViz.isIdle || DN.commsViz.isIdle();
+        return;
+      }
       if (DN.underground && DN.underground.startDebate) DN.underground.startDebate();
       // Stream the buffered backend debate text into the chamber bubbles
       // so the underground view visibly shows agents speaking — even
@@ -589,6 +683,7 @@ DN.lifecycle = (function () {
     },
     resolution: () => {
       if (DN.underground && DN.underground.stopDebate) DN.underground.stopDebate();
+      if (DN.hud && DN.hud.updateBackendFlow) DN.hud.updateBackendFlow({ stage: 'predict', mode: 'Predictions ready' });
       L.phaseHold = true;
       let released = false;
       const release = () => {
@@ -600,6 +695,11 @@ DN.lifecycle = (function () {
       settleRunEconomy().finally(release);
     },
     egress_roam: () => {
+      if (L.staticMode) {
+        deriveOutcomes();
+        if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Run complete — scene remains static for inspection.');
+        return;
+      }
       // Back to surface; derive per-agent outcome, then have each
       // colony's workers emerge in a single-file line and walk to a
       // shared roam target. The shared per-colony target means all
@@ -668,6 +768,7 @@ DN.lifecycle = (function () {
       if (DN.logTerm) DN.logTerm.push('SETTLE', 'Skipping on-chain economy — no completed backend run.');
       return;
     }
+    if (DN.hud && DN.hud.updateBackendFlow) DN.hud.updateBackendFlow({ stage: 'settle', mode: 'Settlement' });
     const marketKey = runMarketKey(meta, runId);
     L.winner = selectedWinner();
     if (DN.logTerm) {
@@ -680,7 +781,7 @@ DN.lifecycle = (function () {
         market_type: meta.market_type || 'three_way',
         metadata_uri: meta.market_key || marketKey,
         run_id: runId || undefined,
-        expected_match_id: meta.match_id || meta.market_key || undefined,
+        expected_match_id: L.skipScouting ? undefined : (meta.match_id || meta.market_key || undefined),
         wallet_store: walletStore || undefined,
         max_stakers: 12,
         wait_for_run_forecasts: true,
@@ -738,9 +839,129 @@ DN.lifecycle = (function () {
             (tx ? ' · tx ' + tx.slice(0, 8) + '…' + tx.slice(-4) : '')
         );
       }
+      await applySettlementEvolution(winnerSide);
     } catch (err) {
       if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Economy settlement error: ' + (err && err.message || err));
     }
+  }
+
+  function agentIdForCandidate(item) {
+    return String((item && (item.agent_id || item.agent || item.agentId)) || '').trim();
+  }
+
+  function candidateStake(item) {
+    const n = Number(item && (item.stake != null ? item.stake : item.amount));
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function uniqueForecastCandidates(winnerSide) {
+    const comms = (DN.databridge && DN.databridge.getCommunications)
+      ? DN.databridge.getCommunications().filter(e => e.event_type === 'forecast')
+      : [];
+    const storedForecasts = (DN.databridge && DN.databridge.getForecasts)
+      ? DN.databridge.getForecasts()
+      : [];
+    const source = []
+      .concat(comms.map((f) => ({ agent_id: f.agent_id, side: f.side, stake: f.stake })))
+      .concat(storedForecasts.map((f) => ({ agent_id: f.agent_id, side: f.side, stake: f.stake })))
+      .concat((L.forecastStakes || []).map((s) => ({ agent_id: s.agent, side: s.outcome, stake: s.amount })));
+    const seen = new Set();
+    const out = [];
+    for (const item of source) {
+      const agentId = agentIdForCandidate(item);
+      const side = String(item.side || item.outcome || '').trim();
+      if (!agentId || !side || side === 'pass') continue;
+      if (seen.has(agentId)) continue;
+      seen.add(agentId);
+      out.push({
+        agent_id: agentId,
+        side,
+        stake: candidateStake(item),
+        correct: side === winnerSide,
+      });
+    }
+    out.sort((a, b) => (b.stake - a.stake) || a.agent_id.localeCompare(b.agent_id));
+    return out;
+  }
+
+  function visibleAntForAgent(agentId) {
+    if (!DN.ants || !DN.ants.list) return null;
+    return DN.ants.list.find((a) => a.agentRecord && a.agentRecord.agent_id === agentId) || null;
+  }
+
+  function markVisibleAntKilled(agentId) {
+    const ant = visibleAntForAgent(agentId);
+    if (!ant) return null;
+    ant.outcome = 'culled';
+    ant.state = 'dead';
+    ant.deadTimer = 2.0;
+    ant.permanentDead = true;
+    if (ant.agentRecord) ant.agentRecord.status = 'dead';
+    return ant;
+  }
+
+  async function applySettlementEvolution(winnerSide) {
+    const settlementEvolutionCount = 5;
+    if (!DN.databridge || !DN.databridge.killAnt || !DN.databridge.reproduceAnt) {
+      if (DN.logTerm) DN.logTerm.push('LINEAGE', 'Skipping settlement evolution — ant lifecycle API unavailable.');
+      return;
+    }
+    const candidates = uniqueForecastCandidates(winnerSide);
+    const wrong = candidates.filter((item) => !item.correct).slice(0, settlementEvolutionCount);
+    const correct = candidates.filter((item) => item.correct).slice(0, settlementEvolutionCount);
+    if (DN.logTerm) {
+      DN.logTerm.push(
+        'LINEAGE',
+        'Settlement evolution queued: ' + wrong.length + ' wrong ants culled · ' + correct.length + ' correct ants reproducing.'
+      );
+    }
+
+    let killed = 0;
+    for (const item of wrong) {
+      try {
+        const result = await DN.databridge.killAnt(item.agent_id, { reason: 'wrong_prediction_settlement' });
+        markVisibleAntKilled(item.agent_id);
+        killed++;
+        const ant = (result && result.ant) || {};
+        const name = ant.ens_name || ant.agent_id || item.agent_id;
+        if (DN.logTerm) DN.logTerm.push('CULL', name + ' killed after wrong settlement prediction.');
+      } catch (err) {
+        if (DN.logTerm) DN.logTerm.push('CULL', item.agent_id + ' kill failed: ' + (err && err.message || err));
+      }
+    }
+
+    let born = 0;
+    for (const item of correct) {
+      try {
+        const parentAnt = visibleAntForAgent(item.agent_id);
+        const payload = await DN.databridge.reproduceAnt({
+          parent_agent_id: item.agent_id,
+          wallet_store: configuredForecastWalletStore() || undefined,
+        });
+        const child = (payload && payload.child) || null;
+        if (child && DN.ants && DN.ants.attachChildRecord) {
+          const childAnt = DN.ants.attachChildRecord(parentAnt, child);
+          if (childAnt) {
+            childAnt.outcome = 'correct';
+            childAnt.state = childAnt.state === 'dead' ? 'idle' : childAnt.state;
+          }
+        }
+        born++;
+        const childName = child && (child.ens_name || child.agent_id);
+        if (DN.logTerm) {
+          DN.logTerm.push(
+            'LINEAGE',
+            item.agent_id + ' reproduced after correct settlement prediction' +
+              (childName ? ' → ' + childName : '') + '.'
+          );
+        }
+      } catch (err) {
+        if (DN.logTerm) DN.logTerm.push('LINEAGE', item.agent_id + ' reproduction failed: ' + (err && err.message || err));
+      }
+    }
+
+    if (DN.ants && DN.ants.showOutcomeGlow) DN.ants.showOutcomeGlow();
+    if (DN.logTerm) DN.logTerm.push('LINEAGE', 'Settlement evolution complete: ' + killed + ' killed · ' + born + ' born.');
   }
 
   function deriveOutcomes() {
@@ -758,19 +979,6 @@ DN.lifecycle = (function () {
     }
     if (DN.logTerm) DN.logTerm.push('OUTCOME', correct + ' agents correct · ' + wrong + ' wrong (winner = ' + (L.winner || '?') + ')');
     if (DN.ants && DN.ants.showOutcomeGlow) DN.ants.showOutcomeGlow();
-    // simple frontend cull rule: wrong forecast + bankroll < 80 → die
-    if (DN.ants && DN.ants.list) {
-      let culled = 0;
-      for (const a of DN.ants.list) {
-        if (a.outcome === 'wrong' && a.agentRecord && (a.agentRecord.bankroll || 100) < 80) {
-          a.outcome = 'culled';
-          a.state = 'dead';
-          a.deadTimer = 2.0;
-          culled++;
-        }
-      }
-      if (culled && DN.logTerm) DN.logTerm.push('CULL', culled + ' agents fell below the bankroll threshold.');
-    }
   }
 
   // ---- public API -------------------------------------------------------
@@ -809,7 +1017,9 @@ DN.lifecycle = (function () {
     L.debateDone = false;
     L.skipScouting = opts.scout === false || opts.skipScouting === true;
     L.scoutMode = opts.scoutMode || 'openfootball';
+    L.staticMode = opts.staticMode !== false;
     if (DN.databridge && DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(null);
+    if (DN.commsViz && DN.commsViz.reset) DN.commsViz.reset();
     if (ENTER.idle) ENTER.idle();
     enter('kickoff');
   };
@@ -819,15 +1029,19 @@ DN.lifecycle = (function () {
   };
 
   L.getPhase = function () { return L.phase; };
+  L.getRunId = function () { return L.runId || (DN.databridge && DN.databridge.runId) || null; };
 
   function enter(next) {
     L.phase = next;
     L.phaseT = 0;
     L.phaseHold = false;
-    clearAdvance(next);
     logPhase(next);
     try { if (ENTER[next]) ENTER[next](); }
     catch (err) { if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Phase enter error: ' + (err && err.message || err)); }
+  }
+
+  function nextPhaseFor(phase) {
+    return NEXT[phase];
   }
 
   function phaseReady(phase) {
@@ -838,6 +1052,7 @@ DN.lifecycle = (function () {
     if (phase === 'recruitment') return true;
     if (phase === 'converge') return L.convergeTarget <= 0 || L.convergeReturned >= L.convergeTarget;
     if (phase === 'ingress') return L.ingressDone;
+    if (L.staticMode && phase === 'debate') return !DN.commsViz || !DN.commsViz.isIdle || DN.commsViz.isIdle();
     if (phase === 'debate') return L.debateDone;
     if (phase === 'resolution') return !L.phaseHold;
     return true;
@@ -850,9 +1065,9 @@ DN.lifecycle = (function () {
       DN.underground.tickDebate(dt, elapsed);
     }
     if (L.phaseHold) return;
-    const minDuration = MIN_DURATIONS[L.phase];
+    const minDuration = L.staticMode ? STATIC_MIN_DURATIONS[L.phase] : MIN_DURATIONS[L.phase];
     if (isFinite(minDuration) && L.phaseT >= minDuration && phaseReady(L.phase)) {
-      const next = NEXT[L.phase];
+      const next = nextPhaseFor(L.phase);
       if (next) enter(next);
     }
   };
