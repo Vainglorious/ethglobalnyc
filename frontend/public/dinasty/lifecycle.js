@@ -253,6 +253,17 @@ DN.lifecycle = (function () {
             ' · tx ' + tx.hash +
             (tx.explorer_url ? ' · ' + tx.explorer_url : '')
         );
+        if (DN.txTable && DN.txTable.push) {
+          DN.txTable.push({
+            action: tx.action,
+            hash: tx.hash,
+            explorer_url: tx.explorer_url,
+            agent_id: tx.agent_id,
+            wallet: tx.wallet,
+            outcome: tx.outcome,
+            amount_usdc: tx.amount_usdc,
+          });
+        }
       });
     });
     if (!count) {
@@ -281,11 +292,18 @@ DN.lifecycle = (function () {
     if (DN.logTerm) {
       DN.logTerm.push('SYSTEM', 'Backend LLM debate run kicked off — chambers will populate with real claims.');
     }
+    const meta = selectedGameMeta();
     L.runPromise = DN.databridge.startDemoRun({
       agents: Math.min(Number(runCfg.agents || 60), 200),
       rooms: Math.min(Number(runCfg.rooms || 5), 12),
       seed: Number.isFinite(Number(runCfg.seed)) ? Number(runCfg.seed) : Math.floor(Math.random() * 10000),
       voice_mode: runCfg.voice_mode || 'llm',
+      // Bind the run to the selected fixture so /forecast/settle's
+      // match_id check passes (otherwise settle errors with
+      // "run is for match_id unknown").
+      match_id: meta.match_id || meta.market_key,
+      home_team: meta.home_team,
+      away_team: meta.away_team,
     })
       .then((res) => {
         L.scoutingDone = true;
@@ -557,6 +575,11 @@ DN.lifecycle = (function () {
     },
     debate: () => {
       L.debateDone = false;
+      // Reset the forecast trigger so we only exit on forecasts that
+      // arrive AFTER debate starts. Otherwise leftover forecast events
+      // drained during converge/ingress would immediately collapse the
+      // debate phase before any chamber message appears.
+      if (DN.commsViz) DN.commsViz._sawForecast = false;
       if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Chambers in session — waiting on backend debate events.');
       if (DN.underground && DN.underground.startDebate) DN.underground.startDebate();
       // Backend writes events.jsonl in a single batch at the END of the
@@ -628,6 +651,13 @@ DN.lifecycle = (function () {
         L.phaseT = 0;
       };
       settleRunEconomy().finally(release);
+      // Watchdog: settle network calls can hang (backend down, missing
+      // ARC_TREASURY_PRIVATE_KEY, etc.) — force-release after 12s so
+      // the demo still advances to egress_roam and ants emerge.
+      setTimeout(() => {
+        if (!released && DN.logTerm) DN.logTerm.push('SYSTEM', 'Settle still in flight after 12s — advancing to egress so the demo continues.');
+        release();
+      }, 12000);
     },
     egress_roam: () => {
       // Back to surface; derive per-agent outcome, then have each
@@ -857,6 +887,7 @@ DN.lifecycle = (function () {
     if (DN.underground && DN.underground.hideAllChamberMessages) DN.underground.hideAllChamberMessages();
     if (DN.commsViz && DN.commsViz.reset) DN.commsViz.reset();
     if (DN.databridge && DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(null);
+    if (DN.txTable && DN.txTable.clear) DN.txTable.clear();
     if (DN.ants && DN.ants.list) {
       for (const a of DN.ants.list) {
         a.state = 'idle';

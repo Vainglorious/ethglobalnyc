@@ -83,6 +83,13 @@ class DemoRunRequest(BaseModel):
     agent_wallets: bool = True
     wallet_provider: Literal["local", "dynamic"] | None = "dynamic"
     wallet_store: str | None = DEFAULT_PUBLIC_WALLET_STORE
+    # Optional fixture binding so the run's metadata.json records which
+    # market this run is for. /forecast/settle's _validate_forecast_run_match
+    # reads this to confirm settle-time market_key matches the run.
+    match: str | None = None
+    match_id: str | None = None
+    home_team: str | None = None
+    away_team: str | None = None
 
 
 class ScoutingRunRequest(BaseModel):
@@ -2258,6 +2265,10 @@ def start_demo_run(request: DemoRunRequest, background_tasks: BackgroundTasks) -
         "run_dir": str(run_dir),
         "events_path": str(run_dir / "events.jsonl"),
         "compact_runs_dir": str(run_dir / "compact"),
+        "match_id": request.match_id,
+        "match": request.match,
+        "home_team": request.home_team,
+        "away_team": request.away_team,
     }
     _write_metadata(run_id, metadata)
     background_tasks.add_task(_execute_run, run_id, command)
