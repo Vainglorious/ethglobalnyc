@@ -77,6 +77,7 @@ DN.hud = (function () {
     let forecastMarketKey = '';
     let forecastStakes = [];
     let selectedGame = {
+      match_id: 'match:world_cup_2026:013:2026_06_13_brazil_morocco',
       market_key: 'match:world_cup_2026:013:2026_06_13_brazil_morocco',
       market_type: 'three_way',
       home_team: forecastCfg.HOME_TEAM || 'Brazil',
@@ -134,7 +135,7 @@ DN.hud = (function () {
           const preferred = games.find((game) => /Brazil vs Morocco/i.test(game.name || '')) || games[0];
           if (!preferred) return;
           forecastGame.innerHTML = games.slice(0, 104).map((game) =>
-            '<option value="' + game.market_key + '">' + game.name + '</option>'
+            '<option value="' + game.market_key + '">' + [game.date, game.time, game.name].filter(Boolean).join(' - ') + '</option>'
           ).join('');
           selectedGame = preferred;
           forecastGame.value = preferred.market_key;
@@ -252,10 +253,17 @@ DN.hud = (function () {
     scoutBtn.addEventListener('click', () => {
       if (!DN.databridge || !DN.databridge.startScoutingRun) return;
       scoutBtn.disabled = true;
-      status.textContent = 'Scouting...';
-      H.pushThought('Frontend started a public-data KG scouting run on Railway.', 'Backend', '#3FA89F');
-      if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Scouting run kicked off.');
-      DN.databridge.startScoutingRun()
+      if (forecastGame) forecastGame.disabled = true;
+      status.textContent = 'Scouting ' + selectedGame.name + '...';
+      H.pushThought('Frontend started a public-data KG scouting run for ' + selectedGame.name + '.', 'Backend', '#3FA89F');
+      if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Scouting run kicked off for ' + selectedGame.name + '.');
+      DN.databridge.startScoutingRun({
+        match: selectedGame.name,
+        match_id: selectedGame.match_id || selectedGame.market_key,
+        data_mode: 'public',
+        include_deepseek_scout: true,
+        voice_mode: 'llm',
+      })
         .then((result) => {
           const manifest = result.manifest || {};
           const kg = result.kg || {};
@@ -274,7 +282,10 @@ DN.hud = (function () {
           status.textContent = 'Scouting error';
           H.pushThought('Scouting failed: ' + (err.message || err), 'Backend', '#D96E54');
         })
-        .finally(() => { scoutBtn.disabled = false; });
+        .finally(() => {
+          scoutBtn.disabled = false;
+          if (forecastGame) forecastGame.disabled = false;
+        });
     });
     btn.addEventListener('click', () => {
       if (!DN.databridge || !DN.databridge.startDemoRun) return;

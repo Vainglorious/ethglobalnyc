@@ -854,6 +854,9 @@ def _forecast_games_from_kg(limit: int = 104) -> list[dict]:
         away = str(attrs.get("team2") or "").strip()
         if not home or not away:
             continue
+        score = attrs.get("score")
+        if score not in (None, "", {}):
+            continue
         group = str(attrs.get("group") or "").strip()
         market_type = "three_way" if group else "binary"
         games.append(
@@ -870,7 +873,7 @@ def _forecast_games_from_kg(limit: int = 104) -> list[dict]:
                 "stage": attrs.get("round"),
                 "group": group,
                 "venue": attrs.get("ground"),
-                "score": attrs.get("score"),
+                "score": score,
             }
         )
     games.sort(key=lambda item: (str(item.get("date") or ""), str(item.get("time") or ""), str(item.get("name") or "")))

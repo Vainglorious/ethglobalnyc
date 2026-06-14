@@ -231,7 +231,7 @@ DN.databridge = (function () {
         agents: 20,
         rooms: 5,
         seed: 12,
-        voice_mode: 'template',
+        voice_mode: 'llm',
       },
       opts || {},
     );
