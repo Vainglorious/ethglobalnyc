@@ -1,8 +1,9 @@
 // WorldColony — lifecycle controller. State machine for the demo arc:
 //   0 idle → 1 kickoff → 2 scouting → 3 kg_forming → 4 recruitment →
 //   5 converge → 6 ingress → 7 debate → 8 resolution → 9 egress_roam
-// Frontend-paced visual timing. Owns ant activation + crystal show while the
-// backend run uses the selected fixture and public scouting data.
+// Backend-paced lifecycle. Visual phases keep tiny minimum beats, but critical
+// transitions wait for the selected backend run, KG replay, and on-chain
+// economy to finish.
 // Resolution wires the run's forecast decisions into the Arc forecast
 // contract and claims payouts for winning ants.
 window.DN = window.DN || {};
@@ -10,24 +11,35 @@ window.DN = window.DN || {};
 console.log('[worldcolony] lifecycle.js loaded · build 2026-06-14');
 
 DN.lifecycle = (function () {
-  const L = { phase: 'idle', phaseT: 0, winner: null, settleTxHash: null, runId: null, phaseHold: false };
+  const L = {
+    phase: 'idle',
+    phaseT: 0,
+    winner: null,
+    settleTxHash: null,
+    runId: null,
+    phaseHold: false,
+    scoutingDone: false,
+    scoutingResult: null,
+    scoutingError: null,
+    kgReplayDone: false,
+    convergeTarget: 0,
+    convergeReturned: 0,
+    ingressDone: false,
+    debateDone: false,
+  };
 
-  // duration per phase in seconds; 'idle' and 'egress_roam' are open-ended
-  // Slower pacing — the previous values cut off the visible round trip
-  // (ants reached the crystal but couldn't walk back before ingress
-  // fired). Everything is roughly 1.5–3× longer, with the biggest bump
-  // going to converge so the entire crystal → home loop completes
-  // on-screen before we dive underground.
-  const DURATIONS = {
+  // Minimum visual dwell per phase. These values never advance a backend
+  // phase by themselves; phaseReady() below decides when work is complete.
+  const MIN_DURATIONS = {
     idle:        Infinity,
     kickoff:      2.5,
-    scouting:    12.0,
-    kg_forming:  14.0,
-    recruitment:  6.0,
-    converge:    18.0,   // ← big bump so ants complete the round trip
-    ingress:      6.0,
-    debate:      10.0,
-    resolution:   3.0,
+    scouting:     2.0,
+    kg_forming:   0.5,
+    recruitment:  0.5,
+    converge:     0.5,
+    ingress:      0.5,
+    debate:       0.5,
+    resolution:   0.5,
     egress_roam: Infinity
   };
   const NEXT = {
@@ -249,9 +261,13 @@ DN.lifecycle = (function () {
   function startBackendRun() {
     if (L.runPromise) return L.runPromise;
     if (!DN.databridge || !DN.databridge.startScoutingRun) {
+      L.scoutingDone = true;
       L.runPromise = Promise.resolve(null);
       return L.runPromise;
     }
+    L.scoutingDone = false;
+    L.scoutingResult = null;
+    L.scoutingError = null;
     const meta = selectedGameMeta();
     const runCfg = configuredRun();
     const matchName = meta.name || [meta.home_team, meta.away_team].filter(Boolean).join(' vs ');
@@ -267,8 +283,11 @@ DN.lifecycle = (function () {
       rooms: Math.min(Number(runCfg.rooms || 12), 50),
       seed: Number.isFinite(Number(runCfg.seed)) ? Number(runCfg.seed) : Math.floor(Math.random() * 10000),
       voice_mode: runCfg.voice_mode || 'llm',
+      show_completed_graph: false,
     })
       .then((res) => {
+        L.scoutingDone = true;
+        L.scoutingResult = res || null;
         if (res && res.id) {
           L.runId = res.id;
           if (DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(res.id);
@@ -279,6 +298,8 @@ DN.lifecycle = (function () {
         return res || null;
       })
       .catch((err) => {
+        L.scoutingDone = true;
+        L.scoutingError = err;
         L.runError = err;
         if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Backend run failed: ' + (err && err.message || err));
         return null;
@@ -318,11 +339,15 @@ DN.lifecycle = (function () {
     );
   }
   function hideAnt(a) {
+    if (a._phaseTrip === 'converge') {
+      L.convergeReturned++;
+    }
     a.state = 'idle';
     a._idleWritten = false;
     a.scout = false;
     a.hasShard = false;
     a._homing = false;
+    a._phaseTrip = null;
   }
   // After egress, ants hop between random nearby roam points so the
   // surface looks alive while the user inspects them.
@@ -399,18 +424,37 @@ DN.lifecycle = (function () {
       // within frame without any camera motion at all.
     },
     kg_forming: () => {
+      L.kgReplayDone = false;
       if (DN.crystal) DN.crystal.show();
-      if (DN.databridge && DN.databridge.fetchWorldCupKg) {
+      const renderKg = (payload, title) => {
+        if (!payload) {
+          L.kgReplayDone = true;
+          return;
+        }
+        const ents = payload.entity_count != null ? payload.entity_count : (payload.entities || []).length;
+        const links = payload.relationship_count != null ? payload.relationship_count : (payload.relationships || []).length;
+        if (DN.logTerm) DN.logTerm.push('KG', 'KG ready · ' + ents + ' entities · ' + links + ' relationships absorbed by the crystal.');
+        const finish = () => { L.kgReplayDone = true; };
+        if (DN.kgview && DN.kgview.replayGraph) {
+          DN.kgview.replayGraph(payload, title || 'Selected-match KG', { onComplete: finish });
+        } else if (DN.kgview && DN.kgview.showGraph) {
+          DN.kgview.showGraph(payload, title || 'Selected-match KG');
+          finish();
+        } else {
+          finish();
+        }
+      };
+      if (L.scoutingResult && L.scoutingResult.kg) {
+        renderKg(L.scoutingResult.kg, 'Completed scouting KG');
+      } else if (DN.databridge && DN.databridge.fetchWorldCupKg) {
         DN.databridge.fetchWorldCupKg().then((payload) => {
           const ents = payload.entity_count != null ? payload.entity_count : (payload.entities || []).length;
           const links = payload.relationship_count != null ? payload.relationship_count : (payload.relationships || []).length;
-          if (DN.logTerm) DN.logTerm.push('KG', 'KG ready · ' + ents + ' entities · ' + links + ' relationships absorbed by the crystal.');
-          if (DN.kgview && DN.kgview.replayGraph) {
-            DN.kgview.replayGraph(payload, 'World Cup KG');
-          } else if (DN.kgview && DN.kgview.showGraph) {
-            DN.kgview.showGraph(payload, 'World Cup KG');
-          }
-        }).catch(() => { /* no KG yet — crystal still grows from scout deposits */ });
+          if (DN.logTerm) DN.logTerm.push('KG', 'No completed scout KG for this run; falling back to fixture KG · ' + ents + ' entities · ' + links + ' links.');
+          renderKg(payload, 'World Cup KG');
+        }).catch(() => { L.kgReplayDone = true; });
+      } else {
+        L.kgReplayDone = true;
       }
       L._depositTimer = 0;
     },
@@ -435,6 +479,8 @@ DN.lifecycle = (function () {
       //   • tighten laneOffset so the column has minimal lateral spread
       const crystal = DN.crystal ? DN.crystal.position() : new THREE.Vector3(0, 0, 0);
       let count = 0;
+      L.convergeTarget = 0;
+      L.convergeReturned = 0;
       (DN.colony.list || []).forEach((col, ci) => {
         // collect this colony's eligible workers — INCLUDING idle ones
         // (the recruitment phase deliberately left them idle so we wake
@@ -459,6 +505,7 @@ DN.lifecycle = (function () {
         // ENTIRE path to the crystal — not pre-distributed along it.
         ants.forEach((a, i) => {
           a._homing = false; // reset before new outbound trip
+          a._phaseTrip = 'converge';
           DN.ants.scriptWalk(
             a, col.entrance.x, col.entrance.z, crystal.x, crystal.z,
             {
@@ -473,11 +520,13 @@ DN.lifecycle = (function () {
           count++;
         });
       });
+      L.convergeTarget = count;
       if (DN.logTerm) DN.logTerm.push('SYSTEM', count + ' workers converging on the crystal in 7 columns.');
       // No camera change — kickoff framing already shows every colony
       // + the crystal at centre.
     },
     ingress: () => {
+      L.ingressDone = false;
       // Workers who are already on their home leg (a._homing === true)
       // are left alone — they're walking home in single file already.
       // Anyone still outbound or stalled gets snapped onto a fast home
@@ -503,10 +552,14 @@ DN.lifecycle = (function () {
       if (col && DN.app && DN.app.enterColony) {
         setTimeout(() => {
           if (L.phase === 'ingress') DN.app.enterColony(col);
+          L.ingressDone = true;
         }, 2200);
+      } else {
+        L.ingressDone = true;
       }
     },
     debate: () => {
+      L.debateDone = false;
       if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Chambers in session — agents exchanging claims.');
       if (DN.underground && DN.underground.startDebate) DN.underground.startDebate();
       // Stream the buffered backend debate text into the chamber bubbles
@@ -516,6 +569,9 @@ DN.lifecycle = (function () {
       if (DN.commsViz && DN.commsViz.streamChambersFromBuffer) {
         DN.commsViz.streamChambersFromBuffer({ count: 22, strideMs: 480 });
       }
+      const buffered = DN.databridge && DN.databridge.getCommunications ? DN.databridge.getCommunications().length : 0;
+      const visibleCount = Math.max(8, Math.min(22, buffered || 22));
+      setTimeout(() => { L.debateDone = true; }, visibleCount * 480 + 700);
     },
     resolution: () => {
       if (DN.underground && DN.underground.stopDebate) DN.underground.stopDebate();
@@ -528,13 +584,6 @@ DN.lifecycle = (function () {
         L.phaseT = 0;
       };
       settleRunEconomy().finally(release);
-      // Watchdog: if settle hangs on the network the demo still
-      // advances to egress_roam after 12s so the user isn't stranded
-      // staring at the chamber.
-      setTimeout(() => {
-        if (!released && DN.logTerm) DN.logTerm.push('SYSTEM', 'Settle still in flight after 12s — advancing to egress so the demo continues.');
-        release();
-      }, 12000);
     },
     egress_roam: () => {
       // Back to surface; derive per-agent outcome, then have each
@@ -598,9 +647,8 @@ DN.lifecycle = (function () {
     const meta = selectedGameMeta();
     const contract = configuredContract();
     const walletStore = configuredForecastWalletStore();
-    // DON'T await startBackendRun() here — it polls until the scouting
-    // run reaches "succeeded", which can be minutes (or never). Use
-    // whatever run id we already have so settle + egress can proceed.
+    // The lifecycle only reaches resolution after the scouting run and KG
+    // replay complete, so this should be the selected run id.
     const runId = L.runId || (DN.databridge && DN.databridge.runId) || null;
     const marketKey = runMarketKey(meta, runId);
     L.winner = selectedWinner();
@@ -727,6 +775,14 @@ DN.lifecycle = (function () {
     L.runPromise = null;
     L.runError = null;
     L.phaseHold = false;
+    L.scoutingDone = false;
+    L.scoutingResult = null;
+    L.scoutingError = null;
+    L.kgReplayDone = false;
+    L.convergeTarget = 0;
+    L.convergeReturned = 0;
+    L.ingressDone = false;
+    L.debateDone = false;
     if (DN.databridge && DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(null);
     if (ENTER.idle) ENTER.idle();
     enter('kickoff');
@@ -747,6 +803,19 @@ DN.lifecycle = (function () {
     catch (err) { if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Phase enter error: ' + (err && err.message || err)); }
   }
 
+  function phaseReady(phase) {
+    if (phase === 'idle' || phase === 'egress_roam') return false;
+    if (phase === 'kickoff') return true;
+    if (phase === 'scouting') return L.scoutingDone;
+    if (phase === 'kg_forming') return L.kgReplayDone;
+    if (phase === 'recruitment') return true;
+    if (phase === 'converge') return L.convergeTarget <= 0 || L.convergeReturned >= L.convergeTarget;
+    if (phase === 'ingress') return L.ingressDone;
+    if (phase === 'debate') return L.debateDone;
+    if (phase === 'resolution') return !L.phaseHold;
+    return true;
+  }
+
   L.update = function (dt, elapsed) {
     L.phaseT += dt;
     // Per-phase per-frame work
@@ -761,8 +830,8 @@ DN.lifecycle = (function () {
       DN.underground.tickDebate(dt, elapsed);
     }
     if (L.phaseHold) return;
-    const dur = DURATIONS[L.phase];
-    if (isFinite(dur) && L.phaseT >= dur) {
+    const minDuration = MIN_DURATIONS[L.phase];
+    if (isFinite(minDuration) && L.phaseT >= minDuration && phaseReady(L.phase)) {
       const next = NEXT[L.phase];
       if (next) enter(next);
     }

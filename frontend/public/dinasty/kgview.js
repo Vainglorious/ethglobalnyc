@@ -617,6 +617,7 @@ DN.kgview = (function () {
         render();
         K.status(nodes.size + ' KG entities · ' + edges.length + ' links');
         if (DN.logTerm) DN.logTerm.push('KG', 'KG complete · graph ready.');
+        if (typeof opts.onComplete === 'function') opts.onComplete();
       }
     }
 

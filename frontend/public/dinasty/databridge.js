@@ -372,16 +372,19 @@ DN.databridge = (function () {
     if (row) DN.logTerm.push(row.level, row.message);
   }
 
-  function showCompletedScoutingGraph(kg) {
+  function showCompletedScoutingGraph(kg, opts) {
     if (!DN.kgview || !kg) return;
+    opts = opts || {};
     if (DN.kgview.replayGraph) {
       DN.kgview.replayGraph(kg, 'Completed scouting KG', {
         entityChunk: 10,
         relationshipChunk: 80,
         delayMs: 220,
+        onComplete: opts.onComplete,
       });
     } else {
       DN.kgview.showGraph(kg, 'Completed scouting KG');
+      if (typeof opts.onComplete === 'function') opts.onComplete();
     }
   }
 
@@ -399,6 +402,8 @@ DN.databridge = (function () {
       },
       opts || {},
     );
+    const showGraphOnComplete = body.show_completed_graph !== false;
+    delete body.show_completed_graph;
     if (DN.logTerm) DN.logTerm.push('SCOUT', 'Submitting scouting run for ' + body.match + '...');
     return fetch(apiUrl + '/scouting/run', {
       method: 'POST',
@@ -418,8 +423,8 @@ DN.databridge = (function () {
           DN.kgview.reset('Live scouting KG');
         }
         if (DN.logTerm) DN.logTerm.push('SCOUT', 'Run ' + run.id + ' queued · opening event stream.');
-        if (!window.EventSource) return pollScoutingRun(run.id);
-        return streamScoutingRun(run.id);
+        if (!window.EventSource) return pollScoutingRun(run.id, { showGraphOnComplete });
+        return streamScoutingRun(run.id, { showGraphOnComplete });
       });
   };
 
@@ -590,7 +595,8 @@ DN.databridge = (function () {
     });
   }
 
-  function pollScoutingRun(runId) {
+  function pollScoutingRun(runId, opts) {
+    opts = opts || {};
     return new Promise((resolve, reject) => {
       let tries = 0;
       const timer = setInterval(() => {
@@ -604,7 +610,7 @@ DN.databridge = (function () {
                 fetch(apiUrl + '/runs/' + runId + '/kg/manifest').then((r) => (r.ok ? r.json() : null)).catch(() => null),
                 fetch(apiUrl + '/runs/' + runId + '/scouting-audit').then((r) => (r.ok ? r.json() : null)).catch(() => null),
               ]).then(([kg, manifest, audit]) => {
-                showCompletedScoutingGraph(kg);
+                if (opts.showGraphOnComplete !== false) showCompletedScoutingGraph(kg);
                 resolve({ id: runId, run, kg, manifest, audit });
               });
             } else if (run.status === 'failed' || ++tries > 300) {
@@ -620,7 +626,8 @@ DN.databridge = (function () {
     });
   }
 
-  function streamScoutingRun(runId) {
+  function streamScoutingRun(runId, opts) {
+    opts = opts || {};
     return new Promise((resolve, reject) => {
       const source = new EventSource(apiUrl + '/runs/' + runId + '/stream');
       let latestStatus = null;
@@ -649,13 +656,13 @@ DN.databridge = (function () {
           fetch(apiUrl + '/runs/' + runId + '/kg/manifest').then((r) => (r.ok ? r.json() : null)).catch(() => null),
           fetch(apiUrl + '/runs/' + runId + '/scouting-audit').then((r) => (r.ok ? r.json() : null)).catch(() => null),
         ]).then(([kg, manifest, audit]) => {
-          showCompletedScoutingGraph(kg);
+          if (opts.showGraphOnComplete !== false) showCompletedScoutingGraph(kg);
           resolve({ id: runId, run: latestStatus, kg, manifest, audit });
         }, reject);
       });
       source.onerror = () => {
         source.close();
-        pollScoutingRun(runId).then(resolve, reject);
+        pollScoutingRun(runId, opts).then(resolve, reject);
       };
     });
   }
