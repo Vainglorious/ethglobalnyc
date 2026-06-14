@@ -12,6 +12,7 @@ DN.kgview = (function () {
   let edges = [];
   let selectedId = null;
   let renderQueued = false;
+  let replayTimers = [];
   const nodeActivity = new Map();
   const colors = {
     match: '#3FA89F',
@@ -247,6 +248,11 @@ DN.kgview = (function () {
     });
   }
 
+  function clearReplay() {
+    replayTimers.forEach((timer) => clearTimeout(timer));
+    replayTimers = [];
+  }
+
   function flashNode(id, action) {
     if (!id || action === 'loaded') return;
     nodeActivity.set(id, { action, expires: Date.now() + 3600 });
@@ -416,6 +422,7 @@ DN.kgview = (function () {
 
   K.reset = function (title) {
     ensure();
+    clearReplay();
     nodes = new Map();
     edges = [];
     selectedId = null;
@@ -463,6 +470,58 @@ DN.kgview = (function () {
     (graph.relationships || []).forEach((relationship) => addEdge(relationship, true));
     render();
     K.status((graph.entity_count || nodes.size) + ' KG entities · ' + (graph.relationship_count || edges.length) + ' links');
+  };
+
+  K.replayGraph = function (graph, title, opts) {
+    opts = opts || {};
+    const entities = graph.entities || [];
+    const relationships = graph.relationships || [];
+    const entityChunk = opts.entityChunk || 10;
+    const relationshipChunk = opts.relationshipChunk || 80;
+    const delayMs = opts.delayMs || 220;
+    let entityIndex = 0;
+    let relationshipIndex = 0;
+
+    K.reset(title || 'Completed scouting KG');
+    K.status('Replaying completed scout KG · 0 / ' + entities.length + ' entities');
+    if (DN.logTerm) DN.logTerm.push('KG', 'Replaying completed scout KG: ' + entities.length + ' entities, ' + relationships.length + ' links.');
+
+    function schedule(fn, ms) {
+      const timer = setTimeout(fn, ms);
+      replayTimers.push(timer);
+    }
+
+    function replayEntities() {
+      const end = Math.min(entityIndex + entityChunk, entities.length);
+      for (; entityIndex < end; entityIndex++) addNode(entities[entityIndex]);
+      K.status('Replaying entities · ' + entityIndex + ' / ' + entities.length + ' · ' + edges.length + ' links');
+      if (DN.logTerm && entityIndex && (entityIndex === entities.length || entityIndex % (entityChunk * 5) === 0)) {
+        DN.logTerm.push('KG', 'Replayed ' + entityIndex + ' / ' + entities.length + ' KG entities.');
+      }
+      if (entityIndex < entities.length) {
+        schedule(replayEntities, delayMs);
+      } else {
+        schedule(replayRelationships, delayMs);
+      }
+    }
+
+    function replayRelationships() {
+      const end = Math.min(relationshipIndex + relationshipChunk, relationships.length);
+      for (; relationshipIndex < end; relationshipIndex++) addEdge(relationships[relationshipIndex]);
+      K.status('Replaying links · ' + nodes.size + ' entities · ' + relationshipIndex + ' / ' + relationships.length + ' links');
+      if (DN.logTerm && relationshipIndex && (relationshipIndex === relationships.length || relationshipIndex % (relationshipChunk * 5) === 0)) {
+        DN.logTerm.push('KG', 'Replayed ' + relationshipIndex + ' / ' + relationships.length + ' KG links.');
+      }
+      if (relationshipIndex < relationships.length) {
+        schedule(replayRelationships, delayMs);
+      } else {
+        render();
+        K.status((graph.entity_count || nodes.size) + ' KG entities · ' + (graph.relationship_count || edges.length) + ' links');
+        if (DN.logTerm) DN.logTerm.push('KG', 'Completed KG replay.');
+      }
+    }
+
+    replayEntities();
   };
 
   K.showScoutingProgress = function (opts) {

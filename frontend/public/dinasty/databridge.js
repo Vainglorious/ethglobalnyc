@@ -269,6 +269,19 @@ DN.databridge = (function () {
     if (row) DN.logTerm.push(row.level, row.message);
   }
 
+  function showCompletedScoutingGraph(kg) {
+    if (!DN.kgview || !kg) return;
+    if (DN.kgview.replayGraph) {
+      DN.kgview.replayGraph(kg, 'Completed scouting KG', {
+        entityChunk: 10,
+        relationshipChunk: 80,
+        delayMs: 220,
+      });
+    } else {
+      DN.kgview.showGraph(kg, 'Completed scouting KG');
+    }
+  }
+
   B.startScoutingRun = function (opts) {
     if (!apiUrl) return Promise.reject(new Error('No backend API configured.'));
     const body = Object.assign(
@@ -489,7 +502,7 @@ DN.databridge = (function () {
                 fetch(apiUrl + '/runs/' + runId + '/kg/manifest').then((r) => (r.ok ? r.json() : null)).catch(() => null),
                 fetch(apiUrl + '/runs/' + runId + '/scouting-audit').then((r) => (r.ok ? r.json() : null)).catch(() => null),
               ]).then(([kg, manifest, audit]) => {
-                if (DN.kgview && kg) DN.kgview.showGraph(kg, 'Completed scouting KG');
+                showCompletedScoutingGraph(kg);
                 if (DN.logTerm) DN.logTerm.push('KG', 'Final KG loaded for ' + runId + '.');
                 resolve({ id: runId, run, kg, manifest, audit });
               });
@@ -543,7 +556,7 @@ DN.databridge = (function () {
           fetch(apiUrl + '/runs/' + runId + '/kg/manifest').then((r) => (r.ok ? r.json() : null)).catch(() => null),
           fetch(apiUrl + '/runs/' + runId + '/scouting-audit').then((r) => (r.ok ? r.json() : null)).catch(() => null),
         ]).then(([kg, manifest, audit]) => {
-          if (DN.kgview && kg) DN.kgview.showGraph(kg, 'Completed scouting KG');
+          showCompletedScoutingGraph(kg);
           if (DN.logTerm) DN.logTerm.push('SCOUT', 'Scouting stream complete for ' + runId + '.');
           resolve({ id: runId, run: latestStatus, kg, manifest, audit });
         }, reject);

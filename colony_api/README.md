@@ -301,6 +301,17 @@ Scouting stream event types:
 The KG stream is real run output, not a fake progress animation. It currently
 streams after the scout process writes `world_graph.json`; instrumenting the
 individual scout modules would let the graph grow during source collection too.
+To keep the demo readable before that deeper backend refactor, the frontend
+progressively replays the completed scouting KG artifact in small chunks when
+the final graph arrives, so nodes and links appear over time instead of all in
+one frame.
+
+Run artifacts are stored under `COLONY_API_RUNS_DIR` when that env var is set,
+otherwise under `colony/runs/api` in the running container. A scout such as
+Netherlands vs Japan therefore remains available through `/runs/{run_id}/kg`,
+`/kg/manifest`, and `/scouting-audit` while that run directory persists. It is
+not yet copied into a database or durable object store, so Railway restarts or
+deploys can remove it unless a persistent volume is mounted at that runs path.
 
 For `POST /runs/demo`, the first integration streams transport/status
 immediately. Most domain events arrive when `run_demo.py` writes `events.jsonl`
@@ -384,10 +395,11 @@ Frontend flow:
 3. The `Get KG` button calls `GET /kg/world-cup` and renders the static tournament KG.
 4. The Scout selector lists upcoming group-stage teams from `GET /forecast/games`, filtered to unscored matches dated `2026-06-14` or later.
 5. The `Scout` button calls `POST /scouting/run` for the selected fixture, listens to `GET /runs/{run_id}/stream`, writes live `SCOUT`/`KG` terminal rows, and renders streamed KG entities/relationships.
-6. The KG overlay briefly pulses newly streamed nodes green and updated nodes blue.
-7. The `Run LLM agents` button calls `POST /runs/demo`.
-8. When demo events arrive, the frontend seeds colony stats and the thought ticker.
-9. If the backend is unavailable, the frontend falls back to `/data/demo.jsonl`.
+6. If the backend delivers the KG as one completed artifact, the KG overlay replays it in timed chunks so nodes and links visibly arrive over time.
+7. The KG overlay briefly pulses newly streamed or replayed nodes green and updated nodes blue.
+8. The `Run LLM agents` button calls `POST /runs/demo`.
+9. When demo events arrive, the frontend seeds colony stats and the thought ticker.
+10. If the backend is unavailable, the frontend falls back to `/data/demo.jsonl`.
 
 Minimal browser-side call:
 
