@@ -15,7 +15,7 @@ from typing import Any
 
 from eth_account import Account
 from web3 import Web3
-from web3.exceptions import ContractLogicError
+from web3.exceptions import ContractLogicError, Web3RPCError
 
 from colony_harness.env import load_env_file
 
@@ -695,9 +695,9 @@ def _send_contract_tx(w3: Web3, account: Any, call: Any, label: str) -> str:
         raw_transaction = signed.raw_transaction if hasattr(signed, "raw_transaction") else signed.rawTransaction
         try:
             tx_hash = w3.eth.send_raw_transaction(raw_transaction)
-        except ValueError as exc:
+        except (ValueError, Web3RPCError) as exc:
             last_error = exc
-            if "nonce too low" not in str(exc).lower() or attempt == 5:
+            if not _is_nonce_too_low_error(exc) or attempt == 5:
                 raise
             time.sleep(attempt * 2)
             continue
@@ -707,6 +707,11 @@ def _send_contract_tx(w3: Web3, account: Any, call: Any, label: str) -> str:
         print(f"  tx: {label} {tx_hash.hex()}")
         return tx_hash.hex()
     raise RuntimeError(f"Could not send transaction for {label}: {last_error}")
+
+
+def _is_nonce_too_low_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "nonce too low" in message or "already known" in message
 
 
 def _fee_params(w3: Web3) -> dict[str, int]:
