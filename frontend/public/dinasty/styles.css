@@ -147,6 +147,9 @@ body.underground #atmos {
 .kg-band { fill: none; stroke: rgba(74,58,30,0.18); stroke-linecap: round; }
 .kg-node { cursor: pointer; }
 .kg-node circle { stroke: rgba(255, 220, 160, 0.65); stroke-width: 1.2; filter: drop-shadow(0 0 3px rgba(0,0,0,0.6)); }
+.kg-node.fixture circle { stroke: #FFE9A0; stroke-width: 3; filter: drop-shadow(0 0 12px rgba(255, 233, 160, 0.55)); }
+.kg-node.focused circle { stroke-width: 1.8; filter: drop-shadow(0 0 6px rgba(255, 217, 136, 0.45)); }
+.kg-node.compact circle { stroke-width: 1.8; filter: drop-shadow(0 0 4px rgba(0,0,0,0.6)); }
 .kg-node:hover circle { stroke: #FFE9A0; stroke-width: 2.4; }
 .kg-node.dim { opacity: 0.25; }
 .kg-node.selected circle { stroke: #FFE9A0; stroke-width: 3; filter: drop-shadow(0 0 10px rgba(255, 217, 136, 0.85)); }
@@ -163,6 +166,10 @@ body.underground #atmos {
   100% { filter: drop-shadow(0 1px 0 rgba(74,58,30,0.2)); }
 }
 .kg-node text { fill: rgba(241,216,168,0.85); font: 700 8px var(--mono, ui-monospace), monospace; text-anchor: middle; pointer-events: none; paint-order: stroke; stroke: rgba(12,8,4,0.85); stroke-width: 2.4px; }
+.kg-node.fixture text { font-size: 12px; stroke-width: 3.2px; fill: #FFE9A0; }
+.kg-node.focused text { font-size: 9px; stroke-width: 2.6px; }
+.kg-node.compact text { font-size: 10px; stroke-width: 2.8px; }
+.kg-empty-note { fill: rgba(241,216,168,0.55); font: 700 11px var(--mono); text-anchor: middle; letter-spacing: 0; }
 .kg-group text { fill: rgba(241,216,168,0.5); font: 700 9px var(--mono); text-anchor: middle; text-transform: uppercase; letter-spacing: 0.08em; }
 .kg-band { stroke: rgba(196,142,68,0.16); }
 .kg-selected-edge { stroke: rgba(255,217,136,0.65); stroke-width: 2.2; stroke-linecap: round; }

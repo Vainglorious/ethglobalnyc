@@ -195,18 +195,59 @@ DN.hud = (function () {
       const byId = new Map();
       const selectedCoreIds = new Set();
       const keep = new Set();
+      const selectedTeamNames = new Set([homeNeedle, awayNeedle].filter(Boolean));
 
       entities.forEach((entity) => {
         const id = entityId(entity);
         if (id) byId.set(id, entity);
       });
 
+      function isSelectedTeamName(value) {
+        return selectedTeamNames.has(norm(value));
+      }
+
+      function isSelectedPlayerData(entity) {
+        const attrs = (entity && entity.attributes) || {};
+        const type = entity && (entity.entity_type || entity.type);
+        if (!['player', 'player_match_profile', 'player_stat_line', 'availability_event'].includes(type)) return false;
+        return isSelectedTeamName(attrs.team);
+      }
+
+      function isSelectedTeamProfile(entity) {
+        const attrs = (entity && entity.attributes) || {};
+        const type = entity && (entity.entity_type || entity.type);
+        if (type !== 'team_match_profile') return false;
+        if (!isSelectedTeamName(attrs.team)) return false;
+        return !attrs.match_id || attrs.match_id === matchId || norm(attrs.match_id) === norm(matchId);
+      }
+
+      function isSelectedEvidence(entity) {
+        const type = entity && (entity.entity_type || entity.type);
+        if (!['finding', 'evidence_claim', 'debate_claim', 'prediction'].includes(type)) return false;
+        return false;
+      }
+
+      function canExpandTo(entity) {
+        const type = entity && (entity.entity_type || entity.type);
+        return [
+          'player',
+          'player_match_profile',
+          'player_stat_line',
+          'team_match_profile',
+          'club',
+          'position',
+          'availability_event',
+          'availability_status',
+          'body_part',
+          'formation',
+        ].includes(type);
+      }
+
       entities.forEach((entity) => {
         const id = entityId(entity);
         if (!id) return;
         const attrs = entity.attributes || {};
         const type = entity.entity_type || entity.type;
-        const text = entityText(entity);
         const attrHome = norm(attrs.team1 || attrs.home_team);
         const attrAway = norm(attrs.team2 || attrs.away_team);
         const isSelectedMatch = id === matchId ||
@@ -214,31 +255,26 @@ DN.hud = (function () {
           (attrHome === homeNeedle && attrAway === awayNeedle) ||
           (attrHome === awayNeedle && attrAway === homeNeedle);
         const isSelectedTeam = type === 'team' && (norm(entity.name) === homeNeedle || norm(entity.name) === awayNeedle);
-        const usefulType = isUsefulKgType(type);
-        const mentionsSelectedContext =
-          (homeNeedle && text.includes(homeNeedle)) ||
-          (awayNeedle && text.includes(awayNeedle)) ||
-          (matchNeedle && text.includes(matchNeedle));
-        if (isSelectedMatch || isSelectedTeam) {
+        if (isSelectedMatch || isSelectedTeam || isSelectedPlayerData(entity) || isSelectedTeamProfile(entity) || isSelectedEvidence(entity)) {
           keep.add(id);
           selectedCoreIds.add(id);
-        } else if (usefulType && mentionsSelectedContext) {
-          keep.add(id);
         }
       });
 
-      const seeds = new Set(keep);
-      relationships.forEach((edge) => {
-        const source = edgeSource(edge);
-        const target = edgeTarget(edge);
-        if (!source || !target) return;
-        const sourceEntity = byId.get(source);
-        const targetEntity = byId.get(target);
-        const sourceAllowed = selectedCoreIds.has(source) || isUsefulKgType(sourceEntity && (sourceEntity.entity_type || sourceEntity.type));
-        const targetAllowed = selectedCoreIds.has(target) || isUsefulKgType(targetEntity && (targetEntity.entity_type || targetEntity.type));
-        if (seeds.has(source) && targetAllowed) keep.add(target);
-        if (seeds.has(target) && sourceAllowed) keep.add(source);
-      });
+      for (let pass = 0; pass < 3; pass++) {
+        const seeds = new Set(keep);
+        relationships.forEach((edge) => {
+          const source = edgeSource(edge);
+          const target = edgeTarget(edge);
+          if (!source || !target) return;
+          const sourceEntity = byId.get(source);
+          const targetEntity = byId.get(target);
+          const sourceAllowed = selectedCoreIds.has(source) || canExpandTo(sourceEntity);
+          const targetAllowed = selectedCoreIds.has(target) || canExpandTo(targetEntity);
+          if (seeds.has(source) && targetAllowed) keep.add(target);
+          if (seeds.has(target) && sourceAllowed) keep.add(source);
+        });
+      }
 
       const scopedEntities = entities.filter((entity) => keep.has(entityId(entity)));
       const scopedRelationships = relationships.filter((edge) => keep.has(edgeSource(edge)) && keep.has(edgeTarget(edge)));
@@ -282,6 +318,20 @@ DN.hud = (function () {
         }
       }
       return '';
+    }
+
+    function logX402Trail(result) {
+      if (!DN.logTerm || !result) return;
+      const buyer = result.buyer || {};
+      const seller = result.seller || {};
+      const artifacts = result.artifacts || {};
+      DN.logTerm.push('X402', 'rail ' + (result.rail || 'x402_circle_gateway') + ' · network ' + (result.network || 'Arc Testnet'));
+      DN.logTerm.push('X402', 'flow ' + (result.money_flow || '') + ' · amount ' + (result.amount_usdc || '?') + ' USDC');
+      if (buyer.wallet) DN.logTerm.push('X402', 'buyer ' + (buyer.agent_id || '') + ' wallet ' + buyer.wallet);
+      if (seller.wallet) DN.logTerm.push('X402', 'seller ' + (seller.agent_id || '') + ' wallet ' + seller.wallet);
+      if (result.gateway_transfer_id) DN.logTerm.push('X402', 'gateway_transfer_id ' + result.gateway_transfer_id);
+      if (artifacts.buyer_receipt) DN.logTerm.push('X402', 'buyer_receipt ' + artifacts.buyer_receipt);
+      if (artifacts.service_receipts) DN.logTerm.push('X402', 'service_receipts ' + artifacts.service_receipts);
     }
 
     function setForecastBusy(busy) {
@@ -418,18 +468,45 @@ DN.hud = (function () {
     kgBtn.addEventListener('click', () => {
       if (!DN.databridge || !DN.databridge.fetchWorldCupKg) return;
       kgBtn.disabled = true;
-      status.textContent = 'Getting KG...';
-      DN.databridge.fetchWorldCupKg()
+      status.textContent = 'Looking for scout KG...';
+
+      function renderKg(payload, sourceLabel) {
+        const entities = payload.entity_count != null ? payload.entity_count : (payload.entities || []).length;
+        const links = payload.relationship_count != null ? payload.relationship_count : (payload.relationships || []).length;
+        const scoped = selectedKgGraph(payload, selectedGame);
+        const scopedEntities = scoped.entity_count != null ? scoped.entity_count : (scoped.entities || []).length;
+        const scopedLinks = scoped.relationship_count != null ? scoped.relationship_count : (scoped.relationships || []).length;
+        const title = (selectedGame && selectedGame.name ? selectedGame.name : 'Selected fixture') + ' KG';
+        if (DN.kgview) DN.kgview.showGraph(scoped, title);
+        status.textContent = scopedEntities + ' ' + sourceLabel + ' KG entities · ' + scopedLinks + ' links';
+        H.pushThought('Frontend loaded ' + sourceLabel + ' KG for ' + selectedGame.name + ': ' + scopedEntities + ' of ' + entities + ' entities, ' + scopedLinks + ' of ' + links + ' links.', 'Backend', '#3FA89F');
+      }
+
+      const scoutKg = DN.databridge.fetchScoutingKgForMatch
+        ? DN.databridge.fetchScoutingKgForMatch({
+            match: selectedGame.name,
+            match_id: selectedGame.match_id || selectedGame.market_key,
+            market_key: selectedGame.market_key,
+          })
+        : Promise.resolve(null);
+
+      scoutKg
         .then((payload) => {
-          const entities = payload.entity_count != null ? payload.entity_count : (payload.entities || []).length;
-          const links = payload.relationship_count != null ? payload.relationship_count : (payload.relationships || []).length;
-          const scoped = selectedKgGraph(payload, selectedGame);
-          const scopedEntities = scoped.entity_count != null ? scoped.entity_count : (scoped.entities || []).length;
-          const scopedLinks = scoped.relationship_count != null ? scoped.relationship_count : (scoped.relationships || []).length;
-          const title = (selectedGame && selectedGame.name ? selectedGame.name : 'Selected fixture') + ' KG';
-          if (DN.kgview) DN.kgview.showGraph(scoped, title);
-          status.textContent = scopedEntities + ' selected KG entities · ' + scopedLinks + ' links';
-          H.pushThought('Frontend loaded scoped KG for ' + selectedGame.name + ': ' + scopedEntities + ' of ' + entities + ' entities, ' + scopedLinks + ' of ' + links + ' links.', 'Backend', '#3FA89F');
+          if (payload) {
+            if (DN.logTerm) DN.logTerm.push('KG', 'Loaded stored scout KG ' + (payload.source_run_id || '') + ' for ' + selectedGame.name + '.');
+            renderKg(payload, 'scout');
+            return null;
+          }
+          status.textContent = 'No scout KG yet · loading fixture KG...';
+          if (DN.logTerm) DN.logTerm.push('KG', 'No stored scout KG found for ' + selectedGame.name + '; loading static fixture KG.');
+          return DN.databridge.fetchWorldCupKg()
+            .then((fallback) => renderKg(fallback, 'fixture'));
+        })
+        .catch((err) => {
+          if (!DN.databridge.fetchWorldCupKg) throw err;
+          status.textContent = 'Scout KG lookup failed · loading fixture KG...';
+          return DN.databridge.fetchWorldCupKg()
+            .then((fallback) => renderKg(fallback, 'fixture'));
         })
         .catch((err) => {
           status.textContent = 'KG fetch error';
@@ -437,6 +514,7 @@ DN.hud = (function () {
         })
         .finally(() => { kgBtn.disabled = false; });
     });
+
     scoutBtn.addEventListener('click', () => {
       if (!DN.databridge || !DN.databridge.startScoutingRun) return;
       setScoutingBusy(true);
@@ -481,18 +559,22 @@ DN.hud = (function () {
         });
     });
     btn.addEventListener('click', () => {
-      // The primary Run button now drives the full lifecycle controller,
-      // which orchestrates scout → KG crystal → recruit → debate →
-      // settle in turn. The lifecycle itself calls `startDemoRun` during
-      // its converge phase (see lifecycle.js ENTER.converge).
+      // The primary Run button drives the full lifecycle controller:
+      // scout -> KG crystal -> recruit -> debate -> stake/settle.
       if (DN.lifecycle && DN.lifecycle.start) {
         btn.disabled = true;
         status.textContent = 'Lifecycle running…';
-        H.pushThought('Lifecycle kicked off — Brazil vs Morocco.', 'Lifecycle', '#3FA89F');
+        H.pushThought('Lifecycle kicked off — ' + selectedGame.name + '.', 'Lifecycle', '#3FA89F');
         DN.lifecycle.start();
-        // Re-enable after ~55s (full scripted lifecycle) so the user can
-        // re-trigger if they want to loop through again.
-        setTimeout(() => { btn.disabled = false; status.textContent = 'Roaming · click Run to loop'; }, 56000);
+        const startedAt = Date.now();
+        const timer = setInterval(() => {
+          const phase = DN.lifecycle && DN.lifecycle.getPhase ? DN.lifecycle.getPhase() : '';
+          if (phase === 'egress_roam' || phase === 'idle' || Date.now() - startedAt > 480000) {
+            clearInterval(timer);
+            btn.disabled = false;
+            status.textContent = phase === 'egress_roam' ? 'Roaming · click Run to loop' : 'Run ready';
+          }
+        }, 1000);
       } else if (DN.databridge && DN.databridge.startDemoRun) {
         // Fallback if lifecycle module didn't load: behave as before.
         btn.disabled = true;
@@ -534,6 +616,7 @@ DN.hud = (function () {
         .then((result) => {
           const tx = result.gateway_transfer_id || '';
           const amount = result.amount_usdc || '0';
+          logX402Trail(result);
           status.textContent = 'x402 paid ' + amount + ' USDC';
           H.pushThought('x402 payment complete: ' + result.money_flow + ' for ' + result.resource_id + (tx ? ' · transfer ' + shortHash(tx) : '') + '.', 'x402', '#3FA89F');
         })
@@ -683,8 +766,8 @@ DN.hud = (function () {
     if (!fc && !outcome) return '';
     let html = '';
     if (fc) {
-      const sideRaw = fc.side || 'pass';
-      const sideLabel = sideRaw === 'home' ? 'Home' : sideRaw === 'away' ? 'Away' : 'Pass';
+      const sideRaw = fc.side || 'draw';
+      const sideLabel = sideRaw === 'home' ? 'Home' : sideRaw === 'away' ? 'Away' : 'Draw';
       const prob = fc.home_probability != null ? Math.round(fc.home_probability * 100) + '%' : '—';
       const stake = fc.stake != null ? '$' + Math.round(fc.stake) : '—';
       html += `<div class="vital-bar" style="margin-top:9px"><div class="vlabel">
@@ -724,13 +807,19 @@ DN.hud = (function () {
     const wallet = rec && rec.wallet_address;
     const walletShort = wallet ? wallet.slice(0, 6) + '…' + wallet.slice(-4) : null;
     const ens = rec && rec.ens_name;
+    const avatar = rec && rec.avatar;
+    const parentEns = rec && (rec.parent_ens_name || (rec.parent && rec.parent.ens_name));
+    const lineageEns = rec && (rec.lineage_ens_name || (rec.lineage && (rec.lineage.root_name || rec.lineage.ens_name)));
     const identityRows = (ens || wallet) ? `
       ${ens ? `<div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>ENS</span><span style="color:${c};font-family:var(--mono)">${ens}</span></div></div>` : ''}
+      ${parentEns ? `<div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>Parent</span><span style="color:${c};font-family:var(--mono)">${parentEns}</span></div></div>` : ''}
+      ${lineageEns && lineageEns !== parentEns ? `<div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>Lineage</span><span style="color:${c};font-family:var(--mono)">${lineageEns}</span></div></div>` : ''}
       ${wallet ? `<div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>Wallet</span><span style="font-family:var(--mono);cursor:pointer" title="${wallet}" data-copy="${wallet}">${walletShort}</span></div></div>` : ''}
     ` : '';
+    const canReproduce = !!(rec && rec.agent_id && DN.databridge && DN.databridge.reproduceAnt);
     $('inspector').innerHTML =
       `<div class="insp-head"><div class="insp-icon" style="background:${c}22;box-shadow:inset 0 0 0 1px ${c}66">
-        <div style="width:13px;height:13px;border-radius:3px;background:${c};box-shadow:0 0 10px ${c}"></div></div>
+        ${avatar ? `<img src="${esc(avatar)}" alt="" style="width:100%;height:100%;border-radius:8px;object-fit:cover">` : `<div style="width:13px;height:13px;border-radius:3px;background:${c};box-shadow:0 0 10px ${c}"></div>`}</div>
         <div><div class="insp-kicker">${a.role}${a.hero ? ' · Gen ' + a.gen : ''}</div><div class="insp-name">${displayName}</div></div></div>
       <div class="metrics">
         <div class="metric"><div class="mk">Forecast Acc</div><div class="mv">${(rec && rec.forecast_accuracy != null) ? Math.round(rec.forecast_accuracy * 100) : (a.accuracy || (52 + (a.inst % 30)))}<small>%</small></div></div>
@@ -747,8 +836,41 @@ DN.hud = (function () {
       <div class="insp-empty" style="font-size:12px">${antBlurb(a)}</div>
       <button class="btn-primary" id="follow-ant" style="background:${following ? 'rgba(255,238,205,0.1)' : ''};color:${following ? 'var(--ink)' : ''};border-color:var(--border-strong)">
         <svg viewBox="0 0 24 24" style="fill:${following ? 'var(--ink)' : '#2a1d08'}"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="${following ? 'var(--ink)' : '#2a1d08'}" stroke-width="2" fill="none"/></svg>
-        ${following ? 'Stop following' : 'Follow agent'}</button>`;
+        ${following ? 'Stop following' : 'Follow agent'}</button>
+      ${canReproduce ? `<button class="btn-primary" id="reproduce-ant" style="margin-top:9px;background:rgba(95,184,74,0.16);color:var(--ink);border-color:rgba(95,184,74,0.5)">
+        <svg viewBox="0 0 24 24" style="fill:none;stroke:var(--ink);stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><circle cx="12" cy="5" r="2"/><circle cx="7" cy="19" r="2"/><circle cx="17" cy="19" r="2"/><path d="M12 7v5M12 12l-5 5M12 12l5 5"/></svg>
+        Create child ant</button>` : ''}`;
     $('follow-ant').addEventListener('click', () => DN.app.toggleFollow(a));
+    const reproduceBtn = $('reproduce-ant');
+    if (reproduceBtn) {
+      const normalHtml = reproduceBtn.innerHTML;
+      reproduceBtn.addEventListener('click', () => {
+        const parentId = rec.agent_id;
+        reproduceBtn.disabled = true;
+        reproduceBtn.textContent = 'Creating child...';
+        H.pushThought('Creating a child ant from ' + (ens || parentId) + ': ENS lineage, wallet, and funding plan.', 'Lineage', '#5FB84A');
+        if (DN.logTerm) DN.logTerm.push('LINEAGE', 'Reproducing ' + (ens || parentId) + ' into a new ENS-linked child ant.');
+        DN.databridge.reproduceAnt({ parent_agent_id: parentId })
+          .then((payload) => {
+            const child = payload.child || {};
+            if (DN.ants && DN.ants.bindAgentRecords && DN.databridge.getAgents) DN.ants.bindAgentRecords(DN.databridge.getAgents());
+            const target = DN.ants && DN.ants.attachChildRecord ? DN.ants.attachChildRecord(a, child) : null;
+            if (target && DN.app && DN.app.selectAnt) DN.app.selectAnt(target);
+            const funding = child.funding || {};
+            const fundStatus = funding.status ? ' · funding ' + funding.status : '';
+            H.pushThought((child.ens_name || child.agent_id) + ' created from parent ' + (child.parent_ens_name || ens || parentId) + fundStatus + '.', 'Lineage', '#5FB84A');
+            if (DN.logTerm) DN.logTerm.push('LINEAGE', (child.ens_name || child.agent_id) + ' parent=' + (child.parent_ens_name || ens || parentId) + fundStatus + '.');
+          })
+          .catch((err) => {
+            H.pushThought('Child ant creation failed: ' + (err.message || err), 'Lineage', '#D96E54');
+            if (DN.logTerm) DN.logTerm.push('LINEAGE', 'Child ant creation failed: ' + (err.message || err));
+          })
+          .finally(() => {
+            reproduceBtn.disabled = false;
+            reproduceBtn.innerHTML = normalHtml;
+          });
+      });
+    }
     // copy-on-click for the truncated wallet
     $('inspector').querySelectorAll('[data-copy]').forEach(el => {
       el.addEventListener('click', () => {

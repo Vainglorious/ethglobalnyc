@@ -1,15 +1,16 @@
 // Di-nasty — lifecycle controller. State machine for the demo arc:
 //   0 idle → 1 kickoff → 2 scouting → 3 kg_forming → 4 recruitment →
 //   5 converge → 6 ingress → 7 debate → 8 resolution → 9 egress_roam
-// Frontend-paced (synthetic timing). Owns ant activation + crystal show.
-// Phases 4–9 currently no-op except for logging — subsequent passes
-// will wire on-chain calls there.
+// Frontend-paced visual timing. Owns ant activation + crystal show while the
+// backend run uses the selected fixture and public scouting data.
+// Resolution wires the run's forecast decisions into the Arc forecast
+// contract and claims payouts for winning ants.
 window.DN = window.DN || {};
 
 console.log('[dinasty] lifecycle.js loaded · build 2026-06-14');
 
 DN.lifecycle = (function () {
-  const L = { phase: 'idle', phaseT: 0, winner: null, settleTxHash: null, runId: null };
+  const L = { phase: 'idle', phaseT: 0, winner: null, settleTxHash: null, runId: null, phaseHold: false };
 
   // duration per phase in seconds; 'idle' and 'egress_roam' are open-ended
   // Slower pacing — the previous values cut off the visible round trip
@@ -88,6 +89,15 @@ DN.lifecycle = (function () {
     return (window.DN_CONFIG && window.DN_CONFIG.FORECAST && window.DN_CONFIG.FORECAST.CONTRACT) || '';
   }
 
+  function configuredRun() {
+    return (window.DN_CONFIG && window.DN_CONFIG.RUN) || {};
+  }
+
+  function configuredForecastWalletStore() {
+    const forecast = (window.DN_CONFIG && window.DN_CONFIG.FORECAST) || {};
+    return forecast.WALLET_STORE || forecast.wallet_store || '';
+  }
+
   // Look up the currently selected game's cached metadata (home/away
   // team etc.) so settleForecastDemo has the right `home_team` /
   // `away_team` for the API.
@@ -96,7 +106,172 @@ DN.lifecycle = (function () {
     const key = selectedMatch();
     const found = games.find((g) => g.market_key === key);
     if (found) return found;
-    return { market_key: key, home_team: 'Brazil', away_team: 'Morocco' };
+    return {
+      market_key: key,
+      match_id: key,
+      market_type: 'three_way',
+      home_team: 'Brazil',
+      away_team: 'Morocco',
+      name: 'Brazil vs Morocco'
+    };
+  }
+
+  function winnerSideFor(winner, meta) {
+    const norm = (v) => String(v || '').toLowerCase().trim();
+    if (norm(winner) === norm(meta.home_team) || norm(winner) === 'home') return 'home';
+    if (norm(winner) === norm(meta.away_team) || norm(winner) === 'away') return 'away';
+    if (norm(winner) === 'draw') return 'draw';
+    return 'home';
+  }
+
+  function winnerNameForSide(side, meta) {
+    if (side === 'away') return meta.away_team || 'away';
+    if (side === 'draw') return 'Draw';
+    return meta.home_team || 'home';
+  }
+
+  function sideWithLargestStake(stakes) {
+    const totals = { home: 0, draw: 0, away: 0 };
+    (stakes || []).forEach((stake) => {
+      if (totals[stake.outcome] == null) return;
+      totals[stake.outcome] += Number(stake.amount || 0);
+    });
+    return Object.keys(totals).sort((a, b) => totals[b] - totals[a])[0];
+  }
+
+  function runMarketKey(meta, runId) {
+    return [
+      meta.market_key || selectedMatch(),
+      'run',
+      runId || Date.now()
+    ].join(':');
+  }
+
+  function shortHash(value) {
+    const text = String(value || '');
+    if (text.length < 14) return text;
+    return text.slice(0, 8) + '...' + text.slice(-6);
+  }
+
+  function explorerTxUrl(hash, fallbackExplorer) {
+    if (!hash) return '';
+    const explorer = String(fallbackExplorer || 'https://explorer.testnet.arc.network').replace(/\/$/, '');
+    return explorer + '/tx/' + hash;
+  }
+
+  function receiptTransactions(step) {
+    const receipt = (step && step.receipt) || {};
+    const chain = receipt.chain || {};
+    const explorer = chain.explorer || '';
+    const out = [];
+    (receipt.transactions || []).forEach((tx) => {
+      if (!tx || !tx.tx_hash) return;
+      out.push({
+        action: tx.type || receipt.action || step.action || 'tx',
+        hash: tx.tx_hash,
+        explorer_url: tx.explorer_url || explorerTxUrl(tx.tx_hash, explorer),
+        agent_id: receipt.agent_id || '',
+        wallet: receipt.wallet || '',
+        outcome: receipt.outcome || '',
+        amount_usdc: receipt.amount_usdc || '',
+      });
+    });
+    if (receipt.tx_hash) {
+      out.push({
+        action: receipt.action || step.action || 'tx',
+        hash: receipt.tx_hash,
+        explorer_url: receipt.explorer_url || explorerTxUrl(receipt.tx_hash, explorer),
+        agent_id: receipt.agent_id || '',
+        wallet: receipt.wallet || '',
+        outcome: receipt.outcome || receipt.result || '',
+        amount_usdc: receipt.amount_usdc || '',
+      });
+    }
+    return out;
+  }
+
+  function firstReceiptWith(result, key) {
+    const steps = (result && result.steps) || [];
+    for (const step of steps) {
+      const receipt = (step && step.receipt) || {};
+      if (receipt[key]) return receipt;
+    }
+    return {};
+  }
+
+  function logForecastChainTrail(kind, result) {
+    if (!DN.logTerm || !result) return;
+    const contract = result.contract || '';
+    const marketKey = result.market_key || '';
+    const marketReceipt = firstReceiptWith(result, 'market_id');
+    const marketId = marketReceipt.market_id || '';
+    if (contract) DN.logTerm.push('CHAIN', kind + ' contract ' + contract);
+    if (marketKey) DN.logTerm.push('CHAIN', kind + ' market_key ' + marketKey);
+    if (marketId) DN.logTerm.push('CHAIN', kind + ' market_id ' + marketId);
+
+    const steps = result.steps || [];
+    let count = 0;
+    steps.forEach((step) => {
+      receiptTransactions(step).forEach((tx) => {
+        count++;
+        const who = tx.agent_id ? ' ' + tx.agent_id : '';
+        const detail = [
+          tx.amount_usdc ? tx.amount_usdc + ' USDC' : '',
+          tx.outcome || '',
+          tx.wallet ? 'wallet ' + shortHash(tx.wallet) : '',
+        ].filter(Boolean).join(' · ');
+        DN.logTerm.push(
+          'CHAIN',
+          kind + ' ' + tx.action + who +
+            (detail ? ' · ' + detail : '') +
+            ' · tx ' + tx.hash +
+            (tx.explorer_url ? ' · ' + tx.explorer_url : '')
+        );
+      });
+    });
+    if (!count) {
+      DN.logTerm.push('CHAIN', kind + ' returned no tx hashes. This usually means the API failed before signing or the response shape changed.');
+    }
+  }
+
+  function startBackendRun() {
+    if (L.runPromise) return L.runPromise;
+    if (!DN.databridge || !DN.databridge.startScoutingRun) {
+      L.runPromise = Promise.resolve(null);
+      return L.runPromise;
+    }
+    const meta = selectedGameMeta();
+    const runCfg = configuredRun();
+    const matchName = meta.name || [meta.home_team, meta.away_team].filter(Boolean).join(' vs ');
+    if (DN.logTerm) {
+      DN.logTerm.push('SYSTEM', 'Public fixture run kicked off for ' + matchName + ' (this can take a minute).');
+    }
+    L.runPromise = DN.databridge.startScoutingRun({
+      match: matchName,
+      match_id: meta.match_id || meta.market_key,
+      data_mode: 'public',
+      include_deepseek_scout: true,
+      agents: Math.min(Number(runCfg.agents || 200), 200),
+      rooms: Math.min(Number(runCfg.rooms || 12), 50),
+      seed: Number.isFinite(Number(runCfg.seed)) ? Number(runCfg.seed) : Math.floor(Math.random() * 10000),
+      voice_mode: runCfg.voice_mode || 'llm',
+    })
+      .then((res) => {
+        if (res && res.id) {
+          L.runId = res.id;
+          if (DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(res.id);
+          if (DN.commsViz && DN.commsViz.reset) DN.commsViz.reset();
+          if (DN.hud && DN.hud._pollComms) DN.hud._pollComms();
+          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Fixture run ' + res.id + ' complete — selected-match forecast stakes ready.');
+        }
+        return res || null;
+      })
+      .catch((err) => {
+        L.runError = err;
+        if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Backend run failed: ' + (err && err.message || err));
+        return null;
+      });
+    return L.runPromise;
   }
 
   // ---- onArrive callbacks for the scripted Bezier walks --------------
@@ -167,6 +342,7 @@ DN.lifecycle = (function () {
         DN.camera.flyTo(new THREE.Vector3(0, 0, 0), 190, 120, 3.0);
       }
       if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Match: ' + selectedMatch());
+      startBackendRun();
     },
     scouting: () => {
       // Kick off the REAL backend scouting run that builds the World
@@ -257,7 +433,6 @@ DN.lifecycle = (function () {
       // one from each mound. Recruitment is purely a camera + on-chain
       // staging beat now.
       if (DN.logTerm) DN.logTerm.push('BIRTH', 'Population staking on the round — emerging next.');
-      // No camera change — kickoff framing carries through.
       if (DN.databridge && DN.databridge.setupForecastDemo) {
         const meta = selectedGameMeta();
         const contract = configuredContract();
@@ -274,16 +449,13 @@ DN.lifecycle = (function () {
           L.forecastStakes = (res && res.stakes) || [];
           if (DN.logTerm) DN.logTerm.push('STAKE', 'Stakes committed · market_key ' + (L.marketKey || '?').slice(-12));
         }).catch((err) => {
-          // Non-fatal — settle will skip if no market_key was captured.
           if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Stake demo error: ' + (err && err.message || err));
         });
       }
     },
     converge: () => {
       // Kick the backend LLM debate run now so it has phases 5→7 (~22s)
-      // to compute while ants walk to the crystal and back. The promise
-      // resolves only when the run FINISHES (streamRun/pollRun), so we
-      // log "ready" then, not "started".
+      // to compute while ants walk to the crystal and back.
       if (DN.databridge && DN.databridge.startDemoRun) {
         if (DN.logTerm) DN.logTerm.push('SYSTEM', 'LLM debate run kicked off in the background.');
         DN.databridge.startDemoRun().then(res => {
@@ -301,12 +473,9 @@ DN.lifecycle = (function () {
       // Send every visible worker to the crystal. To make them read as a
       // single-file line per colony (not a chaotic swarm) we:
       //   • bucket workers by colony
-      //   • use ONE shared curl sign per colony (so all curves bow the
-      //     same way)
-      //   • stagger each ant's tStart evenly across [0..1] so they're
-      //     distributed along the trail at frame 1
-      //   • tighten each ant's laneOffset so the column has minimal
-      //     lateral spread
+      //   • use ONE shared curl sign per colony (so all curves bow the same way)
+      //   • stagger tStart so they're distributed along the trail at frame 1
+      //   • tighten laneOffset so the column has minimal lateral spread
       const crystal = DN.crystal ? DN.crystal.position() : new THREE.Vector3(0, 0, 0);
       let count = 0;
       (DN.colony.list || []).forEach((col, ci) => {
@@ -391,39 +560,14 @@ DN.lifecycle = (function () {
         DN.commsViz.streamChambersFromBuffer({ count: 22, strideMs: 480 });
       }
     },
-    resolution: async () => {
+    resolution: () => {
       // Stop the in-chamber debate animation; chambers fall quiet.
       if (DN.underground && DN.underground.stopDebate) DN.underground.stopDebate();
-      const winner = selectedWinner();
-      L.winner = winner;
-      if (!L.marketKey) {
-        if (DN.logTerm) DN.logTerm.push('SETTLE', 'Skipping on-chain settle — no market_key captured (stake demo failed?).');
-        return;
-      }
-      const meta = selectedGameMeta();
-      const contract = configuredContract();
-      const winnerSide = WINNER_TO_SIDE[winner] || 'home';
-      const winningAgents = (L.forecastStakes || [])
-        .filter((s) => s.outcome === winnerSide)
-        .map((s) => s.agent);
-      if (DN.logTerm) DN.logTerm.push('SETTLE', 'Settling market with winner = ' + winner + ' …');
-      try {
-        const r = await DN.databridge.settleForecastDemo({
-          contract: contract || undefined,
-          market_key: L.marketKey,
-          winner,
-          home_team: meta.home_team,
-          away_team: meta.away_team,
-          winning_agents: winningAgents
-        });
-        const tx = (r && r.receipt && r.receipt.tx_hash) ||
-                   (r && r.steps && r.steps.length && (r.steps[r.steps.length - 1].receipt || {}).tx_hash) ||
-                   null;
-        L.settleTxHash = tx;
-        if (DN.logTerm) DN.logTerm.push('SETTLE', winner + ' settled' + (tx ? ' · tx ' + tx.slice(0, 8) + '…' + tx.slice(-4) : ''));
-      } catch (err) {
-        if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Settle error: ' + (err && err.message || err));
-      }
+      L.phaseHold = true;
+      settleRunEconomy().finally(() => {
+        L.phaseHold = false;
+        L.phaseT = 0;
+      });
     },
     egress_roam: () => {
       // Back to surface; derive per-agent outcome, then have each
@@ -479,11 +623,89 @@ DN.lifecycle = (function () {
     }
   };
 
-  // Map UI winner → backend forecast.side
-  const WINNER_TO_SIDE = { Brazil: 'home', Morocco: 'away', Draw: 'pass' };
+  async function settleRunEconomy() {
+    if (!DN.databridge || !DN.databridge.setupForecastDemo || !DN.databridge.settleForecastDemo) {
+      if (DN.logTerm) DN.logTerm.push('SETTLE', 'Skipping on-chain economy — forecast API unavailable.');
+      return;
+    }
+    const meta = selectedGameMeta();
+    const contract = configuredContract();
+    const walletStore = configuredForecastWalletStore();
+    const run = await startBackendRun();
+    const runId = (run && run.id) || L.runId || (DN.databridge && DN.databridge.runId) || null;
+    const marketKey = runMarketKey(meta, runId);
+    L.winner = selectedWinner();
+    if (DN.logTerm) {
+      DN.logTerm.push('STAKE', 'Creating Arc market and staking ant forecasts from ' + (runId || 'fallback demo') + ' …');
+    }
+    try {
+      const setup = await DN.databridge.setupForecastDemo({
+        contract: contract || undefined,
+        market_key: marketKey,
+        market_type: meta.market_type || 'three_way',
+        metadata_uri: meta.market_key || marketKey,
+        run_id: runId || undefined,
+        wallet_store: walletStore || undefined,
+        max_stakers: 12,
+        fee_bps: 1000
+      });
+      L.marketKey = (setup && setup.market_key) || marketKey;
+      L.forecastStakes = (setup && setup.stakes) || [];
+      const totals = (setup && setup.totals) || {};
+      logForecastChainTrail('STAKE', setup);
+      if (DN.logTerm) {
+        DN.logTerm.push(
+          'STAKE',
+          'Stakes committed from ' + ((setup && setup.stake_source) || 'fallback') +
+            ' · ' + (totals.total_usdc || '?') + ' USDC escrowed.'
+        );
+      }
+
+      let winner = L.winner;
+      let winnerSide = winnerSideFor(winner, meta);
+      let winningAgents = L.forecastStakes
+        .filter((stake) => stake.outcome === winnerSide)
+        .map((stake) => stake.agent);
+      if (!winningAgents.length && L.forecastStakes.length) {
+        winnerSide = sideWithLargestStake(L.forecastStakes);
+        winner = winnerNameForSide(winnerSide, meta);
+        winningAgents = L.forecastStakes
+          .filter((stake) => stake.outcome === winnerSide)
+          .map((stake) => stake.agent);
+        if (DN.logTerm) {
+          DN.logTerm.push('SETTLE', 'Selected winner had no staked ants; resolving to staked side ' + winner + ' so payouts can claim.');
+        }
+      }
+      L.winner = winner;
+      if (DN.logTerm) DN.logTerm.push('SETTLE', 'Settling Arc market with winner = ' + winner + ' …');
+      const settled = await DN.databridge.settleForecastDemo({
+        contract: contract || undefined,
+        market_key: L.marketKey,
+        winner,
+        home_team: meta.home_team,
+        away_team: meta.away_team,
+        wallet_store: walletStore || undefined,
+        winning_agents: winningAgents
+      });
+      logForecastChainTrail('SETTLE', settled);
+      const tx = (settled && settled.receipt && settled.receipt.tx_hash) ||
+                 (settled && settled.steps && settled.steps.length && (settled.steps[settled.steps.length - 1].receipt || {}).tx_hash) ||
+                 null;
+      L.settleTxHash = tx;
+      if (DN.logTerm) {
+        DN.logTerm.push(
+          'SETTLE',
+          winner + ' settled · ' + winningAgents.length + ' winners claimed' +
+            (tx ? ' · tx ' + tx.slice(0, 8) + '…' + tx.slice(-4) : '')
+        );
+      }
+    } catch (err) {
+      if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Economy settlement error: ' + (err && err.message || err));
+    }
+  }
 
   function deriveOutcomes() {
-    const winnerSide = WINNER_TO_SIDE[L.winner] || 'home';
+    const winnerSide = winnerSideFor(L.winner, selectedGameMeta());
     const forecasts = (DN.databridge && DN.databridge.getCommunications)
       ? DN.databridge.getCommunications().filter(e => e.event_type === 'forecast') : [];
     let correct = 0, wrong = 0;
@@ -530,6 +752,9 @@ DN.lifecycle = (function () {
     L.runId = null;
     L.marketKey = null;
     L.forecastStakes = [];
+    L.runPromise = null;
+    L.runError = null;
+    L.phaseHold = false;
     if (ENTER.idle) ENTER.idle();
     enter('kickoff');
   };
@@ -543,6 +768,7 @@ DN.lifecycle = (function () {
   function enter(next) {
     L.phase = next;
     L.phaseT = 0;
+    L.phaseHold = false;
     logPhase(next);
     try { if (ENTER[next]) ENTER[next](); }
     catch (err) { if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Phase enter error: ' + (err && err.message || err)); }
@@ -561,6 +787,7 @@ DN.lifecycle = (function () {
     if (L.phase === 'debate' && DN.underground && DN.underground.tickDebate) {
       DN.underground.tickDebate(dt, elapsed);
     }
+    if (L.phaseHold) return;
     const dur = DURATIONS[L.phase];
     if (isFinite(dur) && L.phaseT >= dur) {
       const next = NEXT[L.phase];

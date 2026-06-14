@@ -9,7 +9,7 @@ window.DN = window.DN || {};
 console.log('[dinasty] commsViz.js loaded · build 2026-06-14');
 
 DN.commsViz = (function () {
-  const V = { _seen: new Set(), _arcs: [], _edges: new Map() };
+  const V = { _seen: new Set(), _arcs: [], _edges: new Map(), _queue: [], _queueTimer: null };
   let surfaceScene = null;
   let arcPoints = null;        // shared THREE.Points cloud for all live arcs
   let arcPosAttr = null;
@@ -140,21 +140,34 @@ DN.commsViz = (function () {
       toDispatch = fresh;
     }
     if (DN.logTerm) {
-      DN.logTerm.push('SYSTEM', '── Ingesting ' + toDispatch.length + ' event' + (toDispatch.length === 1 ? '' : 's') + ' ──');
+      DN.logTerm.push('SYSTEM', '── Replaying ' + toDispatch.length + ' event' + (toDispatch.length === 1 ? '' : 's') + ' over time ──');
     }
     // dispatch in priority order so the most interesting rows land last
     // (closest to the bottom-of-log where users naturally look)
     const order = { forecast: 0, social_action: 1, debate_claim: 2 };
     toDispatch.sort((a, b) => (order[a.event_type] ?? 9) - (order[b.event_type] ?? 9));
-    for (const ev of toDispatch) {
-      if (ev.event_type === 'social_action') V._handleSocial(ev);
-      else if (ev.event_type === 'debate_claim') V._handleClaim(ev);
-      else if (ev.event_type === 'forecast') V._handleForecast(ev);
-    }
+    V._queue.push(...toDispatch);
+    V._drainQueue();
     if (V._seen.size > 3000) {
       const arr = Array.from(V._seen).slice(-2000);
       V._seen = new Set(arr);
     }
+  };
+
+  V._drainQueue = function () {
+    if (V._queueTimer) return;
+    const tick = () => {
+      const ev = V._queue.shift();
+      if (!ev) {
+        V._queueTimer = null;
+        return;
+      }
+      if (ev.event_type === 'social_action') V._handleSocial(ev);
+      else if (ev.event_type === 'debate_claim') V._handleClaim(ev);
+      else if (ev.event_type === 'forecast') V._handleForecast(ev);
+      V._queueTimer = setTimeout(tick, 220);
+    };
+    V._queueTimer = setTimeout(tick, 120);
   };
 
   // social_action: the primary speaking event. actor speaks (and optionally
@@ -352,6 +365,11 @@ DN.commsViz = (function () {
   // to a new run_id and old action_ids might collide with new ones).
   V.reset = function () {
     V._seen = new Set();
+    V._queue.length = 0;
+    if (V._queueTimer) {
+      clearTimeout(V._queueTimer);
+      V._queueTimer = null;
+    }
     V._arcs.length = 0;
     V._edges.clear();
     if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Comms cache cleared — ready for new run events.');

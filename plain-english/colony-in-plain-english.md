@@ -52,6 +52,24 @@ Two design rules keep it honest:
   payment network. The ants literally pay to read our database. *See
   `clickhouse-in-plain-english.md`.*
 
+## What the Run button does now
+The main `Run` button is wired into the money loop. It starts a fresh public-data run for the
+selected match in the dropdown, waits for the ants' actual choices, puts their USDC stakes into
+the Arc forecast smart contract, lets the selected match winner resolve, and claims the pot back
+to the winning ants.
+
+So the stage demo is no longer just "ants talk, then we narrate a bet." It is:
+
+> **ants forecast -> ants stake USDC in the contract -> winner is chosen -> winning ants get paid**
+
+The manual `Stake demo` and `Settle` controls still exist for debugging, but the normal demo path
+is now one click.
+
+One important honesty check: if the Railway backend does not have private signing wallets
+configured, the ants can still forecast and debate, but they cannot send Arc USDC transactions.
+In that case the Colony Log should say the forecast signing wallets are missing instead of
+pretending a contract transaction happened.
+
 ## The headline experiment (our strongest demo moment)
 We can mark some family lines as **human-verified** (a real person vouched for the founder)
 and give them a head start — more starting money. Then we let the colony run and ask a real,

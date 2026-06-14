@@ -190,6 +190,39 @@ curl -X POST https://ethglobalnyc-production.up.railway.app/forecast/settle \
   -d '{"market_key":"worldcup:2026:brazil-morocco:demo-001","winner":"Brazil"}'
 ```
 
+Frontend `Run` now drives the same selected-fixture forecast rail end to end.
+When the user clicks `Run`, the browser:
+
+1. starts a public-data backend run with `POST /scouting/run` for the selected
+   fixture in the dropdown, for example Germany vs Curaçao;
+2. waits for that run's `forecast` events so stakes come from actual selected
+   match ant decisions instead of the generic demo fixture;
+3. creates a fresh Arc market key using the selected fixture plus the run id;
+4. calls `POST /forecast/demo-setup` with that `run_id`, which signs ant wallet
+   transactions and stakes their USDC into `ColonyForecastMarket`;
+5. reads the selected winner from the UI, calls `POST /forecast/settle`, and
+   claims payouts for the winning ant wallets.
+
+The lifecycle pauses in the resolution phase while the Arc market is created,
+staked, settled, and claimed. If the selected winner has no staked ants, the
+frontend resolves to the side with the largest staked amount so the contract has
+winners and the payout path can still be demonstrated.
+
+The browser Colony Log is the transaction audit trail for the demo:
+
+- `CHAIN` rows show the forecast smart contract address, market key, market id,
+  create-market tx, each ant approve/stake tx, settle tx, claim tx, and Arc
+  explorer URL.
+- `X402` rows show the Circle Gateway payment rail, buyer/seller wallets,
+  gateway transfer id, and receipt artifact paths for the manual `Buy KG` flow.
+
+If no `CHAIN` transaction rows appear after the `Resolution` phase, the run did
+not reach the smart-contract calls or the forecast API failed before signing.
+In that case, the following `SYSTEM` row should contain the backend error.
+The most common cause is missing forecast signing wallets: the deployed backend
+needs `COLONY_API_FORECAST_WALLETS_JSON` or `COLONY_API_FORECAST_WALLET_STORE`
+pointing to private-key ant wallets with Arc testnet USDC.
+
 Required private env for deployed real payments:
 
 ```text
@@ -333,10 +366,29 @@ curl https://ethglobalnyc-production.up.railway.app/runs/{run_id}/events
 curl https://ethglobalnyc-production.up.railway.app/runs/{run_id}/kg
 ```
 
-The frontend's `Get KG` button still reads the committed tournament KG from
-`/kg/world-cup`, but it scopes the overlay to the selected fixture and its two
-teams before rendering. That avoids loading unrelated global match/team context
-for pairs such as Norway vs Senegal.
+The frontend's `Get KG` button first searches `/runs` for the latest successful
+scouting run whose `match` or `match_id` matches the selected fixture, then loads
+`/runs/{run_id}/kg`. If no stored scout KG exists, it falls back to the committed
+tournament graph at `/kg/world-cup` and scopes that graph to the selected fixture
+and its two teams. That fallback is intentionally small; run `Scout` first when
+you need generated player, club, and evidence context for that fixture.
+
+## Reproduce An Ant
+
+The frontend inspector can create a child ant from the selected parent with
+`POST /ants/reproduce`. The backend mutates a deterministic parent personality
+genome, creates or reuses a wallet, records ENS-style child metadata under the
+runs directory, and optionally funds the child wallet.
+
+```bash
+curl -X POST https://ethglobalnyc-production.up.railway.app/ants/reproduce \
+  -H "Content-Type: application/json" \
+  -d '{"parent_agent_id":"ant_0001","wallet_provider":"local","fund_wallet":false}'
+```
+
+The response returns the `parent`, the created `child`, the wallet store used,
+and the `child_ants.json` source path. `GET /ants` includes these children after
+creation so the frontend can attach them to the visible colony.
 
 For `POST /runs/demo`, the first integration streams transport/status
 immediately. Most domain events arrive when `run_demo.py` writes `events.jsonl`

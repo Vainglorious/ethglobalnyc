@@ -35,7 +35,7 @@ DN.databridge = (function () {
         'Round resolved — market home probability ' +
           Math.round(summary.market_home_probability * 100) +
           '%, $' + r1(summary.total_staked) + ' staked across ' + summary.population +
-          ' agents (' + summary.home_bets + ' home · ' + summary.away_bets + ' away · ' + summary.passes + ' pass).',
+          ' agents (' + summary.home_bets + ' home · ' + (summary.draw_bets || 0) + ' draw · ' + summary.away_bets + ' away).',
         'Forecast', COL.economy,
       ]);
     }
@@ -45,7 +45,7 @@ DN.databridge = (function () {
     });
     // strongest real bets
     forecasts
-      .filter((f) => f.side && f.side !== 'pass' && f.stake > 0)
+      .filter((f) => f.side && f.stake > 0)
       .sort((a, b) => b.stake - a.stake)
       .slice(0, 8)
       .forEach((f) => {
@@ -212,6 +212,30 @@ DN.databridge = (function () {
         return payload;
       });
   };
+
+  B.reproduceAnt = function (opts) {
+    const body = Object.assign(
+      {
+        mutation_rate: 0.08,
+        fund_wallet: true,
+        fund_amount: '0.05',
+      },
+      opts || {},
+    );
+    return apiJson('/ants/reproduce', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then((payload) => {
+      const child = payload.child || null;
+      if (child) {
+        records = records.filter((r) => r.agent_id !== child.agent_id).concat([child]);
+        B.agents = records;
+      }
+      return payload;
+    });
+  };
+
   B.fetchWorldCupKg = function () {
     if (!apiUrl) return Promise.reject(new Error('No backend API configured.'));
     return fetch(apiUrl + '/kg/world-cup')
@@ -219,6 +243,67 @@ DN.databridge = (function () {
       .then((payload) => {
         B.worldCupKg = payload;
         return payload;
+      });
+  };
+
+  function kgMatchKey(value) {
+    return String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  }
+
+  function runMatchesScoutingTarget(run, opts) {
+    if (!run || run.kind !== 'scouting' || run.status !== 'succeeded') return false;
+    opts = opts || {};
+    const wantedId = opts.match_id || opts.market_key || '';
+    const wantedName = kgMatchKey(opts.match || opts.name || '');
+    const runId = run.match_id || '';
+    const runName = kgMatchKey(run.match || '');
+    if (wantedId && runId && wantedId === runId) return true;
+    if (wantedName && runName && wantedName === runName) return true;
+    const command = Array.isArray(run.command) ? run.command.map(String) : [];
+    return Boolean(
+      (wantedId && command.includes(wantedId)) ||
+      (wantedName && command.some((part) => kgMatchKey(part) === wantedName))
+    );
+  }
+
+  B.fetchRuns = function () {
+    return apiJson('/runs')
+      .then((payload) => {
+        B.runs = payload.runs || [];
+        return payload;
+      });
+  };
+
+  B.fetchRunKg = function (runId) {
+    if (!runId) return Promise.reject(new Error('run id required'));
+    return apiJson('/runs/' + encodeURIComponent(runId) + '/kg')
+      .then((payload) => {
+        payload.source_run_id = runId;
+        return payload;
+      });
+  };
+
+  B.fetchScoutingKgForMatch = function (opts) {
+    return B.fetchRuns()
+      .then((payload) => {
+        const runs = (payload.runs || []).filter((run) => runMatchesScoutingTarget(run, opts));
+        function tryRun(index) {
+          const run = runs[index];
+          if (!run) return null;
+          return B.fetchRunKg(run.id)
+            .then((kg) => {
+              kg.source_run = run;
+              kg.source_run_id = run.id;
+              return kg;
+            })
+            .catch(() => tryRun(index + 1));
+        }
+        return tryRun(0);
       });
   };
 
