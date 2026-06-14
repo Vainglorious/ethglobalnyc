@@ -350,9 +350,9 @@ DN.lifecycle = (function () {
       // than this phase but the KG fetch in the next phase will see
       // whatever is ready (or the cached deployment build if not).
       if (DN.databridge && DN.databridge.startScoutingRun) {
-        if (DN.logTerm) DN.logTerm.push('SCOUT', 'Backend scouting run kicked off — Railway is mining sources for the KG.');
+        if (DN.logTerm) DN.logTerm.push('SCOUT', 'Selected fixture scouting is running — Railway is mining sources for the KG.');
         if (DN.kgview && DN.kgview.reset) DN.kgview.reset('Live scouting KG');
-        DN.databridge.startScoutingRun().then((result) => {
+        startBackendRun().then((result) => {
           const manifest = (result && result.manifest) || {};
           const ents = manifest.entity_count || 0;
           const links = manifest.relationship_count || 0;

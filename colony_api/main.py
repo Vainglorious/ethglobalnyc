@@ -851,10 +851,6 @@ def _forecast_receipt_path(action: str) -> Path:
 
 
 def _wallet_store_env_payload(base_name: str) -> str:
-    direct = os.environ.get(base_name)
-    if direct:
-        return direct
-
     chunks: list[str] = []
     index = 0
     while True:
@@ -865,7 +861,10 @@ def _wallet_store_env_payload(base_name: str) -> str:
             break
         chunks.append(part)
         index += 1
-    return "".join(chunks)
+    if chunks:
+        return "".join(chunks)
+
+    return os.environ.get(base_name) or ""
 
 
 def _write_env_wallet_store(env_payload: str, *, env_name: str, target_dir: str) -> str:
