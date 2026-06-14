@@ -1018,14 +1018,21 @@ DN.hud = (function () {
         DN.databridge.killAnt(agentId, { reason: 'manual_card' })
           .then((payload) => {
             const killed = payload.ant || {};
+            const ensPublication = payload.ens_publication || {};
             a.agentRecord = killed;
             a.outcome = 'culled';
             a.state = 'dead';
-            a.deadTimer = Math.max(a.deadTimer || 0, 2.0);
+            a.deadTimer = 0;
             a.dead = true;
+            a.permanentDead = true;
             if (DN.ants && DN.ants.showOutcomeGlow) DN.ants.showOutcomeGlow();
-            H.pushThought((killed.ens_name || killed.agent_id || agentId) + ' marked dead.', 'Lineage', '#D96E54');
-            if (DN.logTerm) DN.logTerm.push('LINEAGE', (killed.ens_name || killed.agent_id || agentId) + ' marked dead.');
+            const ensStatus = ensPublication.status ? ' · ENS ' + ensPublication.status : '';
+            H.pushThought((killed.ens_name || killed.agent_id || agentId) + ' marked dead' + ensStatus + '.', 'Lineage', '#D96E54');
+            if (DN.logTerm) {
+              DN.logTerm.push('LINEAGE', (killed.ens_name || killed.agent_id || agentId) + ' marked dead and removed from the active map' + ensStatus + '.');
+              if (ensPublication.identity_path) DN.logTerm.push('LINEAGE', 'Kill ENS identity JSON ' + ensPublication.identity_path);
+              if (ensPublication.returncode && ensPublication.status === 'failed') DN.logTerm.push('LINEAGE', 'Kill ENS publish failed: ' + (ensPublication.stderr || ensPublication.stdout || 'unknown error'));
+            }
             H.showAnt(a, following);
           })
           .catch((err) => {

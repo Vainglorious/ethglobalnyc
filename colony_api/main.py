@@ -198,6 +198,8 @@ class AntReproduceRequest(BaseModel):
 
 class AntKillRequest(BaseModel):
     reason: str = "manual"
+    publish_ens: bool = True
+    broadcast_ens: bool | None = None
 
 
 class AntAvatarRequest(BaseModel):
@@ -668,16 +670,20 @@ def _fund_child_wallet(agent_id: str, wallet_store: str, request: AntReproduceRe
 
 
 def _child_ens_record(child: dict) -> dict:
-    ens_name = str(child.get("ens_name") or "")
+    return _ant_ens_record(child, child.get("ens_text_records") or {})
+
+
+def _ant_ens_record(ant: dict, text_records: dict) -> dict:
+    ens_name = str(ant.get("ens_name") or "")
     parent = _ens_parent()
     suffix = f".{parent}"
     label = ens_name.removesuffix(suffix) if ens_name.endswith(suffix) else ens_name.split(".", 1)[0]
     return {
-        "agent_id": child.get("agent_id"),
+        "agent_id": ant.get("agent_id"),
         "ens_name": ens_name,
         "label": label,
-        "addr": child.get("wallet_address") or "",
-        "text": child.get("ens_text_records") or {},
+        "addr": ant.get("wallet_address") or "",
+        "text": text_records,
     }
 
 
@@ -707,6 +713,127 @@ def _publish_child_ens(child: dict, request: AntReproduceRequest) -> dict:
         _ens_parent(),
         "--agent-id",
         str(child["agent_id"]),
+    ]
+    if broadcast:
+        command.append("--broadcast")
+    try:
+        result = subprocess.run(command, cwd=REPO_ROOT, env=_x402_env(), check=False, capture_output=True, text=True, timeout=420)
+    except Exception as exc:
+        return {"status": "failed", "broadcast": broadcast, "identity_path": str(identity_path), "error": str(exc)}
+    status = "published" if broadcast and result.returncode == 0 else "planned" if result.returncode == 0 else "failed"
+    return {
+        "status": status,
+        "broadcast": broadcast,
+        "identity_path": str(identity_path),
+        "returncode": result.returncode,
+        "stdout": result.stdout[-2400:],
+        "stderr": result.stderr[-2400:],
+    }
+
+
+def _ant_identity_text(ant: dict, *, active: bool, status: str, killed_at: str | None = None, kill_reason: str | None = None) -> dict:
+    agent_id = str(ant.get("agent_id") or "")
+    ens_name = str(ant.get("ens_name") or _root_ens_name(agent_id))
+    generation = int(ant.get("generation") or 0)
+    parent_ens = str(ant.get("parent_ens_name") or "")
+    lineage_ens = str(ant.get("lineage_ens_name") or ant.get("lineage") or ens_name)
+    profile_url = str(ant.get("profile_url") or f"{_public_api_base_url()}/ants/{agent_id}.json")
+    avatar = str(ant.get("avatar") or _avatar_url(agent_id))
+    personality = _avatar_personality_for_record(ant)
+    description = (
+        f"Colony ant {ens_name} is inactive; killed for {kill_reason or 'manual'}."
+        if not active
+        else f"Colony ant {ens_name} is active in the forecast colony."
+    )
+    agent_context = {
+        "schema": "ensip-26",
+        "kind": "colony_ant",
+        "agent_id": agent_id,
+        "ens_name": ens_name,
+        "display_name": ens_name.split(".", 1)[0].replace("-", " ").title(),
+        "description": description,
+        "active": active,
+        "status": status,
+        "generation": generation,
+        "parent": parent_ens,
+        "lineage": lineage_ens,
+        "avatar": avatar,
+        "profile": profile_url,
+        "wallets": {
+            "evm": str(ant.get("wallet_address") or ""),
+            "arc_testnet": str(ant.get("wallet_address") or ""),
+        },
+        "personality": personality,
+        "endpoints": {
+            "web": profile_url,
+        },
+    }
+    if killed_at:
+        agent_context["killed_at"] = killed_at
+    if kill_reason:
+        agent_context["kill_reason"] = kill_reason
+    records = {
+        "description": description,
+        "url": profile_url,
+        "avatar": avatar,
+        "agent-context": json.dumps(agent_context, sort_keys=True, separators=(",", ":")),
+        "agent-endpoint[web]": profile_url,
+        "com.colony.agent_id": agent_id,
+        "com.colony.active": "true" if active else "false",
+        "com.colony.status": status,
+        "com.colony.parent": parent_ens,
+        "com.colony.lineage": lineage_ens,
+        "com.colony.generation": str(generation),
+        "com.colony.profile": profile_url,
+        "com.colony.avatar": avatar,
+        "com.colony.avatar_trait": str(ant.get("avatar_trait") or _strongest_trait(personality)),
+    }
+    if killed_at:
+        records["com.colony.killed_at"] = killed_at
+    if kill_reason:
+        records["com.colony.kill_reason"] = kill_reason
+    if ant.get("genome_id"):
+        records["com.colony.genome_id"] = str(ant.get("genome_id"))
+    if ant.get("genome_hash"):
+        records["com.colony.genome_hash"] = str(ant.get("genome_hash"))
+    if ant.get("wallet_address"):
+        records["com.colony.wallet"] = str(ant.get("wallet_address"))
+    return records
+
+
+def _publish_ant_ens_update(
+    ant: dict,
+    *,
+    action: str,
+    text_records: dict,
+    publish: bool,
+    broadcast: bool | None,
+) -> dict:
+    if not publish:
+        return {"status": "skipped", "reason": "publish_ens=false"}
+    if not REGISTER_ENS_IDENTITIES.exists():
+        return {"status": "skipped", "reason": "colony/register_ens_identities.py is missing"}
+    if broadcast is None:
+        broadcast = _env_bool(f"COLONY_API_{action.upper()}_BROADCAST_ENS", False)
+    agent_id = str(ant.get("agent_id") or "")
+    identity_path = RUNS_ROOT / "ens" / f"{agent_id}.{action}.identity.json"
+    identity_path.parent.mkdir(parents=True, exist_ok=True)
+    identity_payload = {
+        "schema_version": 1,
+        "ens_parent": _ens_parent(),
+        "records": [_ant_ens_record(ant, text_records)],
+    }
+    identity_path.write_text(json.dumps(identity_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    command = [
+        sys.executable,
+        str(REGISTER_ENS_IDENTITIES),
+        str(identity_path),
+        "--env",
+        "colony/.env",
+        "--ens-parent",
+        _ens_parent(),
+        "--agent-id",
+        agent_id,
     ]
     if broadcast:
         command.append("--broadcast")
@@ -2184,20 +2311,42 @@ def kill_ant(agent_id: str, request: AntKillRequest | None = None) -> dict:
     ant = _find_parent_ant(agent_id)
     state = _read_ant_state()
     reason = (request.reason if request else "manual").strip() or "manual"
+    resolved_agent_id = str(ant.get("agent_id") or agent_id)
+    killed_at = _utc_now()
     agent_state = dict(state.get(str(ant.get("agent_id") or agent_id)) or {})
     agent_state.update(
         {
             "status": "dead",
-            "killed_at": _utc_now(),
+            "killed_at": killed_at,
             "kill_reason": reason,
         }
     )
-    state[str(ant.get("agent_id") or agent_id)] = agent_state
+    state[resolved_agent_id] = agent_state
     _write_ant_state(state)
     ant.update(agent_state)
+    ens_text_records = _ant_identity_text(ant, active=False, status="dead", killed_at=killed_at, kill_reason=reason)
+    ant["ens_text_records"] = ens_text_records
+    children = _read_child_ants()
+    changed = False
+    for child in children:
+        if str(child.get("agent_id") or "") == resolved_agent_id:
+            child.update(agent_state)
+            child["ens_text_records"] = ens_text_records
+            changed = True
+            break
+    if changed:
+        _write_child_ants(children)
+    ens_publication = _publish_ant_ens_update(
+        ant,
+        action="kill",
+        text_records=ens_text_records,
+        publish=request.publish_ens if request else True,
+        broadcast=request.broadcast_ens if request else None,
+    )
     return {
         "status": "killed",
         "ant": ant,
+        "ens_publication": ens_publication,
         "source": str(ANT_STATE_PATH),
     }
 

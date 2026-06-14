@@ -706,7 +706,7 @@ DN.ants = (function () {
     if (rec.status === 'dead' || rec.status === 'killed') {
       a.outcome = 'culled';
       a.state = 'dead';
-      a.deadTimer = Math.max(a.deadTimer || 0, 2.0);
+      a.deadTimer = 0;
       a.permanentDead = true;
     }
   }

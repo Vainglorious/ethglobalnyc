@@ -241,7 +241,14 @@ DN.databridge = (function () {
 
   B.killAnt = function (agentId, opts) {
     if (!agentId) return Promise.reject(new Error('Missing agent id.'));
-    const body = Object.assign({ reason: 'manual' }, opts || {});
+    const body = Object.assign(
+      {
+        reason: 'manual',
+        publish_ens: true,
+        broadcast_ens: true,
+      },
+      opts || {},
+    );
     return apiJson('/ants/' + encodeURIComponent(agentId) + '/kill', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
