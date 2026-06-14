@@ -130,6 +130,18 @@ body.underground #atmos {
 .kg-node:hover circle { stroke: #fff; stroke-width: 2.4; }
 .kg-node.dim { opacity: 0.25; }
 .kg-node.selected circle { stroke: #fff; stroke-width: 3; filter: drop-shadow(0 0 7px rgba(176,126,28,0.65)); }
+.kg-node.new circle { animation: kg-node-new 1.2s ease-out 0s 3; stroke: #6DD68A; stroke-width: 3; }
+.kg-node.updated circle { animation: kg-node-updated 1.2s ease-out 0s 3; stroke: #66E0FF; stroke-width: 3; }
+@keyframes kg-node-new {
+  0% { filter: drop-shadow(0 0 0 rgba(109,214,138,0)); }
+  45% { filter: drop-shadow(0 0 11px rgba(109,214,138,0.92)); }
+  100% { filter: drop-shadow(0 1px 0 rgba(74,58,30,0.2)); }
+}
+@keyframes kg-node-updated {
+  0% { filter: drop-shadow(0 0 0 rgba(102,224,255,0)); }
+  45% { filter: drop-shadow(0 0 11px rgba(102,224,255,0.9)); }
+  100% { filter: drop-shadow(0 1px 0 rgba(74,58,30,0.2)); }
+}
 .kg-node text { fill: var(--ink-soft); font: 700 9px var(--font); text-anchor: middle; pointer-events: none; paint-order: stroke; stroke: rgba(243,235,211,0.88); stroke-width: 3px; }
 .kg-selected-edge { stroke: rgba(176,126,28,0.58); stroke-width: 2.2; stroke-linecap: round; }
 .kg-detail {

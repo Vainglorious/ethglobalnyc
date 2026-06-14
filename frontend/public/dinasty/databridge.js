@@ -221,6 +221,54 @@ DN.databridge = (function () {
         return payload;
       });
   };
+
+  function compactScoutingLabel(value, max) {
+    const label = String(value || '').replace(/_/g, ' ');
+    return label.length > max ? label.slice(0, max - 3) + '...' : label;
+  }
+
+  function scoutingEventLog(event, graphChange) {
+    if (!event || !event.event_type) return null;
+    if (event.event_type === 'kg_stage') {
+      const stage = compactScoutingLabel(event.stage || 'kg_stage', 44);
+      const match = event.match ? ' · ' + event.match : '';
+      return { level: 'SCOUT', message: 'Stage: ' + stage + match };
+    }
+    if (event.event_type === 'kg_entity') {
+      const action = graphChange && graphChange.action === 'updated' ? 'Updated node' : 'New node';
+      const type = graphChange && graphChange.type ? ' · ' + compactScoutingLabel(graphChange.type, 24) : '';
+      const label = graphChange && graphChange.label ? graphChange.label : 'KG entity';
+      return { level: 'KG', message: action + ': ' + compactScoutingLabel(label, 72) + type };
+    }
+    if (event.event_type === 'kg_relationship') {
+      const rel = graphChange && graphChange.relation ? compactScoutingLabel(graphChange.relation, 36) : 'related_to';
+      const source = graphChange && graphChange.source ? compactScoutingLabel(graphChange.source, 28) : 'source';
+      const target = graphChange && graphChange.target ? compactScoutingLabel(graphChange.target, 28) : 'target';
+      return { level: 'KG', message: 'Linked nodes: ' + source + ' -> ' + target + ' · ' + rel };
+    }
+    if (event.event_type === 'kg_manifest') {
+      const manifest = event.manifest || {};
+      return {
+        level: 'KG',
+        message: 'Manifest ready: ' + (manifest.entity_count || 0) + ' entities · ' + (manifest.relationship_count || 0) + ' links',
+      };
+    }
+    if (event.event_type === 'scouting_audit') {
+      const backlog = event.backlog_count == null ? 'n/a' : event.backlog_count;
+      return { level: 'SCOUT', message: 'Audit complete · backlog ' + backlog };
+    }
+    if (/scout|scouting/i.test(event.event_type)) {
+      return { level: 'SCOUT', message: compactScoutingLabel(event.event_type, 48) };
+    }
+    return null;
+  }
+
+  function pushScoutingLog(event, graphChange) {
+    if (!DN.logTerm) return;
+    const row = scoutingEventLog(event, graphChange);
+    if (row) DN.logTerm.push(row.level, row.message);
+  }
+
   B.startScoutingRun = function (opts) {
     if (!apiUrl) return Promise.reject(new Error('No backend API configured.'));
     const body = Object.assign(
@@ -235,6 +283,7 @@ DN.databridge = (function () {
       },
       opts || {},
     );
+    if (DN.logTerm) DN.logTerm.push('SCOUT', 'Submitting scouting run for ' + body.match + '...');
     return fetch(apiUrl + '/scouting/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -244,6 +293,7 @@ DN.databridge = (function () {
       .then((run) => {
         B.runId = run.id;
         if (DN.kgview) DN.kgview.reset('Live scouting KG');
+        if (DN.logTerm) DN.logTerm.push('SCOUT', 'Run ' + run.id + ' queued · opening event stream.');
         if (!window.EventSource) return pollScoutingRun(run.id);
         return streamScoutingRun(run.id);
       });
@@ -415,10 +465,16 @@ DN.databridge = (function () {
   function pollScoutingRun(runId) {
     return new Promise((resolve, reject) => {
       let tries = 0;
+      let lastStatus = null;
+      if (DN.logTerm) DN.logTerm.push('SCOUT', 'Streaming unavailable; polling scouting run ' + runId + '.');
       const timer = setInterval(() => {
         fetch(apiUrl + '/runs/' + runId)
           .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
           .then((run) => {
+            if (run.status !== lastStatus) {
+              lastStatus = run.status;
+              if (DN.logTerm) DN.logTerm.push('SCOUT', 'Run status: ' + run.status + '.');
+            }
             if (run.status === 'succeeded') {
               clearInterval(timer);
               Promise.all([
@@ -427,6 +483,7 @@ DN.databridge = (function () {
                 fetch(apiUrl + '/runs/' + runId + '/scouting-audit').then((r) => (r.ok ? r.json() : null)).catch(() => null),
               ]).then(([kg, manifest, audit]) => {
                 if (DN.kgview && kg) DN.kgview.showGraph(kg, 'Completed scouting KG');
+                if (DN.logTerm) DN.logTerm.push('KG', 'Final KG loaded for ' + runId + '.');
                 resolve({ id: runId, run, kg, manifest, audit });
               });
             } else if (run.status === 'failed' || ++tries > 300) {
@@ -446,16 +503,26 @@ DN.databridge = (function () {
     return new Promise((resolve, reject) => {
       const source = new EventSource(apiUrl + '/runs/' + runId + '/stream');
       let latestStatus = null;
+      let lastStatus = null;
+      source.onopen = () => {
+        if (DN.logTerm) DN.logTerm.push('SCOUT', 'Event stream connected for ' + runId + '.');
+      };
       source.addEventListener('status', (e) => {
         try {
           latestStatus = JSON.parse(e.data);
           if (DN.kgview && latestStatus.status === 'running') DN.kgview.status('Scouting run is running...');
+          if (latestStatus.status && latestStatus.status !== lastStatus) {
+            lastStatus = latestStatus.status;
+            if (DN.logTerm) DN.logTerm.push('SCOUT', 'Run status: ' + latestStatus.status + '.');
+          }
         } catch (err) {}
       });
       source.addEventListener('colony_event', (e) => {
         try {
           const event = JSON.parse(e.data);
-          if (DN.kgview && /^kg_|^scouting_/.test(event.event_type || '')) DN.kgview.ingest(event);
+          let graphChange = null;
+          if (DN.kgview && /^kg_|^scouting_/.test(event.event_type || '')) graphChange = DN.kgview.ingest(event);
+          pushScoutingLog(event, graphChange);
         } catch (err) {}
       });
       source.addEventListener('done', () => {
@@ -470,11 +537,13 @@ DN.databridge = (function () {
           fetch(apiUrl + '/runs/' + runId + '/scouting-audit').then((r) => (r.ok ? r.json() : null)).catch(() => null),
         ]).then(([kg, manifest, audit]) => {
           if (DN.kgview && kg) DN.kgview.showGraph(kg, 'Completed scouting KG');
+          if (DN.logTerm) DN.logTerm.push('SCOUT', 'Scouting stream complete for ' + runId + '.');
           resolve({ id: runId, run: latestStatus, kg, manifest, audit });
         }, reject);
       });
       source.onerror = () => {
         source.close();
+        if (DN.logTerm) DN.logTerm.push('SCOUT', 'Event stream dropped; switching to polling.');
         pollScoutingRun(runId).then(resolve, reject);
       };
     });

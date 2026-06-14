@@ -19,6 +19,8 @@ DN.logTerm = (function () {
     DISPUTE:   '#FF8B6B',
     INFLUENCE: '#B47EE0',
     FORECAST:  '#66E0FF',
+    SCOUT:     '#8E79C4',
+    KG:        '#3FA89F',
     STAKE:     '#6DD68A',
     BIRTH:     '#FFE9A0',
     DEATH:     '#8C7E60',

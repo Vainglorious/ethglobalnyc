@@ -12,6 +12,7 @@ DN.kgview = (function () {
   let edges = [];
   let selectedId = null;
   let renderQueued = false;
+  const nodeActivity = new Map();
   const colors = {
     match: '#3FA89F',
     team: '#E8A23D',
@@ -239,18 +240,63 @@ DN.kgview = (function () {
     });
   }
 
+  function flashNode(id, action) {
+    if (!id || action === 'loaded') return;
+    nodeActivity.set(id, { action, expires: Date.now() + 3600 });
+    setTimeout(() => {
+      const active = nodeActivity.get(id);
+      if (active && active.expires <= Date.now()) {
+        nodeActivity.delete(id);
+        requestRender();
+      }
+    }, 3700);
+  }
+
+  function activityFor(id) {
+    const active = nodeActivity.get(id);
+    if (!active) return '';
+    if (active.expires <= Date.now()) {
+      nodeActivity.delete(id);
+      return '';
+    }
+    return active.action === 'updated' ? ' updated' : ' new';
+  }
+
   function addNode(entity, silent) {
     if (!entity) return;
     const id = entity.entity_id || entity.id;
     if (!id) return;
+    const existed = nodes.has(id);
     nodes.set(id, entity);
+    const action = existed ? 'updated' : 'new';
+    if (!silent) flashNode(id, action);
     if (!silent) requestRender();
+    return {
+      action,
+      id,
+      label: labelFor(entity),
+      type: typeFor(entity),
+    };
   }
 
   function addEdge(relationship, silent) {
     if (!relationship) return;
+    const sourceId = relationship.source_id || relationship.source;
+    const targetId = relationship.target_id || relationship.target;
+    const relation = relationship.relation_type || relationship.relation || 'related_to';
+    const existed = edges.some((edge) =>
+      (edge.source_id || edge.source) === sourceId &&
+      (edge.target_id || edge.target) === targetId &&
+      (edge.relation_type || edge.relation || 'related_to') === relation
+    );
     edges.push(relationship);
     if (!silent) requestRender();
+    return {
+      action: existed ? 'updated_link' : 'new_link',
+      source: sourceId,
+      target: targetId,
+      relation,
+    };
   }
 
   function positionedNodes() {
@@ -351,7 +397,8 @@ DN.kgview = (function () {
       const label = item.groupIndex < 3 && (type === 'match' || type === 'team') ? '<text y="' + (radius + 13) + '">' + escapeHtml(shortLabel(labelFor(node))) + '</text>' : '';
       const classes = 'kg-node' +
         (id === selectedId ? ' selected' : '') +
-        (selectedRelatedIds && !selectedRelatedIds.has(id) ? ' dim' : '');
+        (selectedRelatedIds && !selectedRelatedIds.has(id) ? ' dim' : '') +
+        activityFor(id);
       return '<g class="' + classes + '" data-node="' + encodeURIComponent(id) + '" tabindex="0" role="button" transform="translate(' + item.x + ' ' + item.y + ')">' +
         '<circle r="' + radius + '" fill="' + color + '"></circle>' +
         label +
@@ -365,6 +412,7 @@ DN.kgview = (function () {
     nodes = new Map();
     edges = [];
     selectedId = null;
+    nodeActivity.clear();
     root.querySelector('#kg-title').textContent = title || 'KG stream';
     statusEl.textContent = 'Waiting for graph events...';
     legendEl.innerHTML = '';
@@ -387,11 +435,13 @@ DN.kgview = (function () {
       const links = event.relationship_count != null ? ' · ' + event.relationship_count + ' links' : '';
       K.status(String(event.stage || 'kg_stage').replace(/_/g, ' ') + entities + links);
     } else if (event.event_type === 'kg_entity') {
-      addNode(event.entity);
+      const change = addNode(event.entity);
       K.status(nodes.size + ' entities streamed · ' + edges.length + ' links');
+      return change;
     } else if (event.event_type === 'kg_relationship') {
-      addEdge(event.relationship);
+      const change = addEdge(event.relationship);
       K.status(nodes.size + ' entities streamed · ' + edges.length + ' links');
+      return change;
     } else if (event.event_type === 'kg_manifest') {
       const manifest = event.manifest || {};
       K.status('Manifest ready · ' + (manifest.entity_count || nodes.size) + ' entities · ' + (manifest.relationship_count || edges.length) + ' links');

@@ -6,6 +6,11 @@ DN.hud = (function () {
   const $ = id => document.getElementById(id);
   function hex(n) { return '#' + n.toString(16).padStart(6, '0'); }
   function cap(s) { return s.replace(/^./, c => c.toUpperCase()); }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
 
   const ICON = {
     forage: '<svg viewBox="0 0 24 24"><path d="M4 18c4-1 4-6 8-6s4 5 8 4"/><circle cx="4" cy="18" r="1.4"/><circle cx="20" cy="16" r="1.4"/></svg>',
@@ -41,12 +46,25 @@ DN.hud = (function () {
   function initBackendControl() {
     const root = $('backend');
     if (!root) return;
+    const SCOUT_START_DATE = '2026-06-14';
+    const fallbackScoutMatches = [
+      { match_id: 'match:world_cup_2026:004:germany-curacao', market_key: 'match:world_cup_2026:004:germany-curacao', name: 'Germany vs Curaçao', home_team: 'Germany', away_team: 'Curaçao', date: '2026-06-14', time: '12:00 UTC-5', group: 'Group E', venue: 'Houston' },
+      { match_id: 'match:world_cup_2026:005:netherlands-japan', market_key: 'match:world_cup_2026:005:netherlands-japan', name: 'Netherlands vs Japan', home_team: 'Netherlands', away_team: 'Japan', date: '2026-06-14', time: '15:00 UTC-5', group: 'Group F', venue: 'Dallas (Arlington)' },
+      { match_id: 'match:world_cup_2026:006:ivory-coast-ecuador', market_key: 'match:world_cup_2026:006:ivory-coast-ecuador', name: 'Ivory Coast vs Ecuador', home_team: 'Ivory Coast', away_team: 'Ecuador', date: '2026-06-14', time: '19:00 UTC-4', group: 'Group E', venue: 'Philadelphia' },
+      { match_id: 'match:world_cup_2026:007:sweden-tunisia', market_key: 'match:world_cup_2026:007:sweden-tunisia', name: 'Sweden vs Tunisia', home_team: 'Sweden', away_team: 'Tunisia', date: '2026-06-14', time: '20:00 UTC-6', group: 'Group F', venue: 'Monterrey (Guadalupe)' },
+    ];
+    let scoutTargets = [];
+    let selectedScoutTarget = null;
     root.innerHTML =
       '<div class="backend-copy"><div class="backend-k">Backend</div><div class="backend-s" id="backend-status">Railway linked</div></div>' +
       '<div class="backend-actions">' +
         '<button class="backend-btn secondary" id="backend-ants">Get ants</button>' +
         '<button class="backend-btn secondary" id="backend-kg">Get KG</button>' +
-        '<button class="backend-btn secondary" id="backend-scout">Run scouting</button>' +
+        '<select class="forecast-game-select scout-team-select" id="scout-team" aria-label="Scout team">' +
+          '<option value="0">Germany · vs Curaçao · Jun 14</option>' +
+          '<option value="1">Curaçao · vs Germany · Jun 14</option>' +
+        '</select>' +
+        '<button class="backend-btn secondary" id="backend-scout">Scout</button>' +
         '<button class="backend-btn" id="backend-run">Run LLM agents</button>' +
         '<select class="forecast-game-select" id="forecast-game" aria-label="Game">' +
           '<option value="match:world_cup_2026:013:2026_06_13_brazil_morocco">Brazil vs Morocco</option>' +
@@ -65,6 +83,7 @@ DN.hud = (function () {
     const antsBtn = $('backend-ants');
     const kgBtn = $('backend-kg');
     const scoutBtn = $('backend-scout');
+    const scoutTeam = $('scout-team');
     const forecastDeployBtn = $('forecast-deploy');
     const x402BuyBtn = $('x402-buy');
     const forecastSetupBtn = $('forecast-setup');
@@ -84,6 +103,53 @@ DN.hud = (function () {
       away_team: forecastCfg.AWAY_TEAM || 'Morocco',
       name: (forecastCfg.HOME_TEAM || 'Brazil') + ' vs ' + (forecastCfg.AWAY_TEAM || 'Morocco'),
     };
+
+    function scoutDateLabel(value) {
+      if (!value) return 'upcoming';
+      const parts = String(value).split('-');
+      if (parts.length !== 3) return value;
+      const month = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(parts[1]) - 1] || parts[1];
+      return month + ' ' + Number(parts[2]);
+    }
+
+    function scoutOptionLabel(target) {
+      const opponent = target.side === 'home' ? target.match.away_team : target.match.home_team;
+      return target.team + ' · vs ' + opponent + ' · ' + scoutDateLabel(target.match.date);
+    }
+
+    function buildScoutTargets(games) {
+      const seen = new Set();
+      const targets = [];
+      (games || []).forEach((game) => {
+        if (!game || !game.group || !game.date || game.date < SCOUT_START_DATE || game.score) return;
+        ['home', 'away'].forEach((side) => {
+          const team = side === 'home' ? game.home_team : game.away_team;
+          if (!team) return;
+          const key = team + '|' + (game.match_id || game.market_key || game.name);
+          if (seen.has(key)) return;
+          seen.add(key);
+          targets.push({ team, side, match: game });
+        });
+      });
+      targets.sort((a, b) => {
+        const am = a.match;
+        const bm = b.match;
+        return String((am.date || '') + (am.time || '') + (am.name || '') + a.team)
+          .localeCompare(String((bm.date || '') + (bm.time || '') + (bm.name || '') + b.team));
+      });
+      return targets;
+    }
+
+    function updateScoutOptions(games) {
+      if (!scoutTeam) return;
+      scoutTargets = buildScoutTargets(games && games.length ? games : fallbackScoutMatches);
+      if (!scoutTargets.length) scoutTargets = buildScoutTargets(fallbackScoutMatches);
+      scoutTeam.innerHTML = scoutTargets.slice(0, 48).map((target, index) =>
+        '<option value="' + index + '">' + esc(scoutOptionLabel(target)) + '</option>'
+      ).join('');
+      selectedScoutTarget = scoutTargets[0] || null;
+      scoutTeam.value = '0';
+    }
 
     function updateWinnerOptions() {
       if (!forecastWinner) return;
@@ -119,7 +185,14 @@ DN.hud = (function () {
       });
     }
 
+    function setScoutingBusy(busy) {
+      [scoutBtn, scoutTeam].forEach((el) => {
+        if (el) el.disabled = busy;
+      });
+    }
+
     updateWinnerOptions();
+    updateScoutOptions(fallbackScoutMatches);
     if (DN.databridge && DN.databridge.fetchForecastConfig) {
       DN.databridge.fetchForecastConfig()
         .then((payload) => {
@@ -140,6 +213,7 @@ DN.hud = (function () {
           selectedGame = preferred;
           forecastGame.value = preferred.market_key;
           updateWinnerOptions();
+          updateScoutOptions(games);
         })
         .catch(() => {});
       forecastGame.addEventListener('change', () => {
@@ -157,6 +231,16 @@ DN.hud = (function () {
         forecastStakes = [];
         updateWinnerOptions();
         status.textContent = selectedGame.name;
+      });
+    }
+    if (scoutTeam) {
+      scoutTeam.addEventListener('change', () => {
+        const index = Number(scoutTeam.value);
+        selectedScoutTarget = scoutTargets[index] || scoutTargets[0] || null;
+        if (selectedScoutTarget) {
+          const match = selectedScoutTarget.match;
+          status.textContent = 'Scout ' + selectedScoutTarget.team + ' · ' + (match.group || 'group stage');
+        }
       });
     }
 
@@ -252,14 +336,16 @@ DN.hud = (function () {
     });
     scoutBtn.addEventListener('click', () => {
       if (!DN.databridge || !DN.databridge.startScoutingRun) return;
-      scoutBtn.disabled = true;
-      if (forecastGame) forecastGame.disabled = true;
-      status.textContent = 'Scouting ' + selectedGame.name + '...';
-      H.pushThought('Frontend started a public-data KG scouting run for ' + selectedGame.name + '.', 'Backend', '#3FA89F');
-      if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Scouting run kicked off for ' + selectedGame.name + '.');
+      const target = selectedScoutTarget || scoutTargets[0] || null;
+      const match = target && target.match ? target.match : selectedGame;
+      const team = target && target.team ? target.team : (match.home_team || 'selected team');
+      setScoutingBusy(true);
+      status.textContent = 'Scouting ' + team + '...';
+      H.pushThought('Frontend started a public-data KG scouting run for ' + team + '.', 'Backend', '#3FA89F');
+      if (DN.logTerm) DN.logTerm.push('SCOUT', 'Scouting ' + team + ' in ' + (match.name || 'selected match') + '.');
       DN.databridge.startScoutingRun({
-        match: selectedGame.name,
-        match_id: selectedGame.match_id || selectedGame.market_key,
+        match: match.name || ((match.home_team || team) + ' vs ' + (match.away_team || 'opponent')),
+        match_id: match.match_id || match.market_key || null,
         data_mode: 'public',
         include_deepseek_scout: true,
         voice_mode: 'llm',
@@ -270,9 +356,9 @@ DN.hud = (function () {
           const entities = manifest.entity_count || kg.entity_count || 0;
           const links = manifest.relationship_count || kg.relationship_count || 0;
           const ready = manifest.validation && manifest.validation.kg_load_ready === false ? 'needs review' : 'ready';
-          status.textContent = 'Scouting ' + ready + ' · ' + entities + ' entities';
-          H.pushThought('Scouting finished: ' + entities + ' KG entities and ' + links + ' relationships.', 'Backend', '#3FA89F');
-          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Scouting finished. Re-polling communications.');
+          status.textContent = team + ' scouting ' + ready + ' · ' + entities + ' entities';
+          H.pushThought(team + ' scouting finished: ' + entities + ' KG entities and ' + links + ' relationships.', 'Backend', '#3FA89F');
+          if (DN.logTerm) DN.logTerm.push('SCOUT', team + ' scouting finished. Re-polling communications.');
           const newId = (DN.databridge && DN.databridge.runId) || null;
           if (DN.databridge && DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(newId);
           if (DN.commsViz && DN.commsViz.reset) DN.commsViz.reset();
@@ -281,11 +367,9 @@ DN.hud = (function () {
         .catch((err) => {
           status.textContent = 'Scouting error';
           H.pushThought('Scouting failed: ' + (err.message || err), 'Backend', '#D96E54');
+          if (DN.logTerm) DN.logTerm.push('SCOUT', 'Scouting failed: ' + (err.message || err));
         })
-        .finally(() => {
-          scoutBtn.disabled = false;
-          if (forecastGame) forecastGame.disabled = false;
-        });
+        .finally(() => { setScoutingBusy(false); });
     });
     btn.addEventListener('click', () => {
       if (!DN.databridge || !DN.databridge.startDemoRun) return;

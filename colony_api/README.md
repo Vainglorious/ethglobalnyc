@@ -206,13 +206,15 @@ those env vars or a configured private wallet-store path.
 ## Run Scouting
 
 The frontend can start a public-data KG scouting run with `POST /scouting/run`.
-By default this runs `colony/run_match.py` for Brazil vs Morocco with public
-data and the DeepSeek structured scouting agents enabled.
+By default this runs `colony/run_match.py` with public data and the DeepSeek
+structured scouting agents enabled. The browser Scout control fills the request
+from the World Cup KG: it lists upcoming group-stage teams from June 14, 2026
+onward, then sends the selected fixture's `match` and `match_id`.
 
 ```bash
 curl -X POST https://ethglobalnyc-production.up.railway.app/scouting/run \
   -H "Content-Type: application/json" \
-  -d '{"match":"Brazil vs Morocco","data_mode":"public","include_deepseek_scout":true,"agents":20,"rooms":5,"seed":12,"voice_mode":"template"}'
+  -d '{"match":"Germany vs Curaçao","match_id":"match:world_cup_2026:004:germany-curacao","data_mode":"public","include_deepseek_scout":true,"agents":20,"rooms":5,"seed":12,"voice_mode":"template"}'
 ```
 
 When the run succeeds, fetch the generated KG artifacts:
@@ -271,7 +273,10 @@ source.addEventListener('done', () => {
 
 For `POST /scouting/run`, the stream also emits real KG events from the
 generated `world_graph.json` once the scouting subprocess has produced the run
-artifacts:
+artifacts. The frontend passes these into the KG overlay and the bottom log
+terminal: `kg_entity` events appear as `KG` rows for new or updated nodes,
+`kg_relationship` events appear as linked-node rows, and `kg_stage`,
+`kg_manifest`, and `scouting_audit` events appear as `SCOUT` progress rows.
 
 ```js
 source.addEventListener('colony_event', (event) => {
@@ -368,6 +373,8 @@ The interaction code lives in:
 ```text
 frontend/public/dinasty/databridge.js
 frontend/public/dinasty/hud.js
+frontend/public/dinasty/kgview.js
+frontend/public/dinasty/logTerm.js
 ```
 
 Frontend flow:
@@ -375,10 +382,12 @@ Frontend flow:
 1. `databridge.js` loads the latest successful backend run from `GET /runs`.
 2. The `Get ants` button calls `GET /ants` and binds wallet/ENS identity to visible ants.
 3. The `Get KG` button calls `GET /kg/world-cup` and renders the static tournament KG.
-4. The `Run scouting` button calls `POST /scouting/run`, listens to `GET /runs/{run_id}/stream`, and renders streamed KG entities/relationships.
-5. The `Run LLM agents` button calls `POST /runs/demo`.
-6. When demo events arrive, the frontend seeds colony stats and the thought ticker.
-7. If the backend is unavailable, the frontend falls back to `/data/demo.jsonl`.
+4. The Scout selector lists upcoming group-stage teams from `GET /forecast/games`, filtered to unscored matches dated `2026-06-14` or later.
+5. The `Scout` button calls `POST /scouting/run` for the selected fixture, listens to `GET /runs/{run_id}/stream`, writes live `SCOUT`/`KG` terminal rows, and renders streamed KG entities/relationships.
+6. The KG overlay briefly pulses newly streamed nodes green and updated nodes blue.
+7. The `Run LLM agents` button calls `POST /runs/demo`.
+8. When demo events arrive, the frontend seeds colony stats and the thought ticker.
+9. If the backend is unavailable, the frontend falls back to `/data/demo.jsonl`.
 
 Minimal browser-side call:
 
