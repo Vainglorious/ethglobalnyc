@@ -1,0 +1,6 @@
+# clickhouse_api — the metered knowledge plane.
+fastapi>=0.115
+uvicorn>=0.30
+# ClickHouse is queried over its HTTPS interface with stdlib urllib (see ch.py),
+# so no clickhouse driver is required. certifi gives a CA bundle on macOS python.org.
+certifi

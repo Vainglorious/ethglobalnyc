@@ -1,0 +1,66 @@
+================================================================================
+WORLDCOIN VALIDATION — agents to verify (batch 1)
+2026-06-13
+================================================================================
+
+GOAL
+----
+Whitelist these 10 colony agents as HUMAN-BACKED via World ID / AgentKit. Adil
+approves each in the World App (on phone); the address gets registered to the
+AgentBook on World Chain. See worldcoin/README.md + worldcoin/docs/agent-kit-integrate.md.
+
+AGENTS TO VALIDATE (agent_id, ens_subdomain, wallet_address)
+  ant_0000  root-fable-0.colonny.eth  0x3fB467e269e4C0BfdeAA99086f7854d3590A078D
+  ant_0001  root-onyx-1.colonny.eth   0x9a10bc9D0E4C7287DF66796049039dbc3fb9B6fb
+  ant_0002  root-sable-2.colonny.eth  0x9994F4b6780B68a6ca1306fCe9D63b2042606A2c
+  ant_0003  root-ember-3.colonny.eth  0x81FeBa51425d0F0A1059D0428A0986acF88D286B
+  ant_0004  root-cold-4.colonny.eth   0x8F36b2A615F97E3A8e03c3090ab5A272555905D0
+  ant_0005  root-cold-5.colonny.eth   0x0deD95a0d7533b1536970db0Cc3ee1d5772CbEb3
+  ant_0006  root-onyx-6.colonny.eth   0xa3Addf63f47634c04Ece77061874c3C33129D1B9
+  ant_0007  root-iron-7.colonny.eth   0x9Dc33802Cac7A4f7C44CE63fD1EF13e2B3701B60
+  ant_0008  root-quiet-8.colonny.eth  0xC6C676e09838Dc9620d1a5C256811250A788C801
+  ant_0009  root-amber-9.colonny.eth  0x8D5b36F77B5CFEdd524cA899990D61803F7802F3
+
+VALIDATION PROCESS (per address)
+  npx @worldcoin/agentkit-cli register <wallet_address>   # pops World App prompt -> Adil approves on phone
+  npx @worldcoin/agentkit-cli status   <wallet_address>   # -> { registered: true, humanId, contract, network }
+  - register defaults to --auto (submits via relay https://x402-worldchain.vercel.app); no private key, no gas.
+  - Network: eip155:480 (World Chain). AgentBook: 0xA23aB2712eA7BBa896930544C7d6636a96b944dA.
+
+*** CRITICAL CAVEAT (proof-of-personhood) ***
+  Every address Adil approves resolves to the SAME anonymous humanId (one human).
+  Already PROVEN live (see 2026-06-12-worldcoin-agentkitnotes.txt): two test wallets
+  both returned humanId 0x41e49b485e4b3e568ab23e28820f5c0be5135ec3322786f9d492ec8276608f0
+  (Adil's). So all 10 of these will return that SAME humanId. This is "one human =
+  one lineage root", NOT 10 distinct humans. Accepted for the hackathon.
+
+DESIGN INTENT (why verify these ants)
+  These verified ants get PRIVILEGED status going forward: larger birth bankroll +
+  premium ClickHouse data tier, and they may interact with other ants differently
+  because of it (the verified-vs-anon experiment, plan §8). The humanId/verified
+  badge gets stamped into colony state / ENS lineage records.
+
+HOW WE'RE RUNNING IT (decided)
+  Adil runs `register <addr>` LOCALLY and scans the QR / approves in World App for
+  each one. Running locally avoids the session-mismatch timeout we hit when Claude
+  ran register in the background (each register opens its OWN session; the QR you
+  scan must be the session that command opened). Claude provides the commands +
+  verifies status after.
+
+POSSIBLE SPLIT ACROSS TWO HUMANS (better for the experiment)
+  Adil may hand HALF to another dev to validate with THEIR World App. Proposed split:
+    Adil    -> ant_0000..ant_0004  (-> Adil's humanId 0x41e49b…608f0)
+    Dev 2   -> ant_0005..ant_0009  (-> Dev 2's DIFFERENT humanId)
+  This yields TWO distinct verified lineage roots (real N=2), not one — closer to
+  the verified-vs-anon experiment's intent.
+  NO SECRETS SHARED: `register` needs only the PUBLIC wallet address + the approver's
+  own World App (no private key). Just send Dev 2 the address list + the command.
+  => RECORD which ant -> which humanId after; that mapping IS the lineage assignment.
+
+STATUS LOG (filled as we register)
+  [ ] ant_0000 ... [ ] ant_0009   (registered? humanId? — expect all = 0x41e49b…608f0)
+
+SEE ALSO
+  worldcoin/README.md, worldcoin/TODO.md, worldcoin/docs/agent-kit-integrate.md,
+  worldcoin/test/README.md (feasibility test), colony/data/agent-wallets.dynamic.200.public.json.
+================================================================================

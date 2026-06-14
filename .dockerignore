@@ -5,3 +5,15 @@ colony/secrets
 colony/runs
 **/__pycache__
 **/.DS_Store
+
+# --- secrets / runtime: never bake into an image (keep .env.example) ---
+**/.env
+**/.env.test
+**/.env.local
+**/*.session
+**/*.session-journal
+**/.venv
+**/venv
+worldcoin/test/*keypair*.json
+**/*.pem
+**/*.key

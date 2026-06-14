@@ -1,0 +1,106 @@
+================================================================================
+FRONTEND <-> COLONY WIRE-UP (colony_api + Railway + Docker) — REVIEW OF LATEST PUSHES
+2026-06-13
+================================================================================
+
+WHAT THIS IS
+------------
+Review of the teammates' evening pushes (06-13). They built the live
+colony -> API -> frontend pipeline, containerized it, and deployed to Railway.
+
+COMMITS (newest first)
+  7e9fbd2  Tanguy     Stream real KG events to frontend
+  edf324e  Tanguy     Expose KG scouting integration
+  c426b77  "Adil H"   Auto-commit: scheduled snapshot 19:53 MDT  <- the delayed_commit.sh run (see below)
+  d575631  HemangVora Added live ants from api
+  84d62b7  Tanguy     Add frontend ants smoke test
+  2188486  Tanguy     Expose 200-agent identity config
+
+
+1) colony_api/  — NEW FastAPI backend wrapping the colony harness
+----------------------------------------------------------------
+Runs the existing harness as a managed subprocess; exposes runs, artifacts, and
+an SSE stream to the frontend. Source of truth stays the CLI harness.
+Deployed on RAILWAY:  https://ethglobalnyc-production.up.railway.app
+
+Key endpoints:
+  GET  /health                      service check
+  GET  /config                      backend contract + defaults + identity_fields
+  POST /runs/demo                   start a 200-agent LLM run
+  GET  /runs/{id}                   poll status + artifact links
+  GET  /runs/{id}/stream            SSE: status + colony_event (+ KG events)
+  GET  /runs/{id}/agents            every agent_record incl. ENS + wallet + latest_forecast{side,stake}
+  GET  /runs/{id}/rooms             debate rooms (participants, stance, claims, synthesis)
+  GET  /ants                        200 ants from committed public wallet store (no run needed)
+  GET  /kg/world-cup [/summary]     committed tournament KG (204 entities / 588 rels)
+  POST /scouting/run                public-data KG scouting (default: Brazil vs Morocco, DeepSeek scouts)
+  GET  /runs/{id}/kg [/manifest] [/scouting-audit]   generated KG artifacts
+
+Defaults (from /config): agents=200, rooms=12, seed=205, voice_mode=llm,
+  agent_wallets=true, wallet_provider=dynamic,
+  wallet_store=colony/data/agent-wallets.dynamic.200.public.json
+LLM via OpenRouter/DeepSeek (deepseek-v4-flash) — Railway env vars.
+
+
+2) Dockerfile  — the container (at repo root)
+---------------------------------------------
+python:3.11-slim -> pip install -r requirements.txt -> COPY . . ->
+  CMD uvicorn colony_api.main:app --host 0.0.0.0 --port ${PORT:-8000}
+ENV COLONY_API_RUNS_DIR=/data/runs, EXPOSE 8000.
+=> Containerizes colony_api for the Railway deploy. Nothing unexpected.
+
+
+3) Frontend went LIVE against the API
+-------------------------------------
+New: frontend/public/dinasty/  (databridge.js, ants.js, kgview.js, hud.js, colony.js, main.js)
+Flow (per colony_api/README "Frontend Interaction"):
+  - databridge.js loads latest successful run from GET /runs
+  - "Get ants" -> GET /ants -> binds wallet/ENS identity to visible ants
+  - "Get KG" -> GET /kg/world-cup -> renders static tournament KG
+  - "Run scouting" -> POST /scouting/run -> SSE stream renders real kg_entity/kg_relationship events
+  - "Run LLM agents" -> POST /runs/demo -> seeds colony stats + thought ticker
+  - Fallback to /data/demo.jsonl if backend unavailable
+  Backend URL config: frontend/public/config.js (window.DN_CONFIG.API_URL)
+SSE event types: status, colony_event; scouting adds kg_stage/kg_entity/
+  kg_relationship/kg_manifest/scouting_audit (REAL run output, not fake animation).
+
+
+4) Data + identity
+------------------
+  colony/data/world_cup_kg.json (6817 lines) + .summary.md — tournament KG served by /kg/world-cup.
+  200-agent identity: deterministic ENS (e.g. root-fable-0.colonny.eth) + Dynamic
+  wallet addresses. Sanitized public store agent-wallets.dynamic.200.public.json
+  = 200 addresses, NO private keys, no Dynamic user metadata.
+
+
+5) HEADS-UP — the auto-commit (c426b77)
+---------------------------------------
+"Adil H — Auto-commit: scheduled snapshot 2026-06-13 19:53 MDT" is the
+delayed_commit.sh (now DELETED) having FIRED ONCE (~01:53 UTC) before we removed
+it. It git add -A + committed + pushed to origin/main, sweeping up OUR work:
+  colony-execution-turnover.zip, predictions.json (+46), polygun/TURNOVER.md (+148).
+Its secret guards held: NO .env / keys / pg.session were committed; predictions.json
+only has tx hashes + the ChatGPT consensus link; the zip is clean. So our
+polygun/turnover/ledger work is now on origin/main. (Sanity-check on GitHub if desired.)
+No delayed_commit process is still running; the script file is gone.
+
+
+6) THE BIG INTEGRATION OPPORTUNITY (colony consensus -> execution)
+-----------------------------------------------------------------
+GET /runs/{id}/agents returns each ant's latest_forecast { side, stake } — a REAL
+machine-readable colony consensus. This replaces the "4 humans role-playing as
+ants" stand-in. The execution bridge becomes:
+    API consensus (aggregate latest_forecast across ants/rooms)
+      -> pick outcome + total stake
+      -> resolve to a PolyGun market id (search flow)
+      -> pg.py buy --market <id> --side yes --amount <N> --confirm
+      -> record_trade.py -> predictions.json
+TODO: build that bridge (aggregate the API forecasts, map team/side -> market id,
+fire one capped bet). polymarket/execute_colony_bets.py already does a CLOB-side
+version from forecasts.csv; a PolyGun-side equivalent that reads the API would
+close the loop end to end.
+
+SEE ALSO
+  colony_api/README.md, Dockerfile, frontend/public/dinasty/*, polygun/TURNOVER.md,
+  notes/2026-06-13-3pm-bets-dev-handoff.md, predictions.json.
+================================================================================

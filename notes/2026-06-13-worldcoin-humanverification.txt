@@ -1,0 +1,64 @@
+================================================================================
+WORLDCOIN HUMAN VERIFICATION — RUNNABLE COMMANDS
+2026-06-13
+================================================================================
+Run each `register` LOCALLY, scan the QR / approve in World App, wait for confirm,
+then the next. register needs ONLY the public address + your World App (no key, no
+gas, hosted relay). Network eip155:480 (World Chain), AgentBook 0xA23aB2712eA7BBa896930544C7d6636a96b944dA.
+Each register opens its OWN session — scan the QR THAT command shows.
+Context + caveats: notes/2026-06-13-worldcoin-validation.txt
+--------------------------------------------------------------------------------
+
+# ---- ADIL'S BATCH: ant_0000..ant_0004 (approve with ADIL's World App) ----
+npx -y @worldcoin/agentkit-cli register 0x3fB467e269e4C0BfdeAA99086f7854d3590A078D   # ant_0000  root-fable-0
+npx -y @worldcoin/agentkit-cli register 0x9a10bc9D0E4C7287DF66796049039dbc3fb9B6fb   # ant_0001  root-onyx-1
+npx -y @worldcoin/agentkit-cli register 0x9994F4b6780B68a6ca1306fCe9D63b2042606A2c   # ant_0002  root-sable-2
+npx -y @worldcoin/agentkit-cli register 0x81FeBa51425d0F0A1059D0428A0986acF88D286B   # ant_0003  root-ember-3
+npx -y @worldcoin/agentkit-cli register 0x8F36b2A615F97E3A8e03c3090ab5A272555905D0   # ant_0004  root-cold-4
+
+# ---- DEV 2'S BATCH: ant_0005..ant_0009 (approve with DEV 2's World App) ----
+npx -y @worldcoin/agentkit-cli register 0x0deD95a0d7533b1536970db0Cc3ee1d5772CbEb3   # ant_0005  root-cold-5
+npx -y @worldcoin/agentkit-cli register 0xa3Addf63f47634c04Ece77061874c3C33129D1B9   # ant_0006  root-onyx-6
+npx -y @worldcoin/agentkit-cli register 0x9Dc33802Cac7A4f7C44CE63fD1EF13e2B3701B60   # ant_0007  root-iron-7
+npx -y @worldcoin/agentkit-cli register 0xC6C676e09838Dc9620d1a5C256811250A788C801   # ant_0008  root-quiet-8
+npx -y @worldcoin/agentkit-cli register 0x8D5b36F77B5CFEdd524cA899990D61803F7802F3   # ant_0009  root-amber-9
+
+# (If NOT splitting, one person just runs all 10 above — all map to that one humanId.)
+
+# ---- VERIFY ALL 10 (read-only; expect registered:true + humanId per approver) ----
+for a in \
+  0x3fB467e269e4C0BfdeAA99086f7854d3590A078D \
+  0x9a10bc9D0E4C7287DF66796049039dbc3fb9B6fb \
+  0x9994F4b6780B68a6ca1306fCe9D63b2042606A2c \
+  0x81FeBa51425d0F0A1059D0428A0986acF88D286B \
+  0x8F36b2A615F97E3A8e03c3090ab5A272555905D0 \
+  0x0deD95a0d7533b1536970db0Cc3ee1d5772CbEb3 \
+  0xa3Addf63f47634c04Ece77061874c3C33129D1B9 \
+  0x9Dc33802Cac7A4f7C44CE63fD1EF13e2B3701B60 \
+  0xC6C676e09838Dc9620d1a5C256811250A788C801 \
+  0x8D5b36F77B5CFEdd524cA899990D61803F7802F3 ; do
+  echo "=== $a ==="; npx -y @worldcoin/agentkit-cli status "$a"
+done
+
+# Single-address status:
+# npx -y @worldcoin/agentkit-cli status <wallet_address>
+
+# Inspect call data without submitting (no approval):
+# npx -y @worldcoin/agentkit-cli register <wallet_address> --manual
+
+--------------------------------------------------------------------------------
+RESULT LOG (confirmed via status 2026-06-13)
+  ant_0000 0x3fB4..078D  registered:TRUE   humanId:0x41e49b…608f0 (Adil)
+  ant_0001 0x9a10..B6fb  registered:TRUE   humanId:0x41e49b…608f0 (Adil)
+  ant_0002 0x9994..6A2c  registered:TRUE   humanId:0x41e49b…608f0 (Adil)
+  ant_0003 0x81Fe..286B  registered:TRUE   humanId:0x41e49b…608f0 (Adil)
+  ant_0004 0x8F36..05D0  registered:TRUE   humanId:0x41e49b…608f0 (Adil)
+  ant_0005 0x0deD..bEb3  registered:false  humanId:null   (pending Dev 2)
+  ant_0006 0xa3Ad..D1B9  registered:false  humanId:null   (pending Dev 2)
+  ant_0007 0x9Dc3..1B60  registered:false  humanId:null   (pending Dev 2)
+  ant_0008 0xC6C6..C801  registered:false  humanId:null   (pending Dev 2)
+  ant_0009 0x8D5b..02F3  registered:false  humanId:null   (pending Dev 2)
+  => Lineage A (Adil, humanId 0x41e49b…608f0): ant_0000..ant_0004 VERIFIED.
+     Lineage B (Dev 2): ant_0005..ant_0009 pending Dev 2's World App approvals.
+  (Adil's full humanId: 0x41e49b485e4b3e568ab23e28820f5c0be5135ec3322786f9d492ec8276608f0)
+================================================================================

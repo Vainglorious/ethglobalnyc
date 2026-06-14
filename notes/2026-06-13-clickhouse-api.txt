@@ -1,0 +1,75 @@
+================================================================================
+CLICKHOUSE_API — BUILD NOTES (the metered knowledge plane)
+2026-06-13
+================================================================================
+
+WHAT WE BUILT
+-------------
+clickhouse_api/ — a FastAPI service exposing the ClickHouse corpus behind the three
+rules from clickhouse/README.md: a TIMESTAMP GATE, x402 metering, and a verified-
+lineage premium tier. Mirrors colony_api's style; deployable via its Dockerfile.
+
+FILES
+  clickhouse_api/ch.py          ClickHouse HTTP client (read-only, parameterized via
+                                param_*; gate helpers + assert_gated defense-in-depth)
+  clickhouse_api/main.py        FastAPI app: /health /config /markets/search /query
+                                (+ x402 402/200 handshake + pricing + tier)
+  clickhouse_api/test_gate.py   THE LEAK TEST (P0) — runs the gate vs live CH, fails on leaks
+  clickhouse_api/requirements.txt  fastapi, uvicorn, certifi (CH via stdlib urllib)
+  clickhouse_api/README.md      endpoints, examples, pricing, TODO
+  clickhouse_api/Dockerfile     uvicorn main:app --app-dir clickhouse_api (port 8009)
+  clickhouse_api/.gitignore     .venv / pycache
+
+ENDPOINTS
+  GET  /health                      ok + ClickHouse reachability
+  GET  /config                      datasets, pricing, tiers, gate description
+  GET  /markets/search?q=&limit=    catalog lookup (ungated) -> name/outcome/token_id/condition_id/price
+  POST /query                       metered + gated. datasets: markets (free),
+                                    odds (gated), uma_events (gated). Body needs
+                                    as_of_ts for gated; headers X-PAYMENT (proof),
+                                    X-Lineage-Tier: verified / X-Human-Id (tier).
+
+THE TIMESTAMP GATE (cardinal rule) — REAL + TESTED
+  - odds:       umalabs.market_snapshots, captured_at <= as_of_ts
+  - uma_events: umalabs.uma_oo_v2_events_decoded, block_timestamp <= as_of_ts
+  - Enforced in SQL AND re-checked per row in Python (ch.assert_gated -> GateLeakError
+    fails closed). test_gate.py result: GATE OK — no leaks (future blocked, past=0).
+  - Bug found+fixed during build: aliasing `toString(ts) AS ts` made WHERE bind the
+    String alias, not the column -> type error. Fix: select the raw column (JSONEachRow
+    stringifies it). Lesson: don't shadow a filtered column with a same-named alias.
+
+x402 METERING (handshake real, verifier STUBBED)
+  - No X-PAYMENT on a gated query -> 402 with x402 `accepts` (scheme/network/
+    maxAmountRequired/asset/payTo/nonce). With X-PAYMENT (any non-empty, for now) -> 200
+    + payment receipt. price = base(0.01) + per_row(0.0002)*limit, *0.5 for verified.
+  - TODO: replace stub with real Arc/x402 settlement verification; persist nonces/usage.
+
+VERIFIED TIER
+  - X-Lineage-Tier: verified  (or X-Human-Id: 0x… from Worldcoin) -> 50% price + (future)
+    higher caps. Confirmed live: standard 0.011 vs verified 0.0055 for same query.
+
+VERIFIED WORKING (local, against live ClickHouse)
+  /health ok; /markets/search returns real markets; /query odds -> 402 then (paid) 200
+  with 2 gated snapshot rows; verified tier discounted; uma_events Settle rows returned.
+
+*** SECURITY FIX (important, affects the whole team) ***
+  The repo .dockerignore did NOT exclude secrets. So colony_api's Dockerfile (COPY . .)
+  and this clickhouse_api Dockerfile would BAKE .env / pg.session / keypairs INTO the
+  image. Added to .dockerignore: **/.env, **/.env.test, **/.env.local, **/*.session,
+  **/.venv, worldcoin/test/*keypair*.json, **/*.pem, **/*.key.
+  => ACTION: if the colony_api image was already built/deployed (Railway) BEFORE this
+     fix, it may contain secrets — rebuild after this change and rotate anything that
+     was in those .env files if the image was pushed anywhere public.
+
+HOW IT FITS COLONY
+  - query_budget gene -> real USDC debits via the x402 gate (thinking costs money).
+  - Worldcoin verified humanId -> premium tier (cheaper/more data) — ties to
+    notes/2026-06-13-worldcoin-validation.txt.
+  - The gate keeps the replay engine honest (no lookahead leakage, plan §4).
+
+NEXT
+  [ ] Real x402/Arc settlement verify (replace stub) + nonce/usage persistence.
+  [ ] Resolved-outcome dataset + beat-the-market (odds vs result) join.
+  [ ] Deploy (Dockerfile ready), like colony_api.
+SEE ALSO  clickhouse/README.md, clickhouse/DATA_CATALOG.md, notes/2026-06-13-clickhouse.txt
+================================================================================
