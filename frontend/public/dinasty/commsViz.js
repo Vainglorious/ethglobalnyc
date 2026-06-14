@@ -122,22 +122,24 @@ DN.commsViz = (function () {
 
   V._drainQueue = function () {
     if (V._queueTimer) return;
+    // One event per tick at a slow cadence — bursts of 100+ events from
+    // a single comms-poll batch otherwise flood the log faster than the
+    // user can read.
+    const TICK_MS = 160;
     const tick = () => {
-      let handled = 0;
-      while (V._queue.length && handled < 40) {
-        const ev = V._queue.shift();
+      const ev = V._queue.shift();
+      if (ev) {
         if (ev.event_type === 'social_action') V._handleSocial(ev);
         else if (ev.event_type === 'debate_claim') V._handleClaim(ev);
         else if (ev.event_type === 'forecast') V._handleForecast(ev);
-        handled++;
       }
       if (!V._queue.length) {
         V._queueTimer = null;
         return;
       }
-      V._queueTimer = setTimeout(tick, 0);
+      V._queueTimer = setTimeout(tick, TICK_MS);
     };
-    V._queueTimer = setTimeout(tick, 0);
+    V._queueTimer = setTimeout(tick, TICK_MS);
   };
 
   // social_action: the primary speaking event. actor speaks (and optionally
@@ -305,22 +307,32 @@ DN.commsViz = (function () {
   // visible activity.
   V._chamberMsgs = [];
   V._chamberStreamTimers = [];
-  V._bufferChamberMsg = function (keySrc, actor, target, text) {
-    V._chamberMsgs.push({ keySrc: String(keySrc || ''), actor, target, text });
-    if (V._chamberMsgs.length > 30) V._chamberMsgs.shift();
+  V._bufferChamberMsg = function (keySrc, actor, target, text, tag) {
+    V._chamberMsgs.push({ keySrc: String(keySrc || ''), actor, target, text, tag: tag || (target ? 'DISPUTE' : 'SPEAK') });
+    if (V._chamberMsgs.length > 60) V._chamberMsgs.shift();
   };
 
   V.streamChambersFromBuffer = function (opts) {
     opts = opts || {};
-    if (!DN.underground || !DN.underground.showChamberMessage) return;
     V._chamberStreamTimers.forEach((t) => clearTimeout(t));
     V._chamberStreamTimers = [];
     const msgs = V._chamberMsgs.slice(-(opts.count || 24));
+    const stride = Math.max(80, opts.strideMs || 480);
+    const logRows = opts.logRows !== false;
     msgs.forEach((m, i) => {
       let h = 0;
       const key = m.keySrc + ':' + i;
       for (let j = 0; j < key.length; j++) h = ((h * 31) + key.charCodeAt(j)) | 0;
-      DN.underground.showChamberMessage(h, m.actor, m.target, m.text);
+      const timer = setTimeout(() => {
+        if (DN.underground && DN.underground.showChamberMessage) {
+          DN.underground.showChamberMessage(h, m.actor, m.target, m.text);
+        }
+        if (logRows && DN.logTerm) {
+          const arrow = m.target ? ' → ' + m.target : '';
+          DN.logTerm.push(m.tag || 'SPEAK', (m.actor || 'agent') + arrow + ': "' + (m.text || '') + '"');
+        }
+      }, i * stride);
+      V._chamberStreamTimers.push(timer);
     });
   };
 
@@ -341,6 +353,7 @@ DN.commsViz = (function () {
     }
     V._chamberStreamTimers.forEach((t) => clearTimeout(t));
     V._chamberStreamTimers = [];
+    V._chamberMsgs.length = 0;
     V._arcs.length = 0;
     V._edges.clear();
   };

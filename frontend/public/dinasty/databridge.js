@@ -463,24 +463,25 @@ DN.databridge = (function () {
   }
   B.fetchCommunications = function () {
     if (!apiUrl) return Promise.reject(new Error('No backend API configured.'));
-    const now = Date.now();
-    const needRunId = !_commsRunId || (!_commsRunPinned && (now - _commsRunId_at) > 30000);
-    const runIdP = needRunId
-      ? pickLatestRunId().then(id => { _commsRunId = id; _commsRunId_at = now; B.runId = id; return id; })
-      : Promise.resolve(_commsRunId);
-    return runIdP.then(runId => {
-      if (!runId) return { events: [] };
-      return fetch(apiUrl + '/runs/' + encodeURIComponent(runId) + '/events')
-        .then(r => r.ok ? r.text() : Promise.reject(r.status))
-        .then(txt => {
-          const events = parseJsonl(txt).filter(ev => {
-            const t = ev && ev.event_type;
-            return t === 'social_action' || t === 'debate_claim' || t === 'forecast';
-          });
-          B._commsEvents = events;
-          return { run_id: runId, events };
+    // Only fetch events for the run the lifecycle EXPLICITLY pinned
+    // via resetCommsRun(id). Without an active run we return empty —
+    // otherwise the page-load poll would auto-pick the most recent run
+    // on the server (often a stale scout run from a previous demo) and
+    // start replaying its DISPUTE/SPEAK rows the moment you load the
+    // app, before the user has clicked Run.
+    if (!_commsRunId) return Promise.resolve({ events: [] });
+    const runId = _commsRunId;
+    B.runId = runId;
+    return fetch(apiUrl + '/runs/' + encodeURIComponent(runId) + '/events')
+      .then(r => r.ok ? r.text() : Promise.reject(r.status))
+      .then(txt => {
+        const events = parseJsonl(txt).filter(ev => {
+          const t = ev && ev.event_type;
+          return t === 'social_action' || t === 'debate_claim' || t === 'forecast';
         });
-    });
+        B._commsEvents = events;
+        return { run_id: runId, events };
+      });
   };
   B.getCommunications = function () { return B._commsEvents || []; };
   B.getCommsRunId = function () { return _commsRunId; };

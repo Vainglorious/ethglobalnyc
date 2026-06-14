@@ -77,6 +77,7 @@ DN.hud = (function () {
         '<button class="backend-btn secondary" id="backend-scout">Run Scout</button>' +
         '<button class="backend-btn" id="backend-run">Run Full Pipe</button>' +
         '<button class="backend-btn secondary" id="backend-run-fast">Run Agent</button>' +
+        '<button class="backend-btn secondary" id="backend-reset" title="Stop the running debate and reset agents to idle">Reset</button>' +
         '<button class="backend-btn secondary backend-toggle" id="backend-adv-toggle" title="Show advanced controls">▾</button>' +
       '</div>' +
       '<div class="backend-advanced" id="backend-advanced" style="display:none;gap:6px;margin-top:6px;flex-wrap:wrap">' +
@@ -604,8 +605,20 @@ DN.hud = (function () {
       }
     }
 
-    btn.addEventListener('click', () => runLifecycle({ scout: true, scoutMode: 'openfootball' }));
+    // Primary Run skips the visual scouting phase — KG already exists on
+    // the backend, so we go straight to "show KG → ants converge →
+    // debate driven by real backend events". Use the Fast button (or
+    // the ▾ Advanced tray) if you want to re-run the visual scout.
+    btn.addEventListener('click', () => runLifecycle({ scout: false }));
     if (fastBtn) fastBtn.addEventListener('click', () => runLifecycle({ scout: false }));
+    const resetBtn = $('backend-reset');
+    if (resetBtn) {
+      resetBtn.addEventListener('click', () => {
+        if (DN.lifecycle && DN.lifecycle.reset) DN.lifecycle.reset();
+        setRunButtonsDisabled(false);
+        status.textContent = 'Reset · click Run';
+      });
+    }
 
     forecastDeployBtn.addEventListener('click', () => {
       if (!DN.databridge || !DN.databridge.deployForecastContract) return;

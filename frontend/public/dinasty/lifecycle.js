@@ -296,7 +296,7 @@ DN.lifecycle = (function () {
       return L.runPromise;
     }
     const runCfg = configuredRun();
-    L.scoutingDone = false;
+    L.scoutingDone = true;
     L.scoutingResult = null;
     L.scoutingError = null;
     if (DN.logTerm) {
@@ -306,7 +306,7 @@ DN.lifecycle = (function () {
       agents: fastAgentCount(runCfg),
       rooms: fastRoomCount(runCfg),
       seed: Number.isFinite(Number(runCfg.seed)) ? Number(runCfg.seed) : Math.floor(Math.random() * 10000),
-      voice_mode: runCfg.agent_voice_mode || runCfg.fast_voice_mode || 'template',
+      voice_mode: runCfg.agent_voice_mode || runCfg.fast_voice_mode || runCfg.voice_mode || 'template',
       agent_wallets: runCfg.agent_wallets !== false,
       wallet_provider: runCfg.wallet_provider,
       wallet_store: runCfg.wallet_store,
@@ -318,6 +318,7 @@ DN.lifecycle = (function () {
           L.runId = res.id;
           L.runResult = res;
           L.backendDone = true;
+          if (DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(res.id);
           if (DN.hud && DN.hud._pollComms) DN.hud._pollComms();
           if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Backend agent run ' + res.id + ' complete.');
         }
@@ -337,36 +338,30 @@ DN.lifecycle = (function () {
   function startBackendRun() {
     if (L.runPromise) return L.runPromise;
     if (L.skipScouting) return startAgentRun();
-    if (!DN.databridge || !DN.databridge.startScoutingRun) {
+    if (!DN.databridge || !DN.databridge.startDemoRun) {
       L.scoutingDone = true;
-      L.runError = new Error('Backend scouting API unavailable.');
+      L.runError = new Error('Backend demo run API unavailable.');
       if (DN.logTerm) DN.logTerm.push('SYSTEM', L.runError.message);
       L.runPromise = Promise.resolve(null);
       return L.runPromise;
     }
-    L.scoutingDone = false;
+    // We hit /runs/demo (startDemoRun) directly — that's the endpoint
+    // that runs the LLM-driven debate room and emits debate_claim +
+    // social_action events. /scouting/run with data_mode=openfootball
+    // only emits forecast events (no DISPUTE/SPEAK), which is why the
+    // log was missing chamber-debate text before.
+    L.scoutingDone = true;
     L.scoutingResult = null;
     L.scoutingError = null;
-    const meta = selectedGameMeta();
     const runCfg = configuredRun();
-    const matchName = meta.name || [meta.home_team, meta.away_team].filter(Boolean).join(' vs ');
-    const fastScout = L.scoutMode === 'openfootball';
     if (DN.logTerm) {
-      DN.logTerm.push(
-        'SYSTEM',
-        (fastScout ? 'OpenFootball fixture run kicked off for ' : 'Public fixture run kicked off for ') + matchName + '.'
-      );
+      DN.logTerm.push('SYSTEM', 'Backend LLM debate run kicked off — chambers will populate with real claims.');
     }
-    L.runPromise = DN.databridge.startScoutingRun({
-      match: matchName,
-      match_id: meta.match_id || meta.market_key,
-      data_mode: fastScout ? 'openfootball' : 'public',
-      include_deepseek_scout: fastScout ? false : Boolean(runCfg.include_deepseek_scout),
-      agents: fastScout ? fastAgentCount(runCfg) : boundedInt(runCfg.agents, 200, 1, 200),
-      rooms: fastScout ? fastRoomCount(runCfg) : boundedInt(runCfg.rooms, 12, 1, 50),
+    L.runPromise = DN.databridge.startDemoRun({
+      agents: Math.min(Number(runCfg.agents || 60), 200),
+      rooms: Math.min(Number(runCfg.rooms || 5), 12),
       seed: Number.isFinite(Number(runCfg.seed)) ? Number(runCfg.seed) : Math.floor(Math.random() * 10000),
-      voice_mode: fastScout ? 'template' : (runCfg.voice_mode || 'llm'),
-      show_completed_graph: false,
+      voice_mode: runCfg.voice_mode || 'llm',
     })
       .then((res) => {
         L.scoutingDone = true;
@@ -375,8 +370,9 @@ DN.lifecycle = (function () {
           L.runId = res.id;
           L.runResult = res;
           L.backendDone = true;
+          if (DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(res.id);
           if (DN.hud && DN.hud._pollComms) DN.hud._pollComms();
-          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Fixture run ' + res.id + ' complete — selected-match forecast stakes ready.');
+          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Demo run ' + res.id + ' complete — debate transcript ready.');
         }
         return res || null;
       })
@@ -522,8 +518,6 @@ DN.lifecycle = (function () {
           L.kgReplayDone = true;
           return;
         }
-        const ents = payload.entity_count != null ? payload.entity_count : (payload.entities || []).length;
-        const links = payload.relationship_count != null ? payload.relationship_count : (payload.relationships || []).length;
         const finish = () => { L.kgReplayDone = true; };
         if (L.staticMode && DN.kgview && DN.kgview.showGraph) {
           DN.kgview.showGraph(payload, title || 'Selected-match KG');
@@ -663,23 +657,46 @@ DN.lifecycle = (function () {
     },
     debate: () => {
       L.debateDone = false;
-      if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Chambers in session — agents exchanging claims.');
+      if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Chambers in session — waiting on backend debate events.');
       if (L.staticMode) {
         if (DN.hud && DN.hud.updateBackendFlow) DN.hud.updateBackendFlow({ stage: 'rooms', mode: 'Ants in rooms' });
         L.debateDone = !DN.commsViz || !DN.commsViz.isIdle || DN.commsViz.isIdle();
         return;
       }
       if (DN.underground && DN.underground.startDebate) DN.underground.startDebate();
-      // Stream the buffered backend debate text into the chamber bubbles
-      // so the underground view visibly shows agents speaking — even
-      // though most events were already dispatched and dedup'd during
-      // earlier phases.
-      if (DN.commsViz && DN.commsViz.streamChambersFromBuffer) {
-        DN.commsViz.streamChambersFromBuffer({ count: 22, strideMs: 480 });
-      }
-      const buffered = DN.databridge && DN.databridge.getCommunications ? DN.databridge.getCommunications().length : 0;
-      const visibleCount = Math.max(8, Math.min(22, buffered || 22));
-      setTimeout(() => { L.debateDone = true; }, visibleCount * 480 + 700);
+      // Backend writes events.jsonl in a single batch at the END of the
+      // run (the API doesn't stream live), so the buffer may be empty
+      // when this phase fires. Poll until events arrive (or the run
+      // completes), then stream them into the chambers with timing.
+      const MAX_WAIT_MS = 45000;
+      const POLL_MS = 1500;
+      const startedAt = Date.now();
+      let streamed = false;
+      const tryStream = () => {
+        if (streamed) return;
+        const buffered = DN.databridge && DN.databridge.getCommunications ? DN.databridge.getCommunications().length : 0;
+        const elapsed = Date.now() - startedAt;
+        if (buffered > 0) {
+          streamed = true;
+          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Streaming ' + Math.min(buffered, 22) + ' real debate events into chambers.');
+          if (DN.commsViz && DN.commsViz.streamChambersFromBuffer) {
+            DN.commsViz.streamChambersFromBuffer({ count: 20, strideMs: 280 });
+          }
+          const visibleCount = Math.max(8, Math.min(20, buffered));
+          setTimeout(() => { L.debateDone = true; }, visibleCount * 280 + 700);
+          return;
+        }
+        if (elapsed >= MAX_WAIT_MS) {
+          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Backend events not arriving after ' + Math.round(MAX_WAIT_MS / 1000) + 's — advancing without debate text.');
+          L.debateDone = true;
+          return;
+        }
+        // Kick a fresh poll so events show up as soon as the backend
+        // writes events.jsonl
+        if (DN.hud && DN.hud._pollComms) DN.hud._pollComms();
+        setTimeout(tryStream, POLL_MS);
+      };
+      tryStream();
     },
     resolution: () => {
       if (DN.underground && DN.underground.stopDebate) DN.underground.stopDebate();
@@ -1018,6 +1035,10 @@ DN.lifecycle = (function () {
     L.skipScouting = opts.scout === false || opts.skipScouting === true;
     L.scoutMode = opts.scoutMode || 'openfootball';
     L.staticMode = opts.staticMode !== false;
+    // Drop the previous run's cached events AND the chamber message
+    // buffer before kicking the new run — otherwise the debate phase
+    // replays leftover messages from the prior demo into chambers,
+    // making it look like the new run is "generating random messages".
     if (DN.databridge && DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(null);
     if (DN.commsViz && DN.commsViz.reset) DN.commsViz.reset();
     if (ENTER.idle) ENTER.idle();
@@ -1025,7 +1046,46 @@ DN.lifecycle = (function () {
   };
 
   L.reset = function () {
+    // Hard reset — stop the running debate / chamber stream / queued
+    // events and put every ant back to idle. The next L.start() starts
+    // from a clean slate so the demo can be re-run without reloading.
+    if (DN.underground && DN.underground.stopDebate) DN.underground.stopDebate();
+    if (DN.underground && DN.underground.hideAllChamberMessages) DN.underground.hideAllChamberMessages();
+    if (DN.commsViz && DN.commsViz.reset) DN.commsViz.reset();
+    if (DN.databridge && DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(null);
+    if (DN.ants && DN.ants.list) {
+      for (const a of DN.ants.list) {
+        a.state = 'idle';
+        a._idleWritten = false;
+        a._homing = false;
+        a._phaseTrip = null;
+        a.scout = false;
+        a.hasShard = false;
+        a.outcome = null;
+        a.forecast = null;
+      }
+    }
+    if (DN.ants && DN.ants.hideOutcomeGlow) DN.ants.hideOutcomeGlow();
+    if (DN.crystal && DN.crystal.hide) DN.crystal.hide();
+    if (DN.app && DN.app.exitColony && DN.app.view === 'underground') DN.app.exitColony();
+    L.runPromise = null;
+    L.runResult = null;
+    L.runError = null;
+    L.backendDone = false;
+    L.scoutingDone = false;
+    L.kgReplayDone = false;
+    L.convergeTarget = 0;
+    L.convergeReturned = 0;
+    L.ingressDone = false;
+    L.debateDone = false;
+    L.phaseHold = false;
+    L.winner = null;
+    L.settleTxHash = null;
+    L.runId = null;
+    L.marketKey = null;
+    L.forecastStakes = [];
     enter('idle');
+    if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Lifecycle reset — agents back to idle.');
   };
 
   L.getPhase = function () { return L.phase; };
@@ -1050,7 +1110,16 @@ DN.lifecycle = (function () {
     if (phase === 'scouting') return L.scoutingDone;
     if (phase === 'kg_forming') return L.kgReplayDone;
     if (phase === 'recruitment') return true;
-    if (phase === 'converge') return L.convergeTarget <= 0 || L.convergeReturned >= L.convergeTarget;
+    if (phase === 'converge') {
+      if (L.convergeTarget <= 0) return true;
+      // Advance as soon as the majority have returned — the staggered
+      // emergence means the last ant takes ~20s, but the column is
+      // visibly streaming back home long before that. Hard cap at 14s
+      // so even network-stalled animations don't strand the demo.
+      const enoughReturned = L.convergeReturned >= L.convergeTarget * 0.5;
+      const timedOut = L.phaseT >= 14.0;
+      return enoughReturned || timedOut;
+    }
     if (phase === 'ingress') return L.ingressDone;
     if (L.staticMode && phase === 'debate') return !DN.commsViz || !DN.commsViz.isIdle || DN.commsViz.isIdle();
     if (phase === 'debate') return L.debateDone;

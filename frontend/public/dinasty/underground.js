@@ -746,11 +746,8 @@ DN.underground = (function () {
   let fpMouseTx = 0, fpMouseTy = 0;
   addEventListener('keydown', e => { fpKeys[e.code] = true; });
   addEventListener('keyup', e => { fpKeys[e.code] = false; });
-  addEventListener('wheel', e => {
-    if (!U.active) return;
-    fpZoom += Math.sign(e.deltaY) * 0.06;
-    fpZoom = Math.max(-1.2, Math.min(1.2, fpZoom));
-  }, { passive: true });
+  // Scroll-to-zoom disabled per user request — the underground view now
+  // stays at its fixed framing regardless of mouse wheel input.
   addEventListener('mousemove', e => {
     if (!U.active) return;
     fpMouseTx = (e.clientX / innerWidth) * 2 - 1;

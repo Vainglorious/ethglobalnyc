@@ -9,7 +9,7 @@ console.log('[worldcolony] logTerm.js loaded · build 2026-06-14');
 
 DN.logTerm = (function () {
   const T = {};
-  const MAX_ROWS = 200;
+  const MAX_ROWS = 2000;
   let root, scroller, toggleBtn, visible = true;
   let initialized = false;
 
