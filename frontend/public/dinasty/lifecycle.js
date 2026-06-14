@@ -710,10 +710,9 @@ DN.lifecycle = (function () {
       if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Chambers in session — waiting on backend debate events.');
       if (L.staticMode) {
         if (DN.hud && DN.hud.updateBackendFlow) DN.hud.updateBackendFlow({ stage: 'rooms', mode: 'Ants in rooms' });
-        L.debateDone = !DN.commsViz || !DN.commsViz.isIdle || DN.commsViz.isIdle();
-        return;
+      } else if (DN.underground && DN.underground.startDebate) {
+        DN.underground.startDebate();
       }
-      if (DN.underground && DN.underground.startDebate) DN.underground.startDebate();
       // Backend writes events.jsonl in a single batch at the END of the
       // run (the API doesn't stream live), so the buffer may be empty
       // when this phase fires. Poll until events arrive (or the run
@@ -1260,7 +1259,6 @@ DN.lifecycle = (function () {
       return enoughReturned || timedOut;
     }
     if (phase === 'ingress') return L.ingressDone;
-    if (L.staticMode && phase === 'debate') return !DN.commsViz || !DN.commsViz.isIdle || DN.commsViz.isIdle();
     if (phase === 'debate') return L.debateDone;
     if (phase === 'resolution') return !L.phaseHold;
     return true;

@@ -606,7 +606,7 @@ DN.hud = (function () {
           'Lifecycle',
           '#3FA89F'
         );
-        DN.lifecycle.start({ scout: withScout, scoutMode });
+        DN.lifecycle.start({ scout: withScout, scoutMode, staticMode: false });
         const timer = setInterval(() => {
           const phase = DN.lifecycle && DN.lifecycle.getPhase ? DN.lifecycle.getPhase() : '';
           if (phase === 'egress_roam' || phase === 'idle') {
