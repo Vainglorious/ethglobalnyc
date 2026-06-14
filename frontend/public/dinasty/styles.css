@@ -115,6 +115,10 @@ body.underground #atmos {
   font-family: var(--mono, ui-monospace), monospace;
   font-size: 11px;
 }
+/* KG overlay hidden by default. The 3D crystal is the metaphor for
+   the knowledge graph in the demo; the SVG panel was a perf cost too
+   high to justify. To re-enable for debugging, change the rule below
+   back to `display: block`. */
 #kg-overlay.show { display: block; transform: none; }
 .kg-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(196, 142, 68, 0.22); }
 .kg-k { font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(241,216,168,0.55); font-weight: 700; }

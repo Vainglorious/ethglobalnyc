@@ -417,9 +417,10 @@ DN.databridge = (function () {
       .then(payload => {
         const runs = payload.runs || [];
         if (!runs.length) return null;
-        // The /runs endpoint sorts newest-first; pick the freshest run
-        // that has an events.jsonl. Prefer the most recent so in-flight
-        // demo runs become visible as soon as they start producing events.
+        const isScout = (r) => r && (r.kind === 'scouting' || String(r.id || '').startsWith('scout_'));
+        for (const r of runs) {
+          if (r.events_path && !isScout(r)) return r.id;
+        }
         for (const r of runs) {
           if (r.events_path) return r.id;
         }

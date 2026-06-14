@@ -345,22 +345,13 @@ DN.lifecycle = (function () {
       startBackendRun();
     },
     scouting: () => {
-      // Kick off the REAL backend scouting run that builds the World
-      // Cup knowledge graph. Fire-and-forget — the request takes longer
-      // than this phase but the KG fetch in the next phase will see
-      // whatever is ready (or the cached deployment build if not).
-      if (DN.databridge && DN.databridge.startScoutingRun) {
-        if (DN.logTerm) DN.logTerm.push('SCOUT', 'Backend scouting run kicked off — Railway is mining sources for the KG.');
-        if (DN.kgview && DN.kgview.reset) DN.kgview.reset('Live scouting KG');
-        DN.databridge.startScoutingRun().then((result) => {
-          const manifest = (result && result.manifest) || {};
-          const ents = manifest.entity_count || 0;
-          const links = manifest.relationship_count || 0;
-          if (DN.logTerm) DN.logTerm.push('SCOUT', 'Scouting run complete · ' + ents + ' entities · ' + links + ' relationships.');
-        }).catch((err) => {
-          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Scouting run error (using cached KG): ' + (err && err.message || err));
-        });
-      }
+      // NOTE: previously we kicked startScoutingRun() here, which
+      // streamed SSE events from Railway and hammered kgview's SVG
+      // rebuild path while the 3D scene was already busy with scout
+      // animations — that was the source of the heavy lag. The KG
+      // overlay now stays closed during scouting; the cached KG is
+      // streamed in via replayGraph during kg_forming instead.
+      if (DN.logTerm) DN.logTerm.push('SCOUT', 'Scouts mining sources for findings.');
       // Wake a small scout party per colony, send each on a dedicated
       // Bezier walk to a forest target.
       let total = 0;
@@ -398,31 +389,15 @@ DN.lifecycle = (function () {
     },
     kg_forming: () => {
       if (DN.crystal) DN.crystal.show();
-      // Pull the actual built KG from Railway and show it as a live
-      // graph overlay. The 3D crystal in the world is the visual
-      // metaphor; this overlay is the real data the ants are about
-      // to absorb.
       if (DN.databridge && DN.databridge.fetchWorldCupKg) {
         DN.databridge.fetchWorldCupKg().then((payload) => {
           const ents = payload.entity_count != null ? payload.entity_count : (payload.entities || []).length;
           const links = payload.relationship_count != null ? payload.relationship_count : (payload.relationships || []).length;
-          if (DN.logTerm) DN.logTerm.push('KG', 'KG loaded · ' + ents + ' entities · ' + links + ' relationships. Streaming into the crystal…');
-          // replayGraph animates entities into the panel in chunks
-          // (default 10 per 220ms) with the existing `.kg-node.new`
-          // pulse animation. This is what makes the crystal feel like
-          // it's being woven from scout findings instead of dumped.
+          if (DN.logTerm) DN.logTerm.push('KG', 'KG ready · ' + ents + ' entities · ' + links + ' relationships absorbed by the crystal.');
           if (DN.kgview && DN.kgview.replayGraph) {
-            DN.kgview.replayGraph(payload, 'Knowledge Crystal · World Cup KG', {
-              // Bigger chunks at longer intervals so the SVG is rebuilt
-              // ~4× / sec instead of ~4× during each 260ms tick. That
-              // halves the number of full SVG re-renders the box does
-              // while it's populating.
-              entityChunk: 12,
-              relationshipChunk: 40,
-              delayMs: 400
-            });
+            DN.kgview.replayGraph(payload, 'World Cup KG');
           } else if (DN.kgview && DN.kgview.showGraph) {
-            DN.kgview.showGraph(payload, 'Knowledge Crystal · World Cup KG');
+            DN.kgview.showGraph(payload, 'World Cup KG');
           }
         }).catch(() => { /* no KG yet — crystal still grows from scout deposits */ });
       }

@@ -245,18 +245,17 @@ DN.kgview = (function () {
     requestRender();
   }
 
-  // Throttle SVG rebuilds to ~3 fps. The whole svg.innerHTML is
-  // replaced per render — at 150+ nodes that's expensive enough that
-  // running it at requestAnimationFrame rate caused visible lag when
-  // the box first appeared. 350 ms is well below the eye's threshold
-  // for "graph is growing" and leaves the 3D scene plenty of frame budget.
+  // Throttle SVG rebuilds to 2 fps. innerHTML is replaced wholesale
+  // per render, so this is the single biggest knob for fixing the
+  // KG-overlay lag. 500 ms still feels live (graph visibly grows) while
+  // leaving the 3D scene the vast majority of its frame budget.
   function requestRender() {
     if (renderQueued) return;
     renderQueued = true;
     setTimeout(() => {
       renderQueued = false;
       render();
-    }, 350);
+    }, 500);
   }
 
   function clearReplay() {
@@ -551,17 +550,44 @@ DN.kgview = (function () {
 
   K.replayGraph = function (graph, title, opts) {
     opts = opts || {};
-    const entities = graph.entities || [];
-    const relationships = graph.relationships || [];
-    const entityChunk = opts.entityChunk || 10;
-    const relationshipChunk = opts.relationshipChunk || 80;
+    // Cap to a small node count so the SVG stays cheap and the user
+    // sees a clean, readable graph instead of a blob. Pick nodes
+    // group-balanced (round-robin by entity_type) so every cluster is
+    // represented even when we trim.
+    const MAX_NODES = opts.maxNodes || 42;
+    const allEntities = graph.entities || [];
+    const allRels = graph.relationships || [];
+
+    const byGroup = {};
+    for (const e of allEntities) {
+      const g = (e && (e.entity_type || e.type)) || 'misc';
+      (byGroup[g] = byGroup[g] || []).push(e);
+    }
+    const groupKeys = Object.keys(byGroup);
+    const entities = [];
+    let gIdx = 0, exhausted = 0;
+    while (entities.length < MAX_NODES && exhausted < groupKeys.length) {
+      const list = byGroup[groupKeys[gIdx % groupKeys.length]];
+      if (list && list.length) { entities.push(list.shift()); exhausted = 0; }
+      else exhausted++;
+      gIdx++;
+    }
+    const keepIds = new Set(entities.map((e) => e && (e.entity_id || e.id)).filter(Boolean));
+    const relationships = allRels.filter((r) => {
+      const s = r && (r.source_id || r.source);
+      const t = r && (r.target_id || r.target);
+      return keepIds.has(s) && keepIds.has(t);
+    });
+
+    const entityChunk = opts.entityChunk || 6;
+    const relationshipChunk = opts.relationshipChunk || 18;
     const delayMs = opts.delayMs || 220;
     let entityIndex = 0;
     let relationshipIndex = 0;
 
-    K.reset(title || 'Completed scouting KG');
-    K.status('Replaying completed scout KG · 0 / ' + entities.length + ' entities');
-    if (DN.logTerm) DN.logTerm.push('KG', 'Replaying completed scout KG: ' + entities.length + ' entities, ' + relationships.length + ' links.');
+    K.reset(title || 'World Cup KG');
+    K.status('Streaming KG · 0 / ' + entities.length + ' entities');
+    if (DN.logTerm) DN.logTerm.push('KG', 'KG stream: ' + entities.length + ' entities · ' + relationships.length + ' links (capped from ' + allEntities.length + ').');
 
     function schedule(fn, ms) {
       const timer = setTimeout(fn, ms);
@@ -570,11 +596,9 @@ DN.kgview = (function () {
 
     function replayEntities() {
       const end = Math.min(entityIndex + entityChunk, entities.length);
-      for (; entityIndex < end; entityIndex++) addNode(entities[entityIndex]);
-      K.status('Replaying entities · ' + entityIndex + ' / ' + entities.length + ' · ' + edges.length + ' links');
-      if (DN.logTerm && entityIndex && (entityIndex === entities.length || entityIndex % (entityChunk * 5) === 0)) {
-        DN.logTerm.push('KG', 'Replayed ' + entityIndex + ' / ' + entities.length + ' KG entities.');
-      }
+      for (; entityIndex < end; entityIndex++) addNode(entities[entityIndex], true);
+      requestRender();
+      K.status('Mining KG entities · ' + entityIndex + ' / ' + entities.length);
       if (entityIndex < entities.length) {
         schedule(replayEntities, delayMs);
       } else {
@@ -584,17 +608,15 @@ DN.kgview = (function () {
 
     function replayRelationships() {
       const end = Math.min(relationshipIndex + relationshipChunk, relationships.length);
-      for (; relationshipIndex < end; relationshipIndex++) addEdge(relationships[relationshipIndex]);
-      K.status('Replaying links · ' + nodes.size + ' entities · ' + relationshipIndex + ' / ' + relationships.length + ' links');
-      if (DN.logTerm && relationshipIndex && (relationshipIndex === relationships.length || relationshipIndex % (relationshipChunk * 5) === 0)) {
-        DN.logTerm.push('KG', 'Replayed ' + relationshipIndex + ' / ' + relationships.length + ' KG links.');
-      }
+      for (; relationshipIndex < end; relationshipIndex++) addEdge(relationships[relationshipIndex], true);
+      requestRender();
+      K.status('Linking KG · ' + nodes.size + ' entities · ' + relationshipIndex + ' / ' + relationships.length + ' links');
       if (relationshipIndex < relationships.length) {
         schedule(replayRelationships, delayMs);
       } else {
         render();
-        K.status((graph.entity_count || nodes.size) + ' KG entities · ' + (graph.relationship_count || edges.length) + ' links');
-        if (DN.logTerm) DN.logTerm.push('KG', 'Completed KG replay.');
+        K.status(nodes.size + ' KG entities · ' + edges.length + ' links');
+        if (DN.logTerm) DN.logTerm.push('KG', 'KG complete · graph ready.');
       }
     }
 

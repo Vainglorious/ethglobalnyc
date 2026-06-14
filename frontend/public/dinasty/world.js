@@ -85,13 +85,9 @@ DN.world = (function () {
     camera.position.set(40, 14, 70);
 
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    // Cap pixel ratio aggressively — at 2x retina the fragment count quadruples
-    // and orbit-camera operations stutter. 1.5 keeps the image crisp without
-    // tanking frametime on high-DPI displays.
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+    renderer.setPixelRatio(1);
     renderer.setSize(innerWidth, innerHeight);
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.enabled = false;
     renderer.outputEncoding = THREE.LinearEncoding;
     renderer.toneMapping = THREE.NoToneMapping;
 
