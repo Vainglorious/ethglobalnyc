@@ -225,7 +225,18 @@ DN.commsViz = (function () {
     V._edges.set(key, cur);
   };
 
+  // Phase gate: only spawn surface arcs during DEBATE / RESOLUTION /
+  // EGRESS — otherwise an old run's social_action events would draw
+  // arcs across the world during scouting / kg_forming, which the
+  // lifecycle never wants. Log rows still stream.
+  V._arcsAllowed = function () {
+    if (!DN.lifecycle || !DN.lifecycle.getPhase) return true;
+    const p = DN.lifecycle.getPhase();
+    return p === 'debate' || p === 'resolution' || p === 'egress_roam';
+  };
+
   V._spawnArc = function (speaker, target, color, ttl) {
+    if (!V._arcsAllowed()) return;
     if (V._arcs.length >= ARC_MAX) {
       // evict oldest (lowest remaining ttl)
       V._arcs.shift();

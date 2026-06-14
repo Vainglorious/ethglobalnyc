@@ -86,24 +86,27 @@ DN.underground = (function () {
     return g;
   }
 
+  // Five debate chambers arranged in a pentagon ring around a hidden centre
+  // at (0, -25). All rooms use the 'debate' prop because the backend's
+  // models.py only defines a DebateRoom — everything else was frontend
+  // decoration. Layout: α at top, β/γ on the right (clockwise), δ/ε on
+  // the left. Radius 15 from centre, chamber radius 6.5.
   const ROOMS = [
-    { id: 'queen', name: 'Queen Chamber', x: 0, y: -11, r: 7.5, prop: 'queen' },
-    { id: 'nursery', name: 'Nursery', x: -17, y: -8, r: 5, prop: 'eggs' },
-    { id: 'forecast', name: 'Forecast Chamber', x: 17, y: -10, r: 5.5, prop: 'forecast' },
-    { id: 'debate', name: 'Debate Hall', x: -25, y: -20, r: 5.5, prop: 'debate' },
-    { id: 'storage', name: 'Resource Storage', x: 25, y: -21, r: 5, prop: 'storage' },
-    { id: 'economy', name: 'Economy Vault', x: 9, y: -25, r: 5, prop: 'coins' },
-    { id: 'memory', name: 'Memory Archives', x: -9, y: -27, r: 5, prop: 'archive' },
-    { id: 'dorm', name: 'Agent Dormitories', x: -27, y: -33, r: 5, prop: 'beds' },
-    { id: 'knowledge', name: 'Knowledge Exchange', x: -2, y: -34, r: 5, prop: 'exchange' },
-    { id: 'lineage', name: 'Lineage Hall', x: 24, y: -33, r: 5.5, prop: 'lineage' },
-    { id: 'staking', name: 'Staking Room', x: 13, y: -39, r: 5, prop: 'stake' }
+    { id: 'room-a', name: 'Chamber α', x:   0.0, y: -10.0, r: 6.5, prop: 'debate' },
+    { id: 'room-b', name: 'Chamber β', x:  14.3, y: -20.4, r: 6.5, prop: 'debate' },
+    { id: 'room-c', name: 'Chamber γ', x:   8.8, y: -37.1, r: 6.5, prop: 'debate' },
+    { id: 'room-d', name: 'Chamber δ', x:  -8.8, y: -37.1, r: 6.5, prop: 'debate' },
+    { id: 'room-e', name: 'Chamber ε', x: -14.3, y: -20.4, r: 6.5, prop: 'debate' }
   ];
+  // Hub-and-spoke from the surface entrance into the top chamber, then a
+  // closed ring connecting all five chambers so agents can walk any pair.
   const TUNNELS = [
-    ['ent', 'queen'], ['queen', 'nursery'], ['queen', 'forecast'], ['nursery', 'debate'],
-    ['forecast', 'storage'], ['queen', 'economy'], ['queen', 'memory'], ['debate', 'dorm'],
-    ['memory', 'knowledge'], ['economy', 'lineage'], ['economy', 'staking'], ['forecast', 'economy'],
-    ['knowledge', 'dorm'], ['storage', 'lineage']
+    ['ent',    'room-a'],
+    ['room-a', 'room-b'],
+    ['room-b', 'room-c'],
+    ['room-c', 'room-d'],
+    ['room-d', 'room-e'],
+    ['room-e', 'room-a']
   ];
   const ENT = { id: 'ent', x: 0, y: 2 };
   function node(id) { return id === 'ent' ? ENT : ROOMS.find(r => r.id === id); }
@@ -398,7 +401,7 @@ DN.underground = (function () {
     return []; // unreachable
   }
   function pickGoal(fromId) {
-    const candidates = ROOMS.filter(r => r.id !== fromId && r.id !== 'queen' && r.id !== 'nursery');
+    const candidates = ROOMS.filter(r => r.id !== fromId);
     return candidates[Math.floor(Math.random() * candidates.length)].id;
   }
 
@@ -420,40 +423,12 @@ DN.underground = (function () {
     geo.setAttribute('aInst', new THREE.InstancedBufferAttribute(inst, 2));
     scene.add(agentMesh);
 
-    // ---- queen: single oversized ant locked in Queen Chamber ----------
-    const queenGeo = DN.ants.buildAntGeo(accent);
-    U.queenMesh = new THREE.Mesh(queenGeo, DN.util.voxelMat({ roughness: 0.4, flatShading: false, vertexColors: true }));
-    const queenRoom = node('queen');
-    U.queenMesh.position.set(queenRoom.x, queenRoom.y - queenRoom.r * 0.4, 0.9);
-    U.queenMesh.scale.setScalar(2.4);
-    // Match the workers' cross-section orientation (X-tilt then Z-yaw).
-    // Queen faces "up" toward the chamber top.
-    U.queenMesh.rotation.order = 'XYZ';
-    U.queenMesh.rotation.set(Math.PI / 2, 0, Math.PI);
-    scene.add(U.queenMesh);
-
-    // ---- larvae: pulsing pale ovoids clustered in Nursery -------------
-    const larvaeGroup = new THREE.Group();
-    const nursery = node('nursery');
-    larvaeGroup.position.set(nursery.x, nursery.y - nursery.r * 0.45, 0.85);
-    const larvaMat = new THREE.MeshStandardMaterial({
-      color: 0xF5E6C8, emissive: 0xC09A55, emissiveIntensity: 0.25, roughness: 0.4
-    });
+    // Queen + larvae props were tied to the deprecated Queen Chamber
+    // and Nursery rooms. With the chamber set reduced to 5 debate rooms
+    // they no longer have a home, so we skip them and let the chambers
+    // speak for themselves. `U.queenMesh` / `U.larvae` stay undefined;
+    // the update loop already null-checks them.
     U.larvae = [];
-    for (let i = 0; i < 7; i++) {
-      const lr = mulberryUG(7000 + i);
-      const m = new THREE.Mesh(
-        new THREE.SphereGeometry(0.35, 12, 8),
-        larvaMat
-      );
-      const a = lr() * Math.PI * 2, rr = lr() * nursery.r * 0.45;
-      m.position.set(Math.cos(a) * rr, Math.sin(a) * rr * 0.45, 0);
-      m.scale.set(0.9 + lr() * 0.3, 0.7 + lr() * 0.2, 1.4 + lr() * 0.3);
-      m.userData.basePh = lr() * 6.28;
-      larvaeGroup.add(m);
-      U.larvae.push(m);
-    }
-    scene.add(larvaeGroup);
 
     // ---- pheromone flow: one Points cloud, N=14 particles per tunnel,
     // each particle slides along its assigned curve and wraps. Tinted to
@@ -501,7 +476,7 @@ DN.underground = (function () {
     U.agents = agents; // expose for HUD active-ant counts
     // workers spawn in any room except Queen (Queen is reserved for queen
     // pinned agent) and Nursery (reserved for larvae cluster)
-    const workerRooms = ROOMS.filter(r => r.id !== 'queen' && r.id !== 'nursery');
+    const workerRooms = ROOMS;
     for (let i = 0; i < N; i++) {
       const room = workerRooms[Math.floor(Math.random() * workerRooms.length)];
       agents.push({
@@ -541,6 +516,7 @@ DN.underground = (function () {
     if (U._tunnelGlows) U._tunnelGlows.forEach(lm => lm.color.setHex(col.accent));
     if (U.agentGlow) U.agentGlow.material.color.setHex(col.accent);
     if (U.pheromones) U.pheromones.material.color.setHex(col.accent);
+    if (U._debateMat) U._debateMat.color.setHex(col.accent);
     propGroups.forEach(p => scene.remove(p)); propGroups = [];
     ROOMS.forEach(r => {
       const g = U.rooms[r.id];
@@ -567,6 +543,92 @@ DN.underground = (function () {
   };
 
   U.exit = function () { U.active = false; };
+
+  // ---- debate burst -----------------------------------------------------
+  // Called by DN.lifecycle during the debate phase. Spawns a rapid stream
+  // of brief glowing arcs between random pairs of agents in the same
+  // chamber so the user visibly sees "agents arguing" for ~10 seconds.
+  // The visuals are independent of backend events — they purely paint
+  // chamber activity while the real LLM run is settling on Railway.
+  const DEBATE_MAX_PARTICLES = 60;
+  const DEBATE_PER_BURST = 6;
+  let _debateOn = false;
+  let _debateSpawnT = 0;
+  let _debateLines = []; // { ax, ay, bx, by, ttl, age }
+  function ensureDebateCloud() {
+    if (U._debateCloud || !scene) return;
+    const buf = new Float32Array(DEBATE_MAX_PARTICLES * 3);
+    for (let i = 0; i < buf.length; i++) buf[i] = -9999;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(buf, 3));
+    U._debateMat = new THREE.PointsMaterial({
+      size: 1.2, map: (DN.util && DN.util.softSprite) ? DN.util.softSprite() : null,
+      color: 0xFFE39A, transparent: true, opacity: 0.95,
+      depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true
+    });
+    U._debateCloud = new THREE.Points(g, U._debateMat);
+    U._debateCloud.frustumCulled = false;
+    U._debateCloud.visible = false;
+    scene.add(U._debateCloud);
+    U._debatePos = g.attributes.position;
+  }
+  U.startDebate = function () {
+    ensureDebateCloud();
+    _debateOn = true;
+    _debateSpawnT = 0;
+    _debateLines = [];
+    if (U._debateCloud) U._debateCloud.visible = true;
+  };
+  U.stopDebate = function () {
+    _debateOn = false;
+    _debateLines = [];
+    if (U._debatePos) {
+      const arr = U._debatePos.array;
+      for (let i = 0; i < arr.length; i++) arr[i] = -9999;
+      U._debatePos.needsUpdate = true;
+    }
+    if (U._debateCloud) U._debateCloud.visible = false;
+  };
+  U.tickDebate = function (dt /*, elapsed */) {
+    if (!_debateOn || !U._debateCloud || !agents || agents.length < 2) return;
+    // ~8 bursts per second so the chambers feel alive
+    _debateSpawnT += dt;
+    while (_debateSpawnT > 0.12) {
+      _debateSpawnT -= 0.12;
+      // pick two agents in the same chamber (state==='mill') so the
+      // exchange visibly stays inside a chamber rather than crossing
+      // tunnels.
+      const a = agents[Math.floor(Math.random() * agents.length)];
+      const sameRoom = agents.filter(x => x !== a && x.roomId === a.roomId);
+      if (!sameRoom.length) continue;
+      const b = sameRoom[Math.floor(Math.random() * sameRoom.length)];
+      _debateLines.push({ ax: a.px, ay: a.py, bx: b.px, by: b.py, ttl: 1.3, age: 0 });
+      if (_debateLines.length > 14) _debateLines.shift();
+    }
+    // render each line as DEBATE_PER_BURST particles spread along it
+    const arr = U._debatePos.array;
+    let p = 0;
+    for (let i = _debateLines.length - 1; i >= 0; i--) {
+      const l = _debateLines[i];
+      l.age += dt;
+      if (l.age >= l.ttl) { _debateLines.splice(i, 1); continue; }
+      const k = Math.min(1, l.age / 0.18) * Math.min(1, (l.ttl - l.age) / 0.4);
+      for (let j = 0; j < DEBATE_PER_BURST; j++) {
+        if (p * 3 + 2 >= arr.length) break;
+        const t = (j / (DEBATE_PER_BURST - 1)) + l.age * 0.6;
+        const u = t % 1;
+        arr[p * 3]     = l.ax + (l.bx - l.ax) * u;
+        arr[p * 3 + 1] = l.ay + (l.by - l.ay) * u;
+        arr[p * 3 + 2] = 1.2 + 0.4 * k;
+        p++;
+      }
+    }
+    // park remaining buffer below the world
+    for (; p < DEBATE_MAX_PARTICLES; p++) {
+      arr[p * 3] = -9999; arr[p * 3 + 1] = -9999; arr[p * 3 + 2] = -9999;
+    }
+    U._debatePos.needsUpdate = true;
+  };
 
   // ---- WASD pan + scroll-zoom + slight mouse tilt --------------------
   // While underground is active, hold WASD to pan the camera across the

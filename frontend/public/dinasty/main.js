@@ -70,12 +70,20 @@ DN.app = (function () {
       DN.ants.update(dt, el, Math.max(0.0001, timeScale));
       DN.trails.update(dt, el);
       if (DN.commsViz && DN.commsViz.update) DN.commsViz.update(dt, el);
+      if (DN.crystal && DN.crystal.update) DN.crystal.update(dt, el);
+      if (DN.lifecycle && DN.lifecycle.update) DN.lifecycle.update(dt, el);
       if (App.following) DN.camera.follow(() => DN.ants.heroPos(App.following));
       DN.camera.update(dt);
       DN.interactions.update();
       world.renderer.render(world.scene, world.camera);
     } else {
       DN.underground.update(dt, el);
+      // Keep the lifecycle ticking + surface ants migrating even while
+      // underground — without these the ants we asked to walk home at
+      // INGRESS freeze mid-route and never become `idle`, so EGRESS
+      // can't find anyone to emerge.
+      DN.ants.update(dt, el, Math.max(0.0001, timeScale));
+      if (DN.lifecycle && DN.lifecycle.update) DN.lifecycle.update(dt, el);
       DN.interactions.update();
       world.renderer.render(DN.underground.scene, DN.underground.camera);
     }
@@ -249,6 +257,8 @@ DN.app = (function () {
     DN.ants.init(world.scene, DN.colony.list);
     if (DN.commsViz && DN.commsViz.init) DN.commsViz.init(world.scene);
     if (DN.logTerm && DN.logTerm.init) DN.logTerm.init();
+    if (DN.crystal && DN.crystal.init) DN.crystal.init(world.scene);
+    if (DN.lifecycle && DN.lifecycle.init) DN.lifecycle.init(world.scene);
     DN.trails.init(world.scene, DN.colony.list);
     DN.underground.init();
     DN.camera.init();

@@ -35,32 +35,54 @@ DN.hud = (function () {
     $('regions').querySelectorAll('.reg').forEach(el => el.addEventListener('click', () => DN.app.setBiome(parseInt(el.dataset.i))));
     initBackendControl();
     H.clearInspector();
+    // MVP polish: strip every persistent HUD chrome element except the
+    // backend pill (Run button), exit-banner, and the bottom log
+    // terminal. The user wants a minimal "3D + terminal" surface.
+    ['hotbar', 'tools', 'transport', 'thoughts', 'cammode', 'keys', 'regions', 'brand', 'stats', 'inspector'].forEach(id => {
+      const el = $(id); if (el) el.style.display = 'none';
+    });
     return H;
   };
 
   function initBackendControl() {
     const root = $('backend');
     if (!root) return;
+    // Collapsed control surface: the primary `Run` button plus the Match
+    // dropdown stay always visible. The 7 debug buttons (Get ants / Get
+    // KG / Run scouting / Deploy / Buy KG / Stake demo / Settle) live
+    // inside a `▾ Advanced` disclosure so the chrome stays clean.
     root.innerHTML =
       '<div class="backend-copy"><div class="backend-k">Backend</div><div class="backend-s" id="backend-status">Railway linked</div></div>' +
       '<div class="backend-actions">' +
-        '<button class="backend-btn secondary" id="backend-ants">Get ants</button>' +
-        '<button class="backend-btn secondary" id="backend-kg">Get KG</button>' +
-        '<button class="backend-btn secondary" id="backend-scout">Run scouting</button>' +
-        '<button class="backend-btn" id="backend-run">Run LLM agents</button>' +
         '<select class="forecast-game-select" id="forecast-game" aria-label="Game">' +
           '<option value="match:world_cup_2026:013:2026_06_13_brazil_morocco">Brazil vs Morocco</option>' +
         '</select>' +
-        '<button class="backend-btn secondary" id="forecast-deploy">Deploy</button>' +
-        '<button class="backend-btn secondary" id="x402-buy">Buy KG</button>' +
-        '<button class="backend-btn secondary" id="forecast-setup">Stake demo</button>' +
         '<select class="forecast-select" id="forecast-winner" aria-label="Winner">' +
           '<option value="Brazil">Brazil</option>' +
           '<option value="Draw">Draw</option>' +
           '<option value="Morocco">Morocco</option>' +
         '</select>' +
-        '<button class="backend-btn" id="forecast-settle">Settle</button>' +
+        '<button class="backend-btn" id="backend-run">Run</button>' +
+        '<button class="backend-btn secondary backend-toggle" id="backend-adv-toggle" title="Show advanced controls">▾</button>' +
+      '</div>' +
+      '<div class="backend-advanced" id="backend-advanced" style="display:none;gap:6px;margin-top:6px;flex-wrap:wrap">' +
+        '<button class="backend-btn secondary" id="backend-ants">Get ants</button>' +
+        '<button class="backend-btn secondary" id="backend-kg">Get KG</button>' +
+        '<button class="backend-btn secondary" id="backend-scout">Run scouting</button>' +
+        '<button class="backend-btn secondary" id="forecast-deploy">Deploy</button>' +
+        '<button class="backend-btn secondary" id="x402-buy">Buy KG</button>' +
+        '<button class="backend-btn secondary" id="forecast-setup">Stake demo</button>' +
+        '<button class="backend-btn secondary" id="forecast-settle">Settle</button>' +
       '</div>';
+    const advToggle = $('backend-adv-toggle');
+    const advTray = $('backend-advanced');
+    if (advToggle && advTray) {
+      advToggle.addEventListener('click', () => {
+        const open = advTray.style.display !== 'none';
+        advTray.style.display = open ? 'none' : 'flex';
+        advToggle.textContent = open ? '▾' : '▴';
+      });
+    }
     const btn = $('backend-run');
     const antsBtn = $('backend-ants');
     const kgBtn = $('backend-kg');
@@ -288,35 +310,26 @@ DN.hud = (function () {
         });
     });
     btn.addEventListener('click', () => {
-      if (!DN.databridge || !DN.databridge.startDemoRun) return;
-      btn.disabled = true;
-      status.textContent = 'Starting run...';
-      H.pushThought('Frontend requested a new LLM-powered Railway colony run.', 'Backend', '#3FA89F');
-      if (DN.logTerm) DN.logTerm.push('SYSTEM', 'LLM debate run kicked off — debate_claim and social_action events incoming.');
-      DN.databridge.startDemoRun()
-        .then((result) => {
-          const agents = DN.databridge.getAgents ? DN.databridge.getAgents().length : 0;
-          const rooms = DN.databridge.getRooms ? DN.databridge.getRooms().length : 0;
-          status.textContent = 'Loaded ' + agents + ' agents · ' + rooms + ' rooms';
-          H.pushThought('Backend run completed and the colony view loaded its events.', 'Backend', '#3FA89F');
-          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Run complete: ' + agents + ' agents · ' + rooms + ' rooms. Visualising debate.');
-          // Critical: the comms poller caches the run-id for 30s, so
-          // without a reset it will keep returning the OLD run's events
-          // for a while after Run LLM completes. Force the cache to
-          // re-pick the freshest run on the next poll and wipe the
-          // commsViz dedup so every event from the new run dispatches.
-          const newId = (DN.databridge && DN.databridge.runId) || null;
-          if (DN.databridge && DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(newId);
-          if (DN.commsViz && DN.commsViz.reset) DN.commsViz.reset();
-          if (H._pollComms) H._pollComms();
-          if (pollAgents) pollAgents(false);
-        })
-        .catch((err) => {
-          status.textContent = 'Backend error';
-          H.pushThought('Backend run failed: ' + (err.message || err), 'Backend', '#D96E54');
-          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Run failed: ' + (err.message || err));
-        })
-        .finally(() => { btn.disabled = false; });
+      // The primary Run button now drives the full lifecycle controller,
+      // which orchestrates scout → KG crystal → recruit → debate →
+      // settle in turn. The lifecycle itself calls `startDemoRun` during
+      // its converge phase (see lifecycle.js ENTER.converge).
+      if (DN.lifecycle && DN.lifecycle.start) {
+        btn.disabled = true;
+        status.textContent = 'Lifecycle running…';
+        H.pushThought('Lifecycle kicked off — Brazil vs Morocco.', 'Lifecycle', '#3FA89F');
+        DN.lifecycle.start();
+        // Re-enable after ~55s (full scripted lifecycle) so the user can
+        // re-trigger if they want to loop through again.
+        setTimeout(() => { btn.disabled = false; status.textContent = 'Roaming · click Run to loop'; }, 56000);
+      } else if (DN.databridge && DN.databridge.startDemoRun) {
+        // Fallback if lifecycle module didn't load: behave as before.
+        btn.disabled = true;
+        status.textContent = 'Starting run...';
+        DN.databridge.startDemoRun()
+          .then(() => { btn.disabled = false; status.textContent = 'Run complete'; })
+          .catch(err => { btn.disabled = false; status.textContent = 'Run error: ' + (err && err.message || err); });
+      }
     });
 
     forecastDeployBtn.addEventListener('click', () => {
@@ -490,6 +503,47 @@ DN.hud = (function () {
     setW('b-health', col.stats.health); setW('b-food', col.stats.food);
   };
 
+  // Render the Forecast / Outcome / Settled-tx rows for the ant inspector.
+  // Pulled from a.forecast (set by lifecycle.deriveOutcomes), a.outcome,
+  // and DN.lifecycle.settleTxHash. Returns '' when no forecast data exists.
+  function renderForecastOutcome(a) {
+    const fc = a && a.forecast;
+    const outcome = a && a.outcome;
+    if (!fc && !outcome) return '';
+    let html = '';
+    if (fc) {
+      const sideRaw = fc.side || 'pass';
+      const sideLabel = sideRaw === 'home' ? 'Home' : sideRaw === 'away' ? 'Away' : 'Pass';
+      const prob = fc.home_probability != null ? Math.round(fc.home_probability * 100) + '%' : '—';
+      const stake = fc.stake != null ? '$' + Math.round(fc.stake) : '—';
+      html += `<div class="vital-bar" style="margin-top:9px"><div class="vlabel">
+        <span>Forecast</span>
+        <span style="font-family:var(--mono)">${sideLabel} · ${prob} · stake ${stake}</span>
+      </div></div>`;
+    }
+    if (outcome) {
+      const tone = outcome === 'correct' ? '#5FB84A' :
+                   outcome === 'wrong'   ? '#D96E54' :
+                   outcome === 'culled'  ? '#8C7E60' : '#8C7E60';
+      const label = outcome === 'correct' ? '✓ correct' :
+                    outcome === 'wrong'   ? '✗ wrong' :
+                    outcome === 'culled'  ? '☠ culled' : 'pending';
+      html += `<div class="vital-bar" style="margin-top:9px"><div class="vlabel">
+        <span>Outcome</span>
+        <span style="color:${tone};font-weight:600">${label}</span>
+      </div></div>`;
+    }
+    const tx = DN.lifecycle && DN.lifecycle.settleTxHash;
+    if (tx) {
+      const short = tx.slice(0, 6) + '…' + tx.slice(-4);
+      html += `<div class="vital-bar" style="margin-top:9px"><div class="vlabel">
+        <span>Settled tx</span>
+        <span style="font-family:var(--mono);font-size:11px">${short}</span>
+      </div></div>`;
+    }
+    return html;
+  }
+
   H.showAnt = function (a, following) {
     H._open = { type: 'ant', ant: a };
     $('inspector').classList.add('has-content');
@@ -517,6 +571,7 @@ DN.hud = (function () {
       ${identityRows}
       <div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>Current task</span><span id="a-task">—</span></div></div>
       <div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>Carrying</span><span id="a-cargo">—</span></div></div>
+      ${renderForecastOutcome(a)}
       <div class="section-label">Recent activity</div>
       <div class="insp-empty" style="font-size:12px">${antBlurb(a)}</div>
       <button class="btn-primary" id="follow-ant" style="background:${following ? 'rgba(255,238,205,0.1)' : ''};color:${following ? 'var(--ink)' : ''};border-color:var(--border-strong)">
@@ -662,21 +717,18 @@ DN.hud = (function () {
   H.setUnderground = function (on) {
     document.body.classList.toggle('underground', on);
     $('exitbtn').classList.toggle('show', on);
-    // Hide the surface HUD while underground — the game UI overlay takes over.
-    ['stats', 'hotbar', 'tools', 'transport', 'thoughts', 'cammode', 'brand', 'enterbanner', 'regions', 'inspector', 'backend'].forEach(id => {
-      const el = $(id); if (!el) return;
-      el.style.display = on ? 'none' : '';
+    // Only `backend` (the Run button) is allowed to come back on surface;
+    // everything else stays hidden per the MVP minimal-chrome policy.
+    const back = $('backend'); if (back) back.style.display = on ? 'none' : '';
+    // Belt-and-braces: ensure the rest stays hidden in both modes.
+    ['stats', 'hotbar', 'tools', 'transport', 'thoughts', 'cammode', 'brand', 'regions', 'inspector', 'enterbanner', 'keys'].forEach(id => {
+      const el = $(id); if (el) el.style.display = 'none';
     });
+    if (H._ugRoot) H._ugRoot.style.display = 'none';
     if (on) {
       H._open = null;
-      H._ensureUgGameUi();
-      H._ugRoot.style.display = 'block';
-      // recolor the game UI accents to the active colony
-      const col = (DN.underground && DN.underground.col) || null;
-      if (col) H._applyUgAccent(col.accent);
     } else {
       H.clearInspector();
-      if (H._ugRoot) H._ugRoot.style.display = 'none';
     }
   };
 

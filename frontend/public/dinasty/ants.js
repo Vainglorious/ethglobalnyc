@@ -215,7 +215,10 @@ DN.ants = (function () {
         speed: 2.0 + Math.random() * 1.0,
         // 'migrating' = walking from parent to new colony entrance
         // 'out'/'home' = normal forage cycle
-        state: parent ? 'migrating' : 'out',
+        // Default to 'idle' so workers stay hidden under the mound until the
+        // lifecycle controller calls A.activate(). Migrating founders still
+        // walk in immediately.
+        state: parent ? 'migrating' : 'idle',
         wob: Math.random() * 6.28,
         trail: null, t: 0, dir: 1,
         // migration state
@@ -266,6 +269,10 @@ DN.ants = (function () {
       const ant = A.list.filter(a => a.col === col && !a.hero)[h < colonies.length ? 0 : 1];
       if (!ant) continue;
       ant.hero = true;
+      // heroes stay visible even before lifecycle activation
+      ant.state = 'out';
+      ant._idleWritten = false;
+      if (!ant.trail) pickTarget(ant);
       ant.scale = 1.15;
       ant.role = roles[h];
       ant.name = roles[h].slice(0, 1) + 'gent ' + greek[h] + '-' + String(7 + h * 13).padStart(2, '0');
@@ -308,7 +315,52 @@ DN.ants = (function () {
     scene.add(A.selectionGlow);
     A.selectedAnt = null;
 
+    // ---- outcome tint: one shared Points cloud, one vertex per ant ----
+    // Drawn after lifecycle.deriveOutcomes() flips a.outcome. Colour =
+    // green / red / grey by outcome; vertex moved below the world for
+    // ants that are not yet decided.
+    const outN = A.list.length;
+    const outPos = new Float32Array(outN * 3);
+    const outCol = new Float32Array(outN * 3);
+    for (let i = 0; i < outN * 3; i++) { outPos[i] = -1000; outCol[i] = 1; }
+    const outGeo = new THREE.BufferGeometry();
+    outGeo.setAttribute('position', new THREE.BufferAttribute(outPos, 3));
+    outGeo.setAttribute('color', new THREE.BufferAttribute(outCol, 3));
+    A.outcomeGlow = new THREE.Points(outGeo, new THREE.PointsMaterial({
+      size: 2.6, map: DN.util.softSprite(),
+      transparent: true, opacity: 0.85,
+      vertexColors: true,
+      depthWrite: false, blending: THREE.AdditiveBlending,
+      sizeAttenuation: true
+    }));
+    A.outcomeGlow.frustumCulled = false;
+    A.outcomeGlow.visible = false;
+    scene.add(A.outcomeGlow);
+    A._outcomePos = outGeo.attributes.position;
+    A._outcomeCol = outGeo.attributes.color;
+
     return A;
+  };
+
+  // RGB tints per outcome state
+  const OUTCOME_COLOR = {
+    correct: [0.42, 0.78, 0.32],   // green
+    wrong:   [0.86, 0.36, 0.28],   // red
+    pending: [0.55, 0.49, 0.36],   // tarnished gold
+    culled:  [0.30, 0.26, 0.22]    // near-black
+  };
+
+  // Called by lifecycle.deriveOutcomes() to make the outcome glow visible
+  // and force a refresh next frame. Cheap; no per-ant work here.
+  A.showOutcomeGlow = function () {
+    if (!A.outcomeGlow) return;
+    A.outcomeGlow.visible = true;
+    A._outcomeDirty = true;
+  };
+
+  A.hideOutcomeGlow = function () {
+    if (!A.outcomeGlow) return;
+    A.outcomeGlow.visible = false;
   };
 
   // Mark an ant as the currently inspected one — surface (and underground
@@ -357,6 +409,25 @@ DN.ants = (function () {
     for (let k = 0; k < A.list.length; k++) {
       const a = A.list[k];
 
+      // ---- idle: ant is hidden under the mound until the lifecycle
+      // controller activates it. Collapse the instance matrix to zero
+      // ONCE, then skip all per-frame work until state flips out. ----
+      if (a.state === 'idle') {
+        if (!a._idleWritten) {
+          a._idleWritten = true;
+          _p.set(a.col.entrance.x, -100, a.col.entrance.z); // below ground
+          _e.set(0, 0, 0); _q.setFromEuler(_e);
+          _s.setScalar(0);
+          _m.compose(_p, _q, _s);
+          a.mesh.setMatrixAt(a.inst, _m);
+          meshDirty[a.mesh.uuid] = a.mesh;
+        }
+        continue;
+      }
+      // any non-idle iteration clears the flag so re-entering idle will
+      // re-collapse the matrix
+      a._idleWritten = false;
+
       // ---- death animation: ant tips forward, fades to small, then is
       // teleported back to the entrance and respawned outbound. Rate is
       // tuned so ~1 ant dies every several seconds across all colonies. ----
@@ -404,7 +475,7 @@ DN.ants = (function () {
       if (a.state === 'migrating') {
         // Tuned so the lead ants arrive just as the 6.5-sec founding
         // animation finishes — total migration ≈ 7s with a ~4s spread.
-        a.migT += dt * 0.14 * timeScale;
+        a.migT += dt * (a.scriptSpeed || 0.14) * timeScale;
         if (a.migT < 0) {
           // still waiting at parent entrance — render in place
           const gy = ground(a.x, a.z);
@@ -417,17 +488,22 @@ DN.ants = (function () {
           continue;
         }
         if (a.migT >= 1 || !a.migTrail) {
-          // Arrived. Sample the exact trail end (col.entrance) so there
-          // is no teleport-jitter. Then enter 'settling': the ant wanders
-          // briefly near the new mound for 0–10s before joining forage,
-          // staggered per ant so we don't get a mass "outbound spawn"
-          // moment the moment migration finishes.
+          // Arrived. Sample the exact trail end so there is no teleport.
           if (a.migTrail) {
             a.migTrail.curve.getPoint(1, _curvePos);
             a.x = _curvePos.x; a.z = _curvePos.z;
           }
-          a.state = 'settling';
-          a.settleLeft = Math.random() * 10;
+          // Lifecycle scripted walks can override the arrival behaviour
+          // via a per-ant `_onArrive` callback (set by A.scriptWalk).
+          // Otherwise fall through to the original `settling` flow.
+          if (typeof a._onArrive === 'function') {
+            const cb = a._onArrive;
+            a._onArrive = null;
+            try { cb(a); } catch (_) {}
+          } else {
+            a.state = 'settling';
+            a.settleLeft = Math.random() * 10;
+          }
           // render in place this frame so we don't pop
           const gy0 = ground(a.x, a.z);
           _p.set(a.x, gy0 + 0.05, a.z);
@@ -578,6 +654,36 @@ DN.ants = (function () {
       const s = 4.2 + Math.sin(elapsed * 3) * 0.4;
       A.selectionGlow.scale.set(s, s, 1);
     }
+
+    // outcome tint sprite cloud — mirrors each ant's position and tints
+    // by `a.outcome`. Only ticks when the cloud is visible (lifecycle
+    // turns it on at egress_roam).
+    if (A.outcomeGlow && A.outcomeGlow.visible && A._outcomePos) {
+      const pos = A._outcomePos.array, col = A._outcomeCol.array;
+      let anyAlive = false;
+      const pulse = 0.85 + Math.sin(elapsed * 2.6) * 0.12;
+      A.outcomeGlow.material.opacity = pulse;
+      for (let i = 0; i < A.list.length; i++) {
+        const a = A.list[i];
+        if (!a.outcome || a.state === 'idle' || a.state === 'dead') {
+          // hide vertex by parking it below the world
+          pos[i * 3 + 1] = -1000;
+          continue;
+        }
+        const c = OUTCOME_COLOR[a.outcome] || OUTCOME_COLOR.pending;
+        const gy = ground(a.x, a.z);
+        pos[i * 3]     = a.x;
+        pos[i * 3 + 1] = gy + 1.6;
+        pos[i * 3 + 2] = a.z;
+        col[i * 3]     = c[0];
+        col[i * 3 + 1] = c[1];
+        col[i * 3 + 2] = c[2];
+        anyAlive = true;
+      }
+      A._outcomePos.needsUpdate = true;
+      A._outcomeCol.needsUpdate = true;
+      if (!anyAlive) A.outcomeGlow.visible = false;
+    }
   };
 
   // resolve an instanced raycast hit into an ant object
@@ -601,6 +707,71 @@ DN.ants = (function () {
       if (a.hero) continue;
       a.agentRecord = sorted[ri % sorted.length];
       ri++;
+    }
+  };
+
+  // Activate idle ants. Called by DN.lifecycle when phases transition out
+  // of IDLE. Options:
+  //   colony: only activate ants for this colony (default: all)
+  //   limit:  cap the number of activated ants per call (default: all)
+  //   state:  target state to flip into (default: 'out' — normal foraging)
+  A.activate = function (opts) {
+    opts = opts || {};
+    const target = opts.state || 'out';
+    let activated = 0;
+    for (const a of A.list) {
+      if (a.state !== 'idle') continue;
+      if (opts.colony && a.col !== opts.colony) continue;
+      // jitter the spawn point so they don't all surface in the same pixel
+      a.x = a.col.entrance.x + (Math.random() - 0.5) * 1.4;
+      a.z = a.col.entrance.z + (Math.random() - 0.5) * 1.4;
+      a.state = target;
+      a.t = 0; a.dir = 1; a.cargo = 0;
+      a._idleWritten = false;
+      activated++;
+      if (opts.limit && activated >= opts.limit) break;
+    }
+    return activated;
+  };
+
+  // Script a one-off Bezier walk for an ant: from (fromX, fromZ) to
+  // (toX, toZ). Uses the existing migration walker so we get smooth
+  // lateral offset, easing, and yaw lerp for free. On arrival, the
+  // ant's `_onArrive` callback fires (the migration arrival hook
+  // we added). Speed is tuned to feel scout-like, not forager-like.
+  A.scriptWalk = function (ant, fromX, fromZ, toX, toZ, opts) {
+    opts = opts || {};
+    const start = new THREE.Vector3(fromX, 0, fromZ);
+    const end = new THREE.Vector3(toX, 0, toZ);
+    const dx = end.x - start.x, dz = end.z - start.z;
+    const len = Math.hypot(dx, dz) || 1;
+    const curlAmount = opts.curl != null ? opts.curl : 0.18;
+    const perpx = -dz / len, perpz = dx / len;
+    const sign = opts.curlSign || (Math.random() < 0.5 ? -1 : 1);
+    const mid = new THREE.Vector3(
+      (start.x + end.x) * 0.5 + perpx * curlAmount * len * sign,
+      0,
+      (start.z + end.z) * 0.5 + perpz * curlAmount * len * sign
+    );
+    ant.state = 'migrating';
+    ant.migTrail = { curve: new THREE.QuadraticBezierCurve3(start, mid, end), length: len };
+    ant.migT = opts.tStart != null ? opts.tStart : 0;
+    ant.x = start.x; ant.z = start.z;
+    ant._idleWritten = false;
+    ant._onArrive = opts.onArrive || null;
+    // override the default migration speed for snappier scout pacing
+    if (opts.speed != null) ant.scriptSpeed = opts.speed;
+  };
+
+  // Reset everyone back to idle — used when the lifecycle controller is
+  // re-triggered (user clicks Run again).
+  A.allIdle = function () {
+    for (const a of A.list) {
+      if (a.hero) continue; // heroes stay visible
+      a.state = 'idle';
+      a._idleWritten = false;
+      a.trail = null; a.t = 0; a.dir = 1; a.cargo = 0;
+      a.outcome = null;
     }
   };
 
