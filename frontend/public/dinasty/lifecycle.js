@@ -518,13 +518,23 @@ DN.lifecycle = (function () {
       }
     },
     resolution: () => {
-      // Stop the in-chamber debate animation; chambers fall quiet.
       if (DN.underground && DN.underground.stopDebate) DN.underground.stopDebate();
       L.phaseHold = true;
-      settleRunEconomy().finally(() => {
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
         L.phaseHold = false;
         L.phaseT = 0;
-      });
+      };
+      settleRunEconomy().finally(release);
+      // Watchdog: if settle hangs on the network the demo still
+      // advances to egress_roam after 12s so the user isn't stranded
+      // staring at the chamber.
+      setTimeout(() => {
+        if (!released && DN.logTerm) DN.logTerm.push('SYSTEM', 'Settle still in flight after 12s — advancing to egress so the demo continues.');
+        release();
+      }, 12000);
     },
     egress_roam: () => {
       // Back to surface; derive per-agent outcome, then have each
@@ -588,8 +598,10 @@ DN.lifecycle = (function () {
     const meta = selectedGameMeta();
     const contract = configuredContract();
     const walletStore = configuredForecastWalletStore();
-    const run = await startBackendRun();
-    const runId = (run && run.id) || L.runId || (DN.databridge && DN.databridge.runId) || null;
+    // DON'T await startBackendRun() here — it polls until the scouting
+    // run reaches "succeeded", which can be minutes (or never). Use
+    // whatever run id we already have so settle + egress can proceed.
+    const runId = L.runId || (DN.databridge && DN.databridge.runId) || null;
     const marketKey = runMarketKey(meta, runId);
     L.winner = selectedWinner();
     if (DN.logTerm) {
