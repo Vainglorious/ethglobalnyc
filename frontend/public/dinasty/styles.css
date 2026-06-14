@@ -73,7 +73,7 @@ body.underground #atmos {
 
 /* ---------- backend run test ---------- */
 #backend {
-  position: absolute; top: 24px; right: 24px; width: min(300px, calc(100vw - 48px));
+  position: absolute; top: 24px; right: 24px; width: min(360px, calc(100vw - 48px));
   display: flex; flex-direction: column; align-items: stretch; gap: 8px;
   padding: 8px 10px 10px 12px;
 }

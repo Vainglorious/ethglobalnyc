@@ -74,7 +74,8 @@ DN.hud = (function () {
           '<option value="Draw">Draw</option>' +
           '<option value="Morocco">Morocco</option>' +
         '</select>' +
-        '<button class="backend-btn" id="backend-run">Run</button>' +
+        '<button class="backend-btn" id="backend-run">Run + Scout</button>' +
+        '<button class="backend-btn secondary" id="backend-run-fast">Run Fast</button>' +
         '<button class="backend-btn secondary backend-toggle" id="backend-adv-toggle" title="Show advanced controls">▾</button>' +
       '</div>' +
       '<div class="backend-advanced" id="backend-advanced" style="display:none;gap:6px;margin-top:6px;flex-wrap:wrap">' +
@@ -96,6 +97,7 @@ DN.hud = (function () {
       });
     }
     const btn = $('backend-run');
+    const fastBtn = $('backend-run-fast');
     const antsBtn = $('backend-ants');
     const kgBtn = $('backend-kg');
     const scoutBtn = $('backend-scout');
@@ -567,32 +569,45 @@ DN.hud = (function () {
           setScoutingBusy(false);
         });
     });
-    btn.addEventListener('click', () => {
+    function setRunButtonsDisabled(disabled) {
+      if (btn) btn.disabled = disabled;
+      if (fastBtn) fastBtn.disabled = disabled;
+    }
+
+    function runLifecycle(opts) {
       // The primary Run button drives the full lifecycle controller:
       // scout -> KG crystal -> recruit -> debate -> stake/settle.
       if (DN.lifecycle && DN.lifecycle.start) {
-        btn.disabled = true;
-        status.textContent = 'Lifecycle running…';
-        H.pushThought('Lifecycle kicked off — ' + selectedGame.name + '.', 'Lifecycle', '#3FA89F');
-        DN.lifecycle.start();
+        const withScout = !(opts && opts.scout === false);
+        setRunButtonsDisabled(true);
+        status.textContent = withScout ? 'Lifecycle + scouting…' : 'Fast lifecycle…';
+        H.pushThought(
+          (withScout ? 'Lifecycle with scouting kicked off — ' : 'Fast lifecycle kicked off — ') + selectedGame.name + '.',
+          'Lifecycle',
+          '#3FA89F'
+        );
+        DN.lifecycle.start({ scout: withScout });
         const startedAt = Date.now();
         const timer = setInterval(() => {
           const phase = DN.lifecycle && DN.lifecycle.getPhase ? DN.lifecycle.getPhase() : '';
           if (phase === 'egress_roam' || phase === 'idle' || Date.now() - startedAt > 480000) {
             clearInterval(timer);
-            btn.disabled = false;
+            setRunButtonsDisabled(false);
             status.textContent = phase === 'egress_roam' ? 'Roaming · click Run to loop' : 'Run ready';
           }
         }, 1000);
       } else if (DN.databridge && DN.databridge.startDemoRun) {
         // Fallback if lifecycle module didn't load: behave as before.
-        btn.disabled = true;
+        setRunButtonsDisabled(true);
         status.textContent = 'Starting run...';
         DN.databridge.startDemoRun()
-          .then(() => { btn.disabled = false; status.textContent = 'Run complete'; })
-          .catch(err => { btn.disabled = false; status.textContent = 'Run error: ' + (err && err.message || err); });
+          .then(() => { setRunButtonsDisabled(false); status.textContent = 'Run complete'; })
+          .catch(err => { setRunButtonsDisabled(false); status.textContent = 'Run error: ' + (err && err.message || err); });
       }
-    });
+    }
+
+    btn.addEventListener('click', () => runLifecycle({ scout: true }));
+    if (fastBtn) fastBtn.addEventListener('click', () => runLifecycle({ scout: false }));
 
     forecastDeployBtn.addEventListener('click', () => {
       if (!DN.databridge || !DN.databridge.deployForecastContract) return;

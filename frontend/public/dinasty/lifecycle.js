@@ -26,6 +26,7 @@ DN.lifecycle = (function () {
     convergeReturned: 0,
     ingressDone: false,
     debateDone: false,
+    skipScouting: false,
   };
 
   // Minimum visual dwell per phase. These values never advance a backend
@@ -260,6 +261,14 @@ DN.lifecycle = (function () {
 
   function startBackendRun() {
     if (L.runPromise) return L.runPromise;
+    if (L.skipScouting) {
+      L.scoutingDone = true;
+      L.scoutingResult = null;
+      L.scoutingError = null;
+      L.runPromise = Promise.resolve(null);
+      if (DN.logTerm) DN.logTerm.push('SCOUT', 'Backend scouting skipped — using cached KG and fallback economy stakes.');
+      return L.runPromise;
+    }
     if (!DN.databridge || !DN.databridge.startScoutingRun) {
       L.scoutingDone = true;
       L.runPromise = Promise.resolve(null);
@@ -382,6 +391,10 @@ DN.lifecycle = (function () {
       startBackendRun();
     },
     scouting: () => {
+      if (L.skipScouting) {
+        if (DN.logTerm) DN.logTerm.push('SCOUT', 'Scouting skipped for fast run.');
+        return;
+      }
       // Previously kicked startScoutingRun() here which streamed SSE
       // events from Railway and hammered kgview's SVG rebuild path
       // while the 3D scene was already busy with scout animations —
@@ -763,7 +776,8 @@ DN.lifecycle = (function () {
     if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Lifecycle ready — idle. Click Run to start.');
   };
 
-  L.start = function () {
+  L.start = function (opts) {
+    opts = opts || {};
     // Hard reset, then enter phase 1.
     L.phase = 'idle';
     L.phaseT = 0;
@@ -783,6 +797,7 @@ DN.lifecycle = (function () {
     L.convergeReturned = 0;
     L.ingressDone = false;
     L.debateDone = false;
+    L.skipScouting = opts.scout === false || opts.skipScouting === true;
     if (DN.databridge && DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(null);
     if (ENTER.idle) ENTER.idle();
     enter('kickoff');
