@@ -616,6 +616,8 @@ DN.lifecycle = (function () {
         run_id: runId || undefined,
         wallet_store: walletStore || undefined,
         max_stakers: 12,
+        wait_for_run_forecasts: true,
+        run_forecast_timeout_seconds: 240,
         fee_bps: 1000
       });
       L.marketKey = (setup && setup.market_key) || marketKey;

@@ -142,6 +142,8 @@ class ForecastDemoSetupRequest(ForecastCreateMarketRequest):
     stake_scale: float = Field(default=0.0001, gt=0.0, le=1.0)
     fund_stakers: bool | None = None
     fund_amount: str = "0.01"
+    wait_for_run_forecasts: bool | None = None
+    run_forecast_timeout_seconds: int = Field(default=180, ge=0, le=600)
 
 
 class ForecastSettleRequest(BaseModel):
@@ -1276,6 +1278,39 @@ def _stake_instructions_from_run(
     return stakes
 
 
+def _wait_for_run_stakes(
+    *,
+    run_id: str,
+    wallet_store: str,
+    market_type: str,
+    max_stakers: int,
+    stake_scale: float,
+    timeout_seconds: int,
+) -> tuple[list[ForecastStakeInstruction], str]:
+    deadline = time.time() + max(timeout_seconds, 0)
+    last_status = "unknown"
+    while True:
+        stakes = _stake_instructions_from_run(
+            run_id=run_id,
+            wallet_store=wallet_store,
+            market_type=market_type,
+            max_stakers=max_stakers,
+            stake_scale=stake_scale,
+        )
+        if stakes:
+            return stakes, f"run:{run_id}"
+        try:
+            metadata = _read_metadata(run_id)
+            last_status = str(metadata.get("status") or "unknown")
+        except HTTPException:
+            raise
+        except Exception:
+            last_status = "unknown"
+        if last_status in {"succeeded", "failed"} or time.time() >= deadline:
+            return [], f"fallback:no-forecasts:{last_status}"
+        time.sleep(2.0)
+
+
 def _x402_services() -> list[dict]:
     return [
         {
@@ -1515,14 +1550,27 @@ def setup_forecast_demo(request: ForecastDemoSetupRequest) -> dict:
     stakes = request.stakes
     stake_source = "request"
     if stakes is None and request.run_id:
-        stakes = _stake_instructions_from_run(
-            run_id=request.run_id,
-            wallet_store=wallet_store,
-            market_type=request.market_type,
-            max_stakers=request.max_stakers,
-            stake_scale=request.stake_scale,
-        )
-        stake_source = f"run:{request.run_id}" if stakes else "fallback"
+        should_wait = request.wait_for_run_forecasts
+        if should_wait is None:
+            should_wait = _env_bool("COLONY_API_FORECAST_WAIT_FOR_RUN", True)
+        if should_wait:
+            stakes, stake_source = _wait_for_run_stakes(
+                run_id=request.run_id,
+                wallet_store=wallet_store,
+                market_type=request.market_type,
+                max_stakers=request.max_stakers,
+                stake_scale=request.stake_scale,
+                timeout_seconds=request.run_forecast_timeout_seconds,
+            )
+        else:
+            stakes = _stake_instructions_from_run(
+                run_id=request.run_id,
+                wallet_store=wallet_store,
+                market_type=request.market_type,
+                max_stakers=request.max_stakers,
+                stake_scale=request.stake_scale,
+            )
+            stake_source = f"run:{request.run_id}" if stakes else "fallback"
     if stakes is None or not stakes:
         stakes = _default_demo_stakes(request.market_type)
         stake_source = "fallback"
