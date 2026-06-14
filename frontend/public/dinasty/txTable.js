@@ -13,6 +13,7 @@ DN.txTable = (function () {
 
   const CSS = `
     #tx-table {
+      display: none;
       position: fixed; right: 14px; bottom: 14px;
       width: 270px; height: 188px;
       background: rgba(12, 8, 4, 0.86);
