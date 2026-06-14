@@ -257,7 +257,6 @@ DN.app = (function () {
     DN.ants.init(world.scene, DN.colony.list);
     if (DN.commsViz && DN.commsViz.init) DN.commsViz.init(world.scene);
     if (DN.logTerm && DN.logTerm.init) DN.logTerm.init();
-    if (DN.txTable && DN.txTable.init) DN.txTable.init();
     if (DN.crystal && DN.crystal.init) DN.crystal.init(world.scene);
     if (DN.lifecycle && DN.lifecycle.init) DN.lifecycle.init(world.scene);
     DN.trails.init(world.scene, DN.colony.list);
