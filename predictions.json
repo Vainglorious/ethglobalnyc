@@ -148,6 +148,29 @@
       "block": 88463632,
       "tx_hash": "0x4ffee8e2b18972ccd309110b0f94772d01215a75b620df8e2dad56175f6f7089",
       "note": "Ants/consensus pick (Scotland). ACCIDENTAL DOUBLE-FILL 2 of 2 (see other Scotland entry)."
+    },
+    {
+      "id": 7,
+      "ts_utc": "2026-06-14T04:09:55Z",
+      "action": "buy",
+      "placed_by": "claude",
+      "method": "auto",
+      "bet_phase": "pregame",
+      "event": "Australia vs. Turkiye (Jun 14)",
+      "market_question": "Will Turkiye win on 2026-06-14?",
+      "outcome": "Yes (Turkiye)",
+      "side": "yes",
+      "polygun_market_id": 1897057,
+      "outcome_token_id": "75303319363351541204962251598715680468515536085970822119844634963431663113508",
+      "shares": 3.571427,
+      "avg_price": 0.573,
+      "pusd_to_maker": 2.046379,
+      "pusd_fee": null,
+      "pusd_total": 2.046379,
+      "status": "filled",
+      "block": 88470140,
+      "tx_hash": "0xaf2fb94c9ec720771cbb6bac4ada5ccdc2456a854a0bf94e5e9c2fad5637d717",
+      "note": "Ants/consensus pick. PolyGun showed only 'Transaction Submitted' (no confirmation) but it FILLED on-chain \u2014 verified before NOT retrying (avoided a Scotland-style double-bet)."
     }
   ]
 }
