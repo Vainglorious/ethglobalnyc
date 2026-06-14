@@ -44,7 +44,7 @@ DN.lifecycle = (function () {
     egress_roam: Infinity
   };
   const NEXT = {
-    idle:        null,         // entered only via L.start()
+    idle:        null,
     kickoff:    'scouting',
     scouting:   'kg_forming',
     kg_forming: 'recruitment',
@@ -271,6 +271,8 @@ DN.lifecycle = (function () {
     }
     if (!DN.databridge || !DN.databridge.startScoutingRun) {
       L.scoutingDone = true;
+      L.runError = new Error('Backend scouting API unavailable.');
+      if (DN.logTerm) DN.logTerm.push('SYSTEM', L.runError.message);
       L.runPromise = Promise.resolve(null);
       return L.runPromise;
     }
@@ -299,6 +301,8 @@ DN.lifecycle = (function () {
         L.scoutingResult = res || null;
         if (res && res.id) {
           L.runId = res.id;
+          L.runResult = res;
+          L.backendDone = true;
           if (DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(res.id);
           if (DN.commsViz && DN.commsViz.reset) DN.commsViz.reset();
           if (DN.hud && DN.hud._pollComms) DN.hud._pollComms();
@@ -310,6 +314,7 @@ DN.lifecycle = (function () {
         L.scoutingDone = true;
         L.scoutingError = err;
         L.runError = err;
+        L.backendDone = false;
         if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Backend run failed: ' + (err && err.message || err));
         return null;
       });
@@ -322,7 +327,7 @@ DN.lifecycle = (function () {
   // walks home and disappears into the colony.
   function scoutArrivedAtForest(a) {
     // Don't log per-scout — when 40+ scouts arrive in the same second the
-    // terminal floods. crystal.depositOne already logs the rolling total.
+    // terminal floods.
     const crystal = DN.crystal ? DN.crystal.position() : new THREE.Vector3(0, 0, 0);
     DN.ants.scriptWalk(
       a, a.x, a.z, crystal.x, crystal.z,
@@ -400,7 +405,6 @@ DN.lifecycle = (function () {
       // while the 3D scene was already busy with scout animations —
       // that was the source of the heavy lag. The cached KG is
       // streamed in via replayGraph during kg_forming instead.
-      if (DN.logTerm) DN.logTerm.push('SCOUT', 'Scouts mining sources for findings.');
       // Wake a small scout party per colony, send each on a dedicated
       // Bezier walk to a forest target.
       let total = 0;
@@ -446,7 +450,6 @@ DN.lifecycle = (function () {
         }
         const ents = payload.entity_count != null ? payload.entity_count : (payload.entities || []).length;
         const links = payload.relationship_count != null ? payload.relationship_count : (payload.relationships || []).length;
-        if (DN.logTerm) DN.logTerm.push('KG', 'KG ready · ' + ents + ' entities · ' + links + ' relationships absorbed by the crystal.');
         const finish = () => { L.kgReplayDone = true; };
         if (DN.kgview && DN.kgview.replayGraph) {
           DN.kgview.replayGraph(payload, title || 'Selected-match KG', { onComplete: finish });
@@ -459,11 +462,8 @@ DN.lifecycle = (function () {
       };
       if (L.scoutingResult && L.scoutingResult.kg) {
         renderKg(L.scoutingResult.kg, 'Completed scouting KG');
-      } else if (DN.databridge && DN.databridge.fetchWorldCupKg) {
+      } else if (L.skipScouting && DN.databridge && DN.databridge.fetchWorldCupKg) {
         DN.databridge.fetchWorldCupKg().then((payload) => {
-          const ents = payload.entity_count != null ? payload.entity_count : (payload.entities || []).length;
-          const links = payload.relationship_count != null ? payload.relationship_count : (payload.relationships || []).length;
-          if (DN.logTerm) DN.logTerm.push('KG', 'No completed scout KG for this run; falling back to fixture KG · ' + ents + ' entities · ' + links + ' links.');
           renderKg(payload, 'World Cup KG');
         }).catch(() => { L.kgReplayDone = true; });
       } else {
@@ -477,13 +477,9 @@ DN.lifecycle = (function () {
       // frame — that's the "mass pop out of nowhere" the user reported.
       // The converge phase wakes + walks them in one step using a
       // negative-staggered scriptWalk, so they visibly emerge one by
-      // one from each mound. Recruitment is purely a camera + on-chain
-      // staging beat now.
-      if (DN.logTerm) DN.logTerm.push('BIRTH', 'Population staking on the round — emerging next.');
-      if (DN.logTerm) DN.logTerm.push('STAKE', 'Waiting for selected-match forecasts before committing Arc stakes.');
+      // one from each mound.
     },
     converge: () => {
-      if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Selected fixture run is feeding the debate and economy.');
       // Send every visible worker to the crystal. To make them read as a
       // single-file line per colony (not a chaotic swarm) we:
       //   • bucket workers by colony
@@ -663,10 +659,14 @@ DN.lifecycle = (function () {
     // The lifecycle only reaches resolution after the scouting run and KG
     // replay complete, so this should be the selected run id.
     const runId = L.runId || (DN.databridge && DN.databridge.runId) || null;
+    if (!runId) {
+      if (DN.logTerm) DN.logTerm.push('SETTLE', 'Skipping on-chain economy — no completed backend run.');
+      return;
+    }
     const marketKey = runMarketKey(meta, runId);
     L.winner = selectedWinner();
     if (DN.logTerm) {
-      DN.logTerm.push('STAKE', 'Creating Arc market and staking ant forecasts from ' + (runId || 'fallback demo') + ' …');
+      DN.logTerm.push('STAKE', 'Creating Arc market and staking ant forecasts from ' + runId + ' …');
     }
     try {
       const setup = await DN.databridge.setupForecastDemo({
@@ -680,6 +680,7 @@ DN.lifecycle = (function () {
         max_stakers: 12,
         wait_for_run_forecasts: true,
         run_forecast_timeout_seconds: 240,
+        allow_fallback_stakes: false,
         fee_bps: 1000
       });
       L.marketKey = (setup && setup.market_key) || marketKey;
@@ -788,6 +789,10 @@ DN.lifecycle = (function () {
     L.forecastStakes = [];
     L.runPromise = null;
     L.runError = null;
+    L.runResult = null;
+    L.backendDone = false;
+    L.kgReady = false;
+    L.kg = null;
     L.phaseHold = false;
     L.scoutingDone = false;
     L.scoutingResult = null;
@@ -813,6 +818,7 @@ DN.lifecycle = (function () {
     L.phase = next;
     L.phaseT = 0;
     L.phaseHold = false;
+    clearAdvance(next);
     logPhase(next);
     try { if (ENTER[next]) ENTER[next](); }
     catch (err) { if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Phase enter error: ' + (err && err.message || err)); }
@@ -834,13 +840,6 @@ DN.lifecycle = (function () {
   L.update = function (dt, elapsed) {
     L.phaseT += dt;
     // Per-phase per-frame work
-    if (L.phase === 'kg_forming' && DN.crystal) {
-      L._depositTimer = (L._depositTimer || 0) + dt;
-      while (L._depositTimer > 0.7) {
-        DN.crystal.depositOne();
-        L._depositTimer -= 0.7;
-      }
-    }
     if (L.phase === 'debate' && DN.underground && DN.underground.tickDebate) {
       DN.underground.tickDebate(dt, elapsed);
     }

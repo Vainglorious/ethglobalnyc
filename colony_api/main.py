@@ -15,6 +15,7 @@ import random
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -48,6 +49,7 @@ ANT_STATE_PATH = RUNS_ROOT / "ant_state.json"
 FUND_AGENTS_CLI = REPO_ROOT / "arc" / "fund-agents.mjs"
 REGISTER_ENS_IDENTITIES = REPO_ROOT / "colony" / "register_ens_identities.py"
 DEFAULT_PUBLIC_API_BASE_URL = "https://ethglobalnyc-production.up.railway.app"
+RUN_EVENT_LOCK = threading.Lock()
 
 COLONY_SRC = REPO_ROOT / "colony"
 if str(COLONY_SRC) not in sys.path:
@@ -146,6 +148,7 @@ class ForecastDemoSetupRequest(ForecastCreateMarketRequest):
     fund_amount: str = "0.01"
     wait_for_run_forecasts: bool | None = None
     run_forecast_timeout_seconds: int = Field(default=180, ge=0, le=600)
+    allow_fallback_stakes: bool = True
 
 
 class ForecastSettleRequest(BaseModel):
@@ -219,8 +222,9 @@ def _append_run_event(run_id: str, event: dict) -> None:
         "timestamp": _utc_now(),
         **event,
     }
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+    with RUN_EVENT_LOCK:
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
 
 
 def _safe_artifact_path(run_id: str, relative_path: str) -> Path:
@@ -948,6 +952,30 @@ def _emit_kg_stream_events(run_id: str, compact_dir: Path) -> None:
     )
 
 
+def _pipe_process_output(run_id: str, stream_name: str, pipe, sink) -> None:
+    if pipe is None:
+        return
+    try:
+        for line in pipe:
+            sink.write(line)
+            sink.flush()
+            message = line.rstrip("\r\n")
+            if message:
+                _append_run_event(
+                    run_id,
+                    {
+                        "event_type": "run_log",
+                        "stream": stream_name,
+                        "message": message,
+                    },
+                )
+    finally:
+        try:
+            pipe.close()
+        except OSError:
+            pass
+
+
 def _execute_run(run_id: str, command: list[str]) -> None:
     metadata = _read_metadata(run_id)
     metadata["status"] = "running"
@@ -970,29 +998,56 @@ def _execute_run(run_id: str, command: list[str]) -> None:
 
     env = os.environ.copy()
     env["PYTHONPATH"] = f"{REPO_ROOT / 'colony'}{os.pathsep}{env.get('PYTHONPATH', '')}"
+    env["PYTHONUNBUFFERED"] = "1"
 
     with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open("w", encoding="utf-8") as stderr:
-        completed = subprocess.run(
+        process = subprocess.Popen(
             command,
             cwd=str(REPO_ROOT),
             env=env,
-            stdout=stdout,
-            stderr=stderr,
-            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
         )
+        output_threads = [
+            threading.Thread(
+                target=_pipe_process_output,
+                args=(run_id, "stdout", process.stdout, stdout),
+                daemon=True,
+            ),
+            threading.Thread(
+                target=_pipe_process_output,
+                args=(run_id, "stderr", process.stderr, stderr),
+                daemon=True,
+            ),
+        ]
+        for thread in output_threads:
+            thread.start()
+        returncode = process.wait()
+        for thread in output_threads:
+            thread.join()
 
     metadata = _read_metadata(run_id)
     metadata["completed_at"] = _utc_now()
-    metadata["returncode"] = completed.returncode
-    metadata["status"] = "succeeded" if completed.returncode == 0 else "failed"
+    metadata["returncode"] = returncode
+    metadata["status"] = "succeeded" if returncode == 0 else "failed"
     latest = _latest_compact_dir(run_id)
     if latest is not None:
         metadata["latest_compact_dir"] = str(latest)
         compact_events = latest / "events.compact.jsonl"
         root_events = run_dir / "events.jsonl"
-        if compact_events.exists() and not root_events.exists():
-            root_events.write_text(compact_events.read_text(encoding="utf-8"), encoding="utf-8")
-        if metadata.get("kind") == "scouting" and completed.returncode == 0:
+        if compact_events.exists():
+            compact_text = compact_events.read_text(encoding="utf-8")
+            with RUN_EVENT_LOCK:
+                if root_events.exists() and root_events.stat().st_size > 0:
+                    with root_events.open("a", encoding="utf-8") as handle:
+                        if not root_events.read_text(encoding="utf-8").endswith("\n"):
+                            handle.write("\n")
+                        handle.write(compact_text)
+                else:
+                    root_events.write_text(compact_text, encoding="utf-8")
+        if metadata.get("kind") == "scouting" and returncode == 0:
             _emit_kg_stream_events(run_id, latest)
     _write_metadata(run_id, metadata)
 
@@ -1654,6 +1709,11 @@ def setup_forecast_demo(request: ForecastDemoSetupRequest) -> dict:
             )
             stake_source = f"run:{request.run_id}" if stakes else "fallback"
     if stakes is None or not stakes:
+        if not request.allow_fallback_stakes:
+            raise HTTPException(
+                status_code=400,
+                detail="No signable forecast stakes found for this run; refusing fallback demo stakes.",
+            )
         stakes = _default_demo_stakes(request.market_type)
         stake_source = "fallback"
     steps: list[dict] = []

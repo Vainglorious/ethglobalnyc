@@ -587,7 +587,6 @@ DN.kgview = (function () {
 
     K.reset(title || 'World Cup KG');
     K.status('Streaming KG · 0 / ' + entities.length + ' entities');
-    if (DN.logTerm) DN.logTerm.push('KG', 'KG stream: ' + entities.length + ' entities · ' + relationships.length + ' links (capped from ' + allEntities.length + ').');
 
     function schedule(fn, ms) {
       const timer = setTimeout(fn, ms);
@@ -616,7 +615,6 @@ DN.kgview = (function () {
       } else {
         render();
         K.status(nodes.size + ' KG entities · ' + edges.length + ' links');
-        if (DN.logTerm) DN.logTerm.push('KG', 'KG complete · graph ready.');
         if (typeof opts.onComplete === 'function') opts.onComplete();
       }
     }

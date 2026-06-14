@@ -432,28 +432,22 @@ DN.hud = (function () {
     // Hands events to commsViz; logTerm rows are emitted by commsViz so
     // we don't double-log. Errors are surfaced to the log once each.
     let _commsLastErr = null;
-    let _commsPollCount = 0;
+    let _commsLastRun = null;
     function pollComms() {
-      _commsPollCount++;
       if (!DN.databridge || !DN.databridge.fetchCommunications) {
         if (DN.logTerm) DN.logTerm.push('SYSTEM', 'databridge.fetchCommunications not loaded — stale cache? Hard refresh (Cmd+Shift+R).');
         return;
-      }
-      // First poll only: announce it so the user knows the loop is alive
-      if (_commsPollCount === 1 && DN.logTerm) {
-        DN.logTerm.push('SYSTEM', 'Starting communications poll → /runs then /runs/{id}/events…');
       }
       DN.databridge.fetchCommunications()
         .then((payload) => {
           const events = payload.events || [];
           const rid = payload.run_id;
-          // Always emit a per-poll summary so the user can see polling is alive.
-          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Poll #' + _commsPollCount + ': run=' + (rid || 'none') + ' events=' + events.length);
+          if (DN.logTerm && rid && rid !== _commsLastRun) {
+            DN.logTerm.push('SYSTEM', 'Connected to backend run ' + rid + '.');
+            _commsLastRun = rid;
+          }
           if (DN.commsViz && DN.commsViz.ingest) DN.commsViz.ingest(events);
           _commsLastErr = null;
-          if (DN.logTerm && rid && pollComms._loggedRun !== rid) {
-            pollComms._loggedRun = rid;
-          }
         })
         .catch((err) => {
           const msg = (err && err.message) || String(err);
@@ -587,10 +581,9 @@ DN.hud = (function () {
           '#3FA89F'
         );
         DN.lifecycle.start({ scout: withScout });
-        const startedAt = Date.now();
         const timer = setInterval(() => {
           const phase = DN.lifecycle && DN.lifecycle.getPhase ? DN.lifecycle.getPhase() : '';
-          if (phase === 'egress_roam' || phase === 'idle' || Date.now() - startedAt > 480000) {
+          if (phase === 'egress_roam' || phase === 'idle') {
             clearInterval(timer);
             setRunButtonsDisabled(false);
             status.textContent = phase === 'egress_roam' ? 'Roaming · click Run to loop' : 'Run ready';

@@ -3,7 +3,7 @@
 //   1. live glowing Bezier arcs between speaker and target ants
 //   2. a persistent (decaying) influence-graph overlay
 //   3. log + thought-ticker entries
-// Polled from /recent_communications by hud.js initBackendControl.
+// Fed by backend run events from hud.js/databridge.
 window.DN = window.DN || {};
 
 console.log('[worldcolony] commsViz.js loaded · build 2026-06-14');
@@ -97,9 +97,6 @@ DN.commsViz = (function () {
   //   forecast       → agent_id, ens_name, side, home_probability, edge, bankroll
   V.ingest = function (events) {
     if (!events || !events.length) return;
-    // Group by type so each section is contiguous in the log instead of
-    // SPEAK/SPEAK/SPEAK/FORECAST/FORECAST mixed in JSONL order. Helps
-    // skimming the log.
     const fresh = [];
     for (const ev of events) {
       const key = [
@@ -115,38 +112,7 @@ DN.commsViz = (function () {
       fresh.push(ev);
     }
     if (!fresh.length) return;
-    // First-load backfill cap — when a fresh LLM run drops 600+ events on
-    // us, dispatching them all synchronously freezes the page. Take a
-    // balanced TAIL mix from each event type so the log shows both
-    // speech AND forecasts, not just whichever happened last in JSONL.
-    const TAIL_SOCIAL = 30, TAIL_FORECAST = 20, TAIL_CLAIM = 5;
-    const tailOf = (type, n) => {
-      const out = [];
-      for (let i = fresh.length - 1; i >= 0 && out.length < n; i--) {
-        if (fresh[i].event_type === type) out.unshift(fresh[i]);
-      }
-      return out;
-    };
-    let toDispatch;
-    if (fresh.length > TAIL_SOCIAL + TAIL_FORECAST + TAIL_CLAIM) {
-      toDispatch = [
-        ...tailOf('social_action', TAIL_SOCIAL),
-        ...tailOf('forecast', TAIL_FORECAST),
-        ...tailOf('debate_claim', TAIL_CLAIM)
-      ];
-      const skipped = fresh.length - toDispatch.length;
-      if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Skipped ' + skipped + ' older events; showing balanced tail (' + toDispatch.length + ').');
-    } else {
-      toDispatch = fresh;
-    }
-    if (DN.logTerm) {
-      DN.logTerm.push('SYSTEM', '── Replaying ' + toDispatch.length + ' event' + (toDispatch.length === 1 ? '' : 's') + ' over time ──');
-    }
-    // dispatch in priority order so the most interesting rows land last
-    // (closest to the bottom-of-log where users naturally look)
-    const order = { forecast: 0, social_action: 1, debate_claim: 2 };
-    toDispatch.sort((a, b) => (order[a.event_type] ?? 9) - (order[b.event_type] ?? 9));
-    V._queue.push(...toDispatch);
+    V._queue.push(...fresh);
     V._drainQueue();
     if (V._seen.size > 3000) {
       const arr = Array.from(V._seen).slice(-2000);
@@ -157,17 +123,21 @@ DN.commsViz = (function () {
   V._drainQueue = function () {
     if (V._queueTimer) return;
     const tick = () => {
-      const ev = V._queue.shift();
-      if (!ev) {
+      let handled = 0;
+      while (V._queue.length && handled < 40) {
+        const ev = V._queue.shift();
+        if (ev.event_type === 'social_action') V._handleSocial(ev);
+        else if (ev.event_type === 'debate_claim') V._handleClaim(ev);
+        else if (ev.event_type === 'forecast') V._handleForecast(ev);
+        handled++;
+      }
+      if (!V._queue.length) {
         V._queueTimer = null;
         return;
       }
-      if (ev.event_type === 'social_action') V._handleSocial(ev);
-      else if (ev.event_type === 'debate_claim') V._handleClaim(ev);
-      else if (ev.event_type === 'forecast') V._handleForecast(ev);
-      V._queueTimer = setTimeout(tick, 220);
+      V._queueTimer = setTimeout(tick, 0);
     };
-    V._queueTimer = setTimeout(tick, 120);
+    V._queueTimer = setTimeout(tick, 0);
   };
 
   // social_action: the primary speaking event. actor speaks (and optionally
@@ -343,20 +313,19 @@ DN.commsViz = (function () {
   V.streamChambersFromBuffer = function (opts) {
     opts = opts || {};
     if (!DN.underground || !DN.underground.showChamberMessage) return;
-    // cancel previous streams so re-entering DEBATE doesn't double up
     V._chamberStreamTimers.forEach((t) => clearTimeout(t));
     V._chamberStreamTimers = [];
     const msgs = V._chamberMsgs.slice(-(opts.count || 24));
-    const stride = opts.strideMs || 480; // one message every 480 ms
     msgs.forEach((m, i) => {
-      const t = setTimeout(() => {
-        let h = 0;
-        const key = m.keySrc + ':' + i;
-        for (let j = 0; j < key.length; j++) h = ((h * 31) + key.charCodeAt(j)) | 0;
-        DN.underground.showChamberMessage(h, m.actor, m.target, m.text);
-      }, i * stride);
-      V._chamberStreamTimers.push(t);
+      let h = 0;
+      const key = m.keySrc + ':' + i;
+      for (let j = 0; j < key.length; j++) h = ((h * 31) + key.charCodeAt(j)) | 0;
+      DN.underground.showChamberMessage(h, m.actor, m.target, m.text);
     });
+  };
+
+  V.isIdle = function () {
+    return !V._queue.length && !V._queueTimer;
   };
 
 
@@ -370,9 +339,10 @@ DN.commsViz = (function () {
       clearTimeout(V._queueTimer);
       V._queueTimer = null;
     }
+    V._chamberStreamTimers.forEach((t) => clearTimeout(t));
+    V._chamberStreamTimers = [];
     V._arcs.length = 0;
     V._edges.clear();
-    if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Comms cache cleared — ready for new run events.');
   };
 
   return V;

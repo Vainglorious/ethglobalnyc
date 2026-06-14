@@ -8,7 +8,7 @@ window.DN = window.DN || {};
 DN.databridge = (function () {
   const cfg = window.DN_CONFIG || {};
   const apiUrl = (cfg.API_URL || '').replace(/\/$/, '');
-  const B = { ready: false, source: '/data/demo.jsonl', apiUrl, runId: null };
+  const B = { ready: false, source: null, apiUrl, runId: null };
   let thoughts = [];
   let ti = 0;
   let records = [], forecasts = [], rooms = [], summary = null;
@@ -335,6 +335,12 @@ DN.databridge = (function () {
 
   function scoutingEventLog(event, graphChange) {
     if (!event || !event.event_type) return null;
+    if (event.event_type === 'run_log') {
+      return {
+        level: event.stream === 'stderr' ? 'STDERR' : 'RUN',
+        message: event.message || '',
+      };
+    }
     if (event.event_type === 'kg_stage') {
       const stage = compactScoutingLabel(event.stage || 'kg_stage', 44);
       const match = event.match ? ' · ' + event.match : '';
@@ -577,7 +583,6 @@ DN.databridge = (function () {
 
   function pollRun(runId) {
     return new Promise((resolve, reject) => {
-      let tries = 0;
       const timer = setInterval(() => {
         fetch(apiUrl + '/runs/' + runId)
           .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
@@ -585,9 +590,9 @@ DN.databridge = (function () {
             if (run.status === 'succeeded') {
               clearInterval(timer);
               B.loadRun(runId).then(resolve, reject);
-            } else if (run.status === 'failed' || ++tries > 120) {
+            } else if (run.status === 'failed') {
               clearInterval(timer);
-              reject(new Error(run.status === 'failed' ? 'Backend run failed.' : 'Backend run timed out.'));
+              reject(new Error('Backend run failed.'));
             }
           })
           .catch((err) => {
@@ -601,7 +606,6 @@ DN.databridge = (function () {
   function pollScoutingRun(runId, opts) {
     opts = opts || {};
     return new Promise((resolve, reject) => {
-      let tries = 0;
       const timer = setInterval(() => {
         fetch(apiUrl + '/runs/' + runId)
           .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
@@ -616,9 +620,9 @@ DN.databridge = (function () {
                 if (opts.showGraphOnComplete !== false) showCompletedScoutingGraph(kg);
                 resolve({ id: runId, run, kg, manifest, audit });
               });
-            } else if (run.status === 'failed' || ++tries > 300) {
+            } else if (run.status === 'failed') {
               clearInterval(timer);
-              reject(new Error(run.status === 'failed' ? 'Scouting run failed.' : 'Scouting run timed out.'));
+              reject(new Error('Scouting run failed.'));
             }
           })
           .catch((err) => {
@@ -674,7 +678,11 @@ DN.databridge = (function () {
     return new Promise((resolve, reject) => {
       const source = new EventSource(apiUrl + '/runs/' + runId + '/stream');
       source.addEventListener('colony_event', (e) => {
-        try { runEvents.push(JSON.parse(e.data)); } catch (err) {}
+        try {
+          const event = JSON.parse(e.data);
+          runEvents.push(event);
+          pushScoutingLog(event);
+        } catch (err) {}
       });
       source.addEventListener('done', () => {
         source.close();
@@ -694,9 +702,11 @@ DN.databridge = (function () {
   }
 
   function load() {
+    if (!apiUrl) return;
     loadLatestRailwayRun()
-      .catch(() => loadEvents('/data/demo.jsonl'))
-      .catch(() => { /* no data file — app keeps its synthetic content */ });
+      .catch(() => {
+        if (DN.logTerm) DN.logTerm.push('SYSTEM', 'No completed backend run loaded yet.');
+      });
   }
 
   load();
