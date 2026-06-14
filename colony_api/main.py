@@ -25,7 +25,7 @@ from typing import Literal
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 
@@ -45,6 +45,18 @@ DEFAULT_FORECAST_CONTRACT = "0xc40a8f2e29fe061cd4c0fe92cc73b9b43f9ada87"
 CHILD_ANTS_PATH = RUNS_ROOT / "child_ants.json"
 FUND_AGENTS_CLI = REPO_ROOT / "arc" / "fund-agents.mjs"
 DEFAULT_PUBLIC_API_BASE_URL = "https://ethglobalnyc-production.up.railway.app"
+AVATAR_ASSETS_DIR = REPO_ROOT / "colony_api" / "static" / "avatars"
+AVATAR_VARIANTS = [
+    "scout-satchel",
+    "round-glasses-young",
+    "square-glasses",
+    "young-cheerful",
+    "careful-analyst",
+    "winking-scout",
+    "thoughtful",
+    "elder-wise",
+    "round-glasses-adult",
+]
 
 COLONY_SRC = REPO_ROOT / "colony"
 if str(COLONY_SRC) not in sys.path:
@@ -310,7 +322,7 @@ def _public_api_base_url() -> str:
 
 
 def _avatar_url(agent_id: str) -> str:
-    return f"{_public_api_base_url()}/ants/{agent_id}/avatar.svg"
+    return f"{_public_api_base_url()}/ants/{agent_id}/avatar.png"
 
 
 def _safe_repo_write_path(path_value: str) -> Path:
@@ -388,24 +400,42 @@ def _personality_genome(seed_value: str) -> Genome:
     )
 
 
-def _strongest_trait(personality: dict) -> str:
+def _avatar_variant_for_personality(personality: dict) -> str:
     weights = personality.get("source_weights") or {}
     if weights:
         strongest = max(weights.items(), key=lambda item: float(item[1] or 0))[0]
-        return {
-            "stats": "stats lens",
-            "odds": "market compass",
-            "news": "scout satchel",
-            "debate": "debate badge",
-        }.get(strongest, "signal satchel")
+    else:
+        strongest = ""
+
     persona = str(personality.get("persona") or "")
+    risk = float(personality.get("risk_appetite") or 0)
+    edge_threshold = float(personality.get("edge_threshold") or 0)
+    query_budget = float(personality.get("query_budget") or 0)
+    herd_bias = float(personality.get("herd_bias") or 0)
+
+    if "skeptic" in persona or strongest == "debate":
+        return "elder-wise" if edge_threshold >= 0.1 else "thoughtful"
+    if strongest == "stats" or "model" in persona:
+        return "square-glasses"
+    if strongest == "news" or "scout" in persona:
+        return "winking-scout" if risk >= 0.14 else "scout-satchel"
+    if query_budget >= 1.8:
+        return "round-glasses-young"
+    if edge_threshold >= 0.12:
+        return "careful-analyst"
+    if risk >= 0.16 or herd_bias <= -0.45:
+        return "young-cheerful"
     if "contrarian" in persona:
-        return "market compass"
-    if "scout" in persona or "news" in persona:
-        return "scout satchel"
-    if "skeptic" in persona:
-        return "debate badge"
-    return "signal satchel"
+        return "round-glasses-adult"
+    return "scout-satchel"
+
+
+def _avatar_asset_path(variant: str) -> Path:
+    slug = variant if variant in AVATAR_VARIANTS else "scout-satchel"
+    path = AVATAR_ASSETS_DIR / f"{slug}.png"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Avatar asset not found: {slug}")
+    return path
 
 
 def _avatar_personality_for_record(record: dict) -> dict:
@@ -417,9 +447,10 @@ def _avatar_personality_for_record(record: dict) -> dict:
 
 def _avatar_record_fields(record: dict) -> dict:
     personality = _avatar_personality_for_record(record)
+    variant = _avatar_variant_for_personality(personality)
     return {
         "avatar": _avatar_url(str(record.get("agent_id") or "")),
-        "avatar_trait": _strongest_trait(personality),
+        "avatar_trait": variant,
         "personality": personality,
     }
 
@@ -473,59 +504,6 @@ def _child_identity_text(child: dict) -> dict:
         "com.colony.avatar": child["avatar"],
         "com.colony.avatar_trait": child["avatar_trait"],
     }
-
-
-def _avatar_svg(agent_id: str) -> str:
-    record = _find_parent_ant(agent_id)
-    personality = _avatar_personality_for_record(record)
-    trait = str(record.get("avatar_trait") or _strongest_trait(personality))
-    digest = hashlib.sha256(
-        json.dumps({"agent_id": agent_id, "personality": personality, "trait": trait}, sort_keys=True).encode("utf-8")
-    ).digest()
-    bg = ["#b9e8f2", "#d6f3e6", "#f7dfb6", "#d9ddff", "#f7d4e5"][digest[0] % 5]
-    shell = ["#d88933", "#c76b36", "#e0a23d", "#b87447", "#d19152"][digest[1] % 5]
-    face = ["#fff4d8", "#ffe8bf", "#f8f0d6"][digest[2] % 3]
-    accent = ["#1aa6a6", "#2f8bd6", "#6e78d6", "#3fa86b"][digest[3] % 4]
-    blush = "#f2a7a7"
-    item = {
-        "scout satchel": f'''
-          <path d="M82 150 C104 165 150 165 172 150" fill="none" stroke="{accent}" stroke-width="10" stroke-linecap="round"/>
-          <rect x="142" y="142" width="25" height="22" rx="6" fill="{accent}" stroke="#202225" stroke-width="4"/>
-          <circle cx="154" cy="153" r="3" fill="#e9fbff"/>''',
-        "market compass": f'''
-          <circle cx="162" cy="144" r="17" fill="{accent}" stroke="#202225" stroke-width="4"/>
-          <path d="M157 149 L169 138 L164 153 Z" fill="#ffffff"/>
-          <path d="M152 159 H172" stroke="#202225" stroke-width="3" stroke-linecap="round"/>''',
-        "stats lens": f'''
-          <circle cx="162" cy="145" r="15" fill="#e9fbff" stroke="{accent}" stroke-width="5"/>
-          <path d="M173 156 L184 166" stroke="#202225" stroke-width="5" stroke-linecap="round"/>
-          <path d="M154 148 L159 142 L164 146 L170 137" fill="none" stroke="#202225" stroke-width="3" stroke-linecap="round"/>''',
-        "debate badge": f'''
-          <path d="M147 135 h33 a9 9 0 0 1 9 9 v10 a9 9 0 0 1-9 9 h-16 l-10 9 v-9 h-7 a9 9 0 0 1-9-9 v-20 a9 9 0 0 1 9-9z" fill="{accent}" stroke="#202225" stroke-width="4"/>
-          <circle cx="154" cy="150" r="3" fill="#fff"/><circle cx="164" cy="150" r="3" fill="#fff"/><circle cx="174" cy="150" r="3" fill="#fff"/>''',
-        "signal satchel": f'''
-          <path d="M87 150 C108 164 148 164 169 150" fill="none" stroke="{accent}" stroke-width="9" stroke-linecap="round"/>
-          <path d="M157 139 q12 10 0 20 q-12-10 0-20z" fill="{accent}" stroke="#202225" stroke-width="4"/>''',
-    }.get(trait, "")
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="{agent_id} ant avatar">
-      <rect width="256" height="256" fill="{bg}"/>
-      <circle cx="128" cy="128" r="105" fill="#ffffff" opacity="0.18"/>
-      <path d="M91 80 C74 54 55 45 41 41" fill="none" stroke="#202225" stroke-width="8" stroke-linecap="round"/>
-      <path d="M165 80 C182 54 201 45 215 41" fill="none" stroke="#202225" stroke-width="8" stroke-linecap="round"/>
-      <circle cx="39" cy="40" r="10" fill="{shell}" stroke="#202225" stroke-width="5"/>
-      <circle cx="217" cy="40" r="10" fill="{shell}" stroke="#202225" stroke-width="5"/>
-      <ellipse cx="128" cy="137" rx="77" ry="72" fill="{shell}" stroke="#202225" stroke-width="8"/>
-      <ellipse cx="128" cy="130" rx="58" ry="50" fill="{face}" stroke="#202225" stroke-width="6"/>
-      <ellipse cx="104" cy="124" rx="12" ry="15" fill="#202225"/>
-      <ellipse cx="152" cy="124" rx="12" ry="15" fill="#202225"/>
-      <circle cx="100" cy="118" r="4" fill="#fff"/>
-      <circle cx="148" cy="118" r="4" fill="#fff"/>
-      <circle cx="91" cy="142" r="8" fill="{blush}" opacity="0.55"/>
-      <circle cx="165" cy="142" r="8" fill="{blush}" opacity="0.55"/>
-      <path d="M108 151 Q128 166 148 151" fill="none" stroke="#202225" stroke-width="6" stroke-linecap="round"/>
-      <path d="M66 178 C85 197 171 197 190 178 L200 256 H56 Z" fill="#ffe0ea" stroke="#202225" stroke-width="8"/>
-      {item}
-    </svg>'''
 
 
 def _resolve_reproduction_wallet_store(request: AntReproduceRequest, provider: str) -> Path:
@@ -1671,11 +1649,14 @@ def get_ants() -> dict:
     }
 
 
-@app.get("/ants/{agent_id}/avatar.svg")
-def get_ant_avatar(agent_id: str) -> Response:
-    return Response(
-        content=_avatar_svg(agent_id),
-        media_type="image/svg+xml",
+@app.get("/ants/{agent_id}/avatar.png")
+def get_ant_avatar(agent_id: str) -> FileResponse:
+    record = _find_parent_ant(agent_id)
+    personality = _avatar_personality_for_record(record)
+    variant = str(record.get("avatar_trait") or _avatar_variant_for_personality(personality))
+    return FileResponse(
+        _avatar_asset_path(variant),
+        media_type="image/png",
         headers={
             "Cache-Control": "public, max-age=86400",
         },

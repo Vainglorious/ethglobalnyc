@@ -128,7 +128,7 @@ def _agent_identity_record(
     parent_agent = agents_by_id.get(agent.parent_agent_id) if agent.parent_agent_id else None
     parent_ens_name = ens_name_for_agent(parent_agent, ens_parent) if parent_agent else ""
     profile_url = f"{profile_base_url.rstrip('/')}/{agent.agent_id}.json"
-    avatar_url = f"{profile_base_url.rstrip('/')}/{agent.agent_id}/avatar.svg"
+    avatar_url = f"{profile_base_url.rstrip('/')}/{agent.agent_id}/avatar.png"
     verified_lineage = bool(agent.verified_lineage or root.verified_lineage)
     world_human_id = agent.world_human_id
     world_status = agent.world_status
