@@ -889,10 +889,6 @@ DN.hud = (function () {
       <div class="section-label">Recent activity</div>
       <div class="insp-empty" style="font-size:12px">${antBlurb(a)}</div>
       <div class="ant-actions">
-        <button class="btn-primary ant-action" id="follow-ant" style="background:${following ? 'rgba(255,238,205,0.1)' : ''};color:${following ? 'var(--ink)' : ''};border-color:var(--border-strong)" title="${following ? 'Stop following' : 'Follow agent'}">
-          <svg viewBox="0 0 24 24" style="fill:${following ? 'var(--ink)' : '#2a1d08'}"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="${following ? 'var(--ink)' : '#2a1d08'}" stroke-width="2" fill="none"/></svg>
-          <span>${following ? 'Stop' : 'Follow'}</span>
-        </button>
         ${canReproduce ? `<button class="btn-primary ant-action reproduce" id="reproduce-ant" title="Create new ant">
           <svg viewBox="0 0 24 24" style="fill:none;stroke:var(--ink);stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><circle cx="12" cy="5" r="2"/><circle cx="7" cy="19" r="2"/><circle cx="17" cy="19" r="2"/><path d="M12 7v5M12 12l-5 5M12 12l5 5"/></svg>
           <span>New ant</span>
@@ -902,16 +898,17 @@ DN.hud = (function () {
           <span>Kill</span>
         </button>` : ''}
       </div>`;
-    $('follow-ant').addEventListener('click', () => DN.app.toggleFollow(a));
+    const followBtn = $('follow-ant');
+    if (followBtn) followBtn.addEventListener('click', () => DN.app.toggleFollow(a));
     const reproduceBtn = $('reproduce-ant');
     if (reproduceBtn) {
       const normalHtml = reproduceBtn.innerHTML;
       reproduceBtn.addEventListener('click', () => {
         const parentId = rec.agent_id;
         reproduceBtn.disabled = true;
-        reproduceBtn.textContent = 'Creating child...';
-        H.pushThought('Creating a child ant from ' + (ens || parentId) + ': ENS lineage, destination wallet, and treasury funding plan.', 'Lineage', '#5FB84A');
-        if (DN.logTerm) DN.logTerm.push('LINEAGE', 'Reproducing ' + (ens || parentId) + ' into a new ENS-linked child ant.');
+        reproduceBtn.textContent = 'Creating ant...';
+        H.pushThought('Creating a new ant from ' + (ens || parentId) + ': wallet, treasury funding, ENS, and profile image.', 'Lineage', '#5FB84A');
+        if (DN.logTerm) DN.logTerm.push('LINEAGE', 'New ant pipeline started from ' + (ens || parentId) + '.');
         DN.databridge.reproduceAnt({ parent_agent_id: parentId })
           .then((payload) => {
             const child = payload.child || {};
@@ -934,7 +931,24 @@ DN.hud = (function () {
             const target = DN.ants && DN.ants.attachChildRecord ? DN.ants.attachChildRecord(a, child) : null;
             if (target && DN.app && DN.app.selectAnt) DN.app.selectAnt(target);
             H.pushThought(childName + ' created from parent ' + (child.parent_ens_name || ens || parentId) + fundStatus + ensStatus + '.', 'Lineage', '#5FB84A');
-            if (DN.databridge && DN.databridge.fetchAgents) {
+            const afterAvatar = (child.agent_id && DN.databridge && DN.databridge.randomizeAntAvatar)
+              ? DN.databridge.randomizeAntAvatar(child.agent_id)
+                  .then((avatarPayload) => {
+                    const updated = avatarPayload.ant || {};
+                    if (updated.agent_id && target) {
+                      target.agentRecord = Object.assign({}, child, updated);
+                      if (updated.ens_name) target.name = updated.ens_name;
+                    }
+                    if (DN.logTerm) DN.logTerm.push('LINEAGE', (updated.ens_name || childName) + ' assigned random profile image ' + (avatarPayload.variant || updated.avatar_trait || 'avatar') + '.');
+                    return updated;
+                  })
+                  .catch((err) => {
+                    if (DN.logTerm) DN.logTerm.push('LINEAGE', 'Random avatar failed: ' + (err.message || err));
+                    return child;
+                  })
+              : Promise.resolve(child);
+            return afterAvatar.then(() => {
+              if (!(DN.databridge && DN.databridge.fetchAgents)) return null;
               DN.databridge.fetchAgents().then((fresh) => {
                 const agents = (fresh && fresh.agents) || [];
                 if (DN.ants && DN.ants.bindAgentRecords) DN.ants.bindAgentRecords(agents);
@@ -950,7 +964,8 @@ DN.hud = (function () {
               }).catch((err) => {
                 if (DN.logTerm) DN.logTerm.push('LINEAGE', 'Could not confirm child via /ants: ' + (err.message || err));
               });
-            }
+              return null;
+            });
           })
           .catch((err) => {
             H.pushThought('Child ant creation failed: ' + (err.message || err), 'Lineage', '#D96E54');
