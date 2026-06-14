@@ -207,6 +207,19 @@ staked, settled, and claimed. If the selected winner has no staked ants, the
 frontend resolves to the side with the largest staked amount so the contract has
 winners and the payout path can still be demonstrated.
 
+The browser Colony Log is the transaction audit trail for the demo:
+
+- `CHAIN` rows show the forecast smart contract address, market key, market id,
+  create-market tx, each ant approve/stake tx, settle tx, claim tx, and Arc
+  explorer URL.
+- `X402` rows show the Circle Gateway payment rail, buyer/seller wallets,
+  gateway transfer id, and receipt artifact paths for the manual `Buy KG` flow.
+
+If no `CHAIN` rows appear after the `Resolution` phase, the run did not reach
+the smart-contract calls or the forecast API failed before signing. In that
+case, the following `SYSTEM` row should contain the backend error, usually a
+missing private wallet, unfunded wallet, or RPC/contract failure.
+
 Required private env for deployed real payments:
 
 ```text

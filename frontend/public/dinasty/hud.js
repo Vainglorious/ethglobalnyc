@@ -317,6 +317,20 @@ DN.hud = (function () {
       return '';
     }
 
+    function logX402Trail(result) {
+      if (!DN.logTerm || !result) return;
+      const buyer = result.buyer || {};
+      const seller = result.seller || {};
+      const artifacts = result.artifacts || {};
+      DN.logTerm.push('X402', 'rail ' + (result.rail || 'x402_circle_gateway') + ' · network ' + (result.network || 'Arc Testnet'));
+      DN.logTerm.push('X402', 'flow ' + (result.money_flow || '') + ' · amount ' + (result.amount_usdc || '?') + ' USDC');
+      if (buyer.wallet) DN.logTerm.push('X402', 'buyer ' + (buyer.agent_id || '') + ' wallet ' + buyer.wallet);
+      if (seller.wallet) DN.logTerm.push('X402', 'seller ' + (seller.agent_id || '') + ' wallet ' + seller.wallet);
+      if (result.gateway_transfer_id) DN.logTerm.push('X402', 'gateway_transfer_id ' + result.gateway_transfer_id);
+      if (artifacts.buyer_receipt) DN.logTerm.push('X402', 'buyer_receipt ' + artifacts.buyer_receipt);
+      if (artifacts.service_receipts) DN.logTerm.push('X402', 'service_receipts ' + artifacts.service_receipts);
+    }
+
     function setForecastBusy(busy) {
       [forecastDeployBtn, x402BuyBtn, forecastSetupBtn, forecastSettleBtn, forecastWinner, forecastGame].forEach((el) => {
         if (el) el.disabled = busy;
@@ -599,6 +613,7 @@ DN.hud = (function () {
         .then((result) => {
           const tx = result.gateway_transfer_id || '';
           const amount = result.amount_usdc || '0';
+          logX402Trail(result);
           status.textContent = 'x402 paid ' + amount + ' USDC';
           H.pushThought('x402 payment complete: ' + result.money_flow + ' for ' + result.resource_id + (tx ? ' · transfer ' + shortHash(tx) : '') + '.', 'x402', '#3FA89F');
         })

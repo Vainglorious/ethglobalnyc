@@ -125,6 +125,93 @@ DN.lifecycle = (function () {
     ].join(':');
   }
 
+  function shortHash(value) {
+    const text = String(value || '');
+    if (text.length < 14) return text;
+    return text.slice(0, 8) + '...' + text.slice(-6);
+  }
+
+  function explorerTxUrl(hash, fallbackExplorer) {
+    if (!hash) return '';
+    const explorer = String(fallbackExplorer || 'https://explorer.testnet.arc.network').replace(/\/$/, '');
+    return explorer + '/tx/' + hash;
+  }
+
+  function receiptTransactions(step) {
+    const receipt = (step && step.receipt) || {};
+    const chain = receipt.chain || {};
+    const explorer = chain.explorer || '';
+    const out = [];
+    (receipt.transactions || []).forEach((tx) => {
+      if (!tx || !tx.tx_hash) return;
+      out.push({
+        action: tx.type || receipt.action || step.action || 'tx',
+        hash: tx.tx_hash,
+        explorer_url: tx.explorer_url || explorerTxUrl(tx.tx_hash, explorer),
+        agent_id: receipt.agent_id || '',
+        wallet: receipt.wallet || '',
+        outcome: receipt.outcome || '',
+        amount_usdc: receipt.amount_usdc || '',
+      });
+    });
+    if (receipt.tx_hash) {
+      out.push({
+        action: receipt.action || step.action || 'tx',
+        hash: receipt.tx_hash,
+        explorer_url: receipt.explorer_url || explorerTxUrl(receipt.tx_hash, explorer),
+        agent_id: receipt.agent_id || '',
+        wallet: receipt.wallet || '',
+        outcome: receipt.outcome || receipt.result || '',
+        amount_usdc: receipt.amount_usdc || '',
+      });
+    }
+    return out;
+  }
+
+  function firstReceiptWith(result, key) {
+    const steps = (result && result.steps) || [];
+    for (const step of steps) {
+      const receipt = (step && step.receipt) || {};
+      if (receipt[key]) return receipt;
+    }
+    return {};
+  }
+
+  function logForecastChainTrail(kind, result) {
+    if (!DN.logTerm || !result) return;
+    const contract = result.contract || '';
+    const marketKey = result.market_key || '';
+    const marketReceipt = firstReceiptWith(result, 'market_id');
+    const marketId = marketReceipt.market_id || '';
+    if (contract) DN.logTerm.push('CHAIN', kind + ' contract ' + contract);
+    if (marketKey) DN.logTerm.push('CHAIN', kind + ' market_key ' + marketKey);
+    if (marketId) DN.logTerm.push('CHAIN', kind + ' market_id ' + marketId);
+
+    const steps = result.steps || [];
+    let count = 0;
+    steps.forEach((step) => {
+      receiptTransactions(step).forEach((tx) => {
+        count++;
+        const who = tx.agent_id ? ' ' + tx.agent_id : '';
+        const detail = [
+          tx.amount_usdc ? tx.amount_usdc + ' USDC' : '',
+          tx.outcome || '',
+          tx.wallet ? 'wallet ' + shortHash(tx.wallet) : '',
+        ].filter(Boolean).join(' · ');
+        DN.logTerm.push(
+          'CHAIN',
+          kind + ' ' + tx.action + who +
+            (detail ? ' · ' + detail : '') +
+            ' · tx ' + tx.hash +
+            (tx.explorer_url ? ' · ' + tx.explorer_url : '')
+        );
+      });
+    });
+    if (!count) {
+      DN.logTerm.push('CHAIN', kind + ' returned no tx hashes. This usually means the API failed before signing or the response shape changed.');
+    }
+  }
+
   function startBackendRun() {
     if (L.runPromise) return L.runPromise;
     if (!DN.databridge || !DN.databridge.startDemoRun) {
@@ -379,6 +466,7 @@ DN.lifecycle = (function () {
       L.marketKey = (setup && setup.market_key) || marketKey;
       L.forecastStakes = (setup && setup.stakes) || [];
       const totals = (setup && setup.totals) || {};
+      logForecastChainTrail('STAKE', setup);
       if (DN.logTerm) {
         DN.logTerm.push(
           'STAKE',
@@ -412,6 +500,7 @@ DN.lifecycle = (function () {
         away_team: meta.away_team,
         winning_agents: winningAgents
       });
+      logForecastChainTrail('SETTLE', settled);
       const tx = (settled && settled.receipt && settled.receipt.tx_hash) ||
                  (settled && settled.steps && settled.steps.length && (settled.steps[settled.steps.length - 1].receipt || {}).tx_hash) ||
                  null;
