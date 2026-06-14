@@ -128,6 +128,7 @@ def _agent_identity_record(
     parent_agent = agents_by_id.get(agent.parent_agent_id) if agent.parent_agent_id else None
     parent_ens_name = ens_name_for_agent(parent_agent, ens_parent) if parent_agent else ""
     profile_url = f"{profile_base_url.rstrip('/')}/{agent.agent_id}.json"
+    avatar_url = f"{profile_base_url.rstrip('/')}/{agent.agent_id}/avatar.svg"
     verified_lineage = bool(agent.verified_lineage or root.verified_lineage)
     world_human_id = agent.world_human_id
     world_status = agent.world_status
@@ -153,6 +154,7 @@ def _agent_identity_record(
             "evm": agent.wallet_address,
             "arc_testnet": agent.wallet_address,
         },
+        "avatar": avatar_url,
         "profile": profile_url,
         "endpoints": {
             "web": profile_url,
@@ -161,6 +163,7 @@ def _agent_identity_record(
     text_records = {
         "description": description,
         "url": profile_url,
+        "avatar": avatar_url,
         "agent-context": json.dumps(agent_context, sort_keys=True, separators=(",", ":")),
         "agent-endpoint[web]": profile_url,
         "com.colony.agent_id": agent.agent_id,
@@ -172,6 +175,7 @@ def _agent_identity_record(
         "com.colony.world_access_tier": world_access_tier,
         "com.colony.capabilities": ",".join(capabilities),
         "com.colony.profile": profile_url,
+        "com.colony.avatar": avatar_url,
     }
     return {
         "agent_id": agent.agent_id,
@@ -208,6 +212,7 @@ def _agent_identity_record(
                 "evm": agent.wallet_address,
                 "arc_testnet": agent.wallet_address,
             },
+            "avatar": avatar_url,
             "state": {
                 "status": "alive",
                 "bankroll": round(agent.bankroll, 4),

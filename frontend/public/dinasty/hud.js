@@ -721,6 +721,7 @@ DN.hud = (function () {
     const wallet = rec && rec.wallet_address;
     const walletShort = wallet ? wallet.slice(0, 6) + '…' + wallet.slice(-4) : null;
     const ens = rec && rec.ens_name;
+    const avatar = rec && rec.avatar;
     const parentEns = rec && (rec.parent_ens_name || (rec.parent && rec.parent.ens_name));
     const lineageEns = rec && (rec.lineage_ens_name || (rec.lineage && (rec.lineage.root_name || rec.lineage.ens_name)));
     const identityRows = (ens || wallet) ? `
@@ -732,7 +733,7 @@ DN.hud = (function () {
     const canReproduce = !!(rec && rec.agent_id && DN.databridge && DN.databridge.reproduceAnt);
     $('inspector').innerHTML =
       `<div class="insp-head"><div class="insp-icon" style="background:${c}22;box-shadow:inset 0 0 0 1px ${c}66">
-        <div style="width:13px;height:13px;border-radius:3px;background:${c};box-shadow:0 0 10px ${c}"></div></div>
+        ${avatar ? `<img src="${esc(avatar)}" alt="" style="width:100%;height:100%;border-radius:8px;object-fit:cover">` : `<div style="width:13px;height:13px;border-radius:3px;background:${c};box-shadow:0 0 10px ${c}"></div>`}</div>
         <div><div class="insp-kicker">${a.role}${a.hero ? ' · Gen ' + a.gen : ''}</div><div class="insp-name">${displayName}</div></div></div>
       <div class="metrics">
         <div class="metric"><div class="mk">Forecast Acc</div><div class="mv">${(rec && rec.forecast_accuracy != null) ? Math.round(rec.forecast_accuracy * 100) : (a.accuracy || (52 + (a.inst % 30)))}<small>%</small></div></div>
