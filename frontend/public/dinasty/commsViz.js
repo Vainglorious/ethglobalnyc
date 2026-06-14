@@ -336,6 +336,27 @@ DN.commsViz = (function () {
     if (V._chamberMsgs.length > 60) V._chamberMsgs.shift();
   };
 
+  V.bufferChamberEvents = function (events) {
+    if (!events || !events.length) return;
+    events.forEach((ev) => {
+      if (!ev) return;
+      if (ev.event_type === 'social_action') {
+        const actorId = ev.actor_id || ev.actor_name;
+        const targetId = ev.target_actor_id;
+        const actorDisplay = ev.actor_name || actorId || 'agent';
+        const isReply = !!targetId && targetId !== actorId;
+        const text = (ev.text || '').replace(/\s+/g, ' ').trim();
+        const snippet = text.length > 140 ? text.slice(0, 138) + '...' : text;
+        if (snippet) V._bufferChamberMsg(ev.room_id || actorId || ev.action_id || '', actorDisplay, isReply ? targetId : null, snippet);
+      } else if (ev.event_type === 'debate_claim') {
+        const text = (ev.message || '').replace(/\s+/g, ' ').trim();
+        const snippet = text.length > 160 ? text.slice(0, 158) + '...' : text;
+        const speaker = ev.persona || ev.claim_type || 'chamber';
+        if (snippet) V._bufferChamberMsg(ev.room_id || ev.round_id || ev.persona || 'synthesis', speaker, null, snippet);
+      }
+    });
+  };
+
   V.streamChambersFromBuffer = function (opts) {
     opts = opts || {};
     V._chamberStreamTimers.forEach((t) => clearTimeout(t));

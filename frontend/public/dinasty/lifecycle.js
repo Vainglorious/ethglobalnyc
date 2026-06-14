@@ -732,11 +732,11 @@ DN.lifecycle = (function () {
           if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Streaming ' + Math.min(buffered, 24) + ' real debate events into chambers.');
           const STRIDE = 520;
           const COUNT = 24;
-          if (DN.commsViz && DN.commsViz.ingest) {
-            DN.commsViz.ingest(discussionEvents.slice(0, COUNT));
+          if (DN.commsViz && DN.commsViz.bufferChamberEvents) {
+            DN.commsViz.bufferChamberEvents(discussionEvents.slice(0, COUNT));
           }
           if (DN.commsViz && DN.commsViz.streamChambersFromBuffer) {
-            DN.commsViz.streamChambersFromBuffer({ count: COUNT, strideMs: STRIDE, logRows: false });
+            DN.commsViz.streamChambersFromBuffer({ count: COUNT, strideMs: STRIDE, logRows: true });
           }
           // Debate ends after the curated chamber stream and comms queue
           // finish. Forecast rows may already exist in the backend batch,
