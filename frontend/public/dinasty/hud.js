@@ -467,7 +467,9 @@ DN.hud = (function () {
             DN.logTerm.push('SYSTEM', 'Connected to backend run ' + rid + '.');
             _commsLastRun = rid;
           }
-          if (DN.commsViz && DN.commsViz.ingest) DN.commsViz.ingest(events);
+          const phase = DN.lifecycle && DN.lifecycle.getPhase ? DN.lifecycle.getPhase() : '';
+          const lifecycleOwnsComms = phase && phase !== 'idle' && phase !== 'egress_roam';
+          if (!lifecycleOwnsComms && DN.commsViz && DN.commsViz.ingest) DN.commsViz.ingest(events);
           _commsLastErr = null;
         })
         .catch((err) => {

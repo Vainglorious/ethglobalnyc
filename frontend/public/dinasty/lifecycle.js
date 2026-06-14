@@ -723,34 +723,33 @@ DN.lifecycle = (function () {
       let streamed = false;
       const tryStream = () => {
         if (streamed) return;
-        const buffered = DN.databridge && DN.databridge.getCommunications ? DN.databridge.getCommunications().length : 0;
+        const events = DN.databridge && DN.databridge.getCommunications ? DN.databridge.getCommunications() : [];
+        const discussionEvents = events.filter((ev) => ev && ev.event_type !== 'forecast');
+        const buffered = discussionEvents.length;
         const elapsed = Date.now() - startedAt;
         if (buffered > 0) {
           streamed = true;
-          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Streaming ' + Math.min(buffered, 22) + ' real debate events into chambers.');
-          const STRIDE = 110;
-          const COUNT = 22;
-          if (DN.commsViz && DN.commsViz.streamChambersFromBuffer) {
-            DN.commsViz.streamChambersFromBuffer({ count: COUNT, strideMs: STRIDE });
+          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Streaming ' + Math.min(buffered, 24) + ' real debate events into chambers.');
+          const STRIDE = 520;
+          const COUNT = 24;
+          if (DN.commsViz && DN.commsViz.ingest) {
+            DN.commsViz.ingest(discussionEvents.slice(0, COUNT));
           }
-          // Debate ends when:
-          //   - Backend has emitted at least one FORECAST event (signal
-          //     that betting has begun → debate is over), OR
-          //   - The full chamber stream + live drain queue is finished
-          //     (fallback if no forecasts arrive)
+          if (DN.commsViz && DN.commsViz.streamChambersFromBuffer) {
+            DN.commsViz.streamChambersFromBuffer({ count: COUNT, strideMs: STRIDE, logRows: false });
+          }
+          // Debate ends after the curated chamber stream and comms queue
+          // finish. Forecast rows may already exist in the backend batch,
+          // but rendering them immediately makes the UI jump from dispute
+          // to betting without the colony-room discussion beat.
           const visibleCount = Math.max(8, Math.min(COUNT, buffered));
-          const streamDurationMs = visibleCount * STRIDE + 600;
+          const streamDurationMs = visibleCount * STRIDE + 2200;
           const streamFinishedAt = Date.now() + streamDurationMs;
           const watcher = () => {
-            const forecastSeen = DN.commsViz && DN.commsViz.sawForecast && DN.commsViz.sawForecast();
-            if (forecastSeen) {
-              if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Forecast events streaming — exiting chamber.');
-              L.debateDone = true;
-              return;
-            }
             const streamDone = Date.now() >= streamFinishedAt;
             const drainIdle = !DN.commsViz || !DN.commsViz.isIdle || DN.commsViz.isIdle();
             if (streamDone && drainIdle) {
+              if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Chamber discussion complete — moving to forecast settlement.');
               L.debateDone = true;
               return;
             }
