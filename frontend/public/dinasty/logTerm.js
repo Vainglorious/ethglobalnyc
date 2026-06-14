@@ -1,11 +1,11 @@
-// Di-nasty — bottom log terminal. Streams every ant action as a
+// WorldColony — bottom log terminal. Streams every ant action as a
 // timestamped, color-coded console row. Multi-line scrollback, clickable
 // ant IDs that re-select via DN.app.selectAnt.
 window.DN = window.DN || {};
 
 // Version marker — visible in the browser console as the new build loads.
 // If you don't see this on refresh, the page is serving cached old JS.
-console.log('[dinasty] logTerm.js loaded · build 2026-06-14');
+console.log('[worldcolony] logTerm.js loaded · build 2026-06-14');
 
 DN.logTerm = (function () {
   const T = {};

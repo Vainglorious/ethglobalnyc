@@ -1,4 +1,4 @@
-// Di-nasty — app orchestrator: sim clock, environment, transitions, controls
+// WorldColony — app orchestrator: sim clock, environment, transitions, controls
 window.DN = window.DN || {};
 
 DN.app = (function () {
@@ -271,7 +271,7 @@ DN.app = (function () {
     clock = new THREE.Clock();
     frame();
 
-    DN.hud.pushThought('Di-nasty online — four AI ant civilizations awakening across the basin.', 'World', '#E8A23D');
+    DN.hud.pushThought('WorldColony online — four AI ant civilizations awakening across the basin.', 'World', '#E8A23D');
     setTimeout(() => DN.hud.pushThought('Foragers fanning out along fresh pheromone trails.', 'Forage', '#E8A23D'), 3000);
 
     setTimeout(() => { document.getElementById('intro').classList.add('hide'); DN.camera.flyTo(new THREE.Vector3(0, 4, 0), 300, 165, 2.4); DN.camera.autoRotate(true); }, 900);

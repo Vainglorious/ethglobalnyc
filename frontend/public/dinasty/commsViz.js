@@ -1,4 +1,4 @@
-// Di-nasty — communication visualizer.
+// WorldColony — communication visualizer.
 // Turns backend debate_claim + social_action events into:
 //   1. live glowing Bezier arcs between speaker and target ants
 //   2. a persistent (decaying) influence-graph overlay
@@ -6,7 +6,7 @@
 // Polled from /recent_communications by hud.js initBackendControl.
 window.DN = window.DN || {};
 
-console.log('[dinasty] commsViz.js loaded · build 2026-06-14');
+console.log('[worldcolony] commsViz.js loaded · build 2026-06-14');
 
 DN.commsViz = (function () {
   const V = { _seen: new Set(), _arcs: [], _edges: new Map(), _queue: [], _queueTimer: null };

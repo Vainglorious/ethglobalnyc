@@ -1,4 +1,4 @@
-// Di-nasty — data bridge: seeds the colonies' stats and the thoughts ticker
+// WorldColony — data bridge: seeds the colonies' stats and the thoughts ticker
 // from the REAL harness output. Non-invasive: main.js
 // prefers DN.databridge.nextThought() when ready, and we seed DN.colony.list
 // stats once the colonies exist. Everything degrades gracefully if the file

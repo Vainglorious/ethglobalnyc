@@ -1,4 +1,4 @@
-// Di-nasty — interactions: raycast hover/select, drop forage, room picking, tooltip
+// WorldColony — interactions: raycast hover/select, drop forage, room picking, tooltip
 window.DN = window.DN || {};
 
 DN.interactions = (function () {

@@ -1,4 +1,4 @@
-// Di-nasty — world: renderer, gradient sky, sunlight, fog, voxel terrain, water, atmosphere
+// WorldColony — world: renderer, gradient sky, sunlight, fog, voxel terrain, water, atmosphere
 window.DN = window.DN || {};
 
 DN.world = (function () {

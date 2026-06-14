@@ -1,4 +1,4 @@
-// Di-nasty — lifecycle controller. State machine for the demo arc:
+// WorldColony — lifecycle controller. State machine for the demo arc:
 //   0 idle → 1 kickoff → 2 scouting → 3 kg_forming → 4 recruitment →
 //   5 converge → 6 ingress → 7 debate → 8 resolution → 9 egress_roam
 // Frontend-paced visual timing. Owns ant activation + crystal show while the
@@ -7,7 +7,7 @@
 // contract and claims payouts for winning ants.
 window.DN = window.DN || {};
 
-console.log('[dinasty] lifecycle.js loaded · build 2026-06-14');
+console.log('[worldcolony] lifecycle.js loaded · build 2026-06-14');
 
 DN.lifecycle = (function () {
   const L = { phase: 'idle', phaseT: 0, winner: null, settleTxHash: null, runId: null, phaseHold: false };

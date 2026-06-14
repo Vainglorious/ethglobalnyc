@@ -1,4 +1,4 @@
-// Di-nasty — biome definitions: distinct switchable scenes
+// WorldColony — biome definitions: distinct switchable scenes
 window.DN = window.DN || {};
 
 DN.biomes = [

@@ -1,4 +1,4 @@
-// Di-nasty — ant agents: instanced voxel ants w/ shader-animated legs, behavior, hero ants
+// WorldColony — ant agents: instanced voxel ants w/ shader-animated legs, behavior, hero ants
 window.DN = window.DN || {};
 
 DN.ants = (function () {

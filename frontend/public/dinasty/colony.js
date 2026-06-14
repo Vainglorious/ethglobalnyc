@@ -1,4 +1,4 @@
-// Di-nasty — surface colonies: voxel mounds + tunnel entrances, faction identity, stats
+// WorldColony — surface colonies: voxel mounds + tunnel entrances, faction identity, stats
 window.DN = window.DN || {};
 
 DN.colony = (function () {

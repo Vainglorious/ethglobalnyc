@@ -1,4 +1,4 @@
-// Di-nasty — underground colony: cinematic cutaway, 11 chambers, tunnels, moving ants
+// WorldColony — underground colony: cinematic cutaway, 11 chambers, tunnels, moving ants
 window.DN = window.DN || {};
 
 DN.underground = (function () {

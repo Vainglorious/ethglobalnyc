@@ -1,4 +1,4 @@
-// Di-nasty — pheromone trails: ground-hugging ribbons with scrolling flow
+// WorldColony — pheromone trails: ground-hugging ribbons with scrolling flow
 window.DN = window.DN || {};
 
 DN.trails = (function () {

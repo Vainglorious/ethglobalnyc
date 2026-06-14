@@ -1,4 +1,4 @@
-// Di-nasty — forage resources: voxel leaf/crystal caches the ants gather
+// WorldColony — forage resources: voxel leaf/crystal caches the ants gather
 window.DN = window.DN || {};
 
 DN.resources = (function () {

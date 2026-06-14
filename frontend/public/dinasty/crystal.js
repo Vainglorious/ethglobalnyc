@@ -1,9 +1,9 @@
-// Di-nasty — knowledge crystal: a single procedural icosahedron at the
+// WorldColony — knowledge crystal: a single procedural icosahedron at the
 // world origin that grows as scouts return findings. Owned by the
 // lifecycle controller; not visible until DN.crystal.show() is called.
 window.DN = window.DN || {};
 
-console.log('[dinasty] crystal.js loaded · build 2026-06-14');
+console.log('[worldcolony] crystal.js loaded · build 2026-06-14');
 
 DN.crystal = (function () {
   const C = { _scene: null, _mesh: null, _halo: null, _deposits: 0, _scale: 0 };

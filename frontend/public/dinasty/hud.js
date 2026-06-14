@@ -1,4 +1,4 @@
-// Di-nasty — HUD: top stats, inspector, thoughts, transport, hotbar, banners
+// WorldColony — HUD: top stats, inspector, thoughts, transport, hotbar, banners
 window.DN = window.DN || {};
 
 DN.hud = (function () {

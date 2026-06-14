@@ -1,4 +1,4 @@
-// Di-nasty — flora: faceted low-poly trees w/ wind sway, organic rocks/bushes, instanced groundcover
+// WorldColony — flora: faceted low-poly trees w/ wind sway, organic rocks/bushes, instanced groundcover
 window.DN = window.DN || {};
 
 DN.flora = (function () {

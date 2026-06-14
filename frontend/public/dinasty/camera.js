@@ -1,4 +1,4 @@
-// Di-nasty — dual camera: cinematic orbit/tour + WASD free-explore (pointer-lock look)
+// WorldColony — dual camera: cinematic orbit/tour + WASD free-explore (pointer-lock look)
 window.DN = window.DN || {};
 
 DN.camera = (function () {

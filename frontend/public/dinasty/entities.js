@@ -1,4 +1,4 @@
-// Di-nasty — colonies (clustered glowing nodes) + resources
+// WorldColony — colonies (clustered glowing nodes) + resources
 window.DN = window.DN || {};
 
 DN.entities = (function () {

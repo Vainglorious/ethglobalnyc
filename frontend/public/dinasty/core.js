@@ -1,4 +1,4 @@
-// Di-nasty — shared core: namespace, palette, voxel helpers, sprite textures
+// WorldColony — shared core: namespace, palette, voxel helpers, sprite textures
 window.DN = window.DN || {};
 
 // ---- warm Minecraft-style daylight palette ----

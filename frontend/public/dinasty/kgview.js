@@ -1,4 +1,4 @@
-// Di-nasty — KG view: lightweight live graph overlay for scouting/KG events.
+// WorldColony — KG view: lightweight live graph overlay for scouting/KG events.
 window.DN = window.DN || {};
 
 DN.kgview = (function () {
