@@ -236,6 +236,24 @@ DN.databridge = (function () {
     });
   };
 
+  B.killAnt = function (agentId, opts) {
+    if (!agentId) return Promise.reject(new Error('Missing agent id.'));
+    const body = Object.assign({ reason: 'manual' }, opts || {});
+    return apiJson('/ants/' + encodeURIComponent(agentId) + '/kill', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then((payload) => {
+      const ant = payload.ant || null;
+      if (ant) {
+        records = records.map((r) => (r.agent_id === ant.agent_id ? ant : r));
+        if (!records.some((r) => r.agent_id === ant.agent_id)) records.push(ant);
+        B.agents = records;
+      }
+      return payload;
+    });
+  };
+
   B.fetchWorldCupKg = function () {
     if (!apiUrl) return Promise.reject(new Error('No backend API configured.'));
     return fetch(apiUrl + '/kg/world-cup')

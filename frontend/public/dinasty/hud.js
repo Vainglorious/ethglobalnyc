@@ -6,6 +6,15 @@ DN.hud = (function () {
   const $ = id => document.getElementById(id);
   function hex(n) { return '#' + n.toString(16).padStart(6, '0'); }
   function cap(s) { return s.replace(/^./, c => c.toUpperCase()); }
+  function esc(v) {
+    return String(v == null ? '' : v).replace(/[&<>"']/g, (ch) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[ch]));
+  }
 
   const ICON = {
     forage: '<svg viewBox="0 0 24 24"><path d="M4 18c4-1 4-6 8-6s4 5 8 4"/><circle cx="4" cy="18" r="1.4"/><circle cx="20" cy="16" r="1.4"/></svg>',
@@ -808,19 +817,37 @@ DN.hud = (function () {
     const walletShort = wallet ? wallet.slice(0, 6) + '…' + wallet.slice(-4) : null;
     const ens = rec && rec.ens_name;
     const avatar = rec && rec.avatar;
+    const status = String((rec && rec.status) || (a.outcome === 'culled' ? 'dead' : 'alive'));
+    const isDead = status === 'dead' || status === 'killed' || a.outcome === 'culled';
+    const persona = rec && rec.personality && rec.personality.persona;
+    const avatarTrait = rec && rec.avatar_trait;
     const parentEns = rec && (rec.parent_ens_name || (rec.parent && rec.parent.ens_name));
     const lineageEns = rec && (rec.lineage_ens_name || (rec.lineage && (rec.lineage.root_name || rec.lineage.ens_name)));
     const identityRows = (ens || wallet) ? `
-      ${ens ? `<div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>ENS</span><span style="color:${c};font-family:var(--mono)">${ens}</span></div></div>` : ''}
-      ${parentEns ? `<div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>Parent</span><span style="color:${c};font-family:var(--mono)">${parentEns}</span></div></div>` : ''}
-      ${lineageEns && lineageEns !== parentEns ? `<div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>Lineage</span><span style="color:${c};font-family:var(--mono)">${lineageEns}</span></div></div>` : ''}
-      ${wallet ? `<div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>Wallet</span><span style="font-family:var(--mono);cursor:pointer" title="${wallet}" data-copy="${wallet}">${walletShort}</span></div></div>` : ''}
+      ${ens ? `<div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>ENS</span><span style="color:${c};font-family:var(--mono)">${esc(ens)}</span></div></div>` : ''}
+      ${parentEns ? `<div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>Parent</span><span style="color:${c};font-family:var(--mono)">${esc(parentEns)}</span></div></div>` : ''}
+      ${lineageEns && lineageEns !== parentEns ? `<div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>Lineage</span><span style="color:${c};font-family:var(--mono)">${esc(lineageEns)}</span></div></div>` : ''}
+      ${wallet ? `<div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>Wallet</span><span style="font-family:var(--mono);cursor:pointer" title="${esc(wallet)}" data-copy="${esc(wallet)}">${esc(walletShort)}</span></div></div>` : ''}
     ` : '';
-    const canReproduce = !!(rec && rec.agent_id && DN.databridge && DN.databridge.reproduceAnt);
+    const canReproduce = !!(rec && rec.agent_id && !isDead && DN.databridge && DN.databridge.reproduceAnt);
+    const canKill = !!(rec && rec.agent_id && !isDead && DN.databridge && DN.databridge.killAnt);
     $('inspector').innerHTML =
-      `<div class="insp-head"><div class="insp-icon" style="background:${c}22;box-shadow:inset 0 0 0 1px ${c}66">
-        ${avatar ? `<img src="${esc(avatar)}" alt="" style="width:100%;height:100%;border-radius:8px;object-fit:cover">` : `<div style="width:13px;height:13px;border-radius:3px;background:${c};box-shadow:0 0 10px ${c}"></div>`}</div>
-        <div><div class="insp-kicker">${a.role}${a.hero ? ' · Gen ' + a.gen : ''}</div><div class="insp-name">${displayName}</div></div></div>
+      `<div class="ant-card${isDead ? ' is-dead' : ''}">
+        <div class="ant-portrait" style="--ant-accent:${c}">
+          ${avatar ? `<img src="${esc(avatar)}" alt="${esc(displayName)} avatar" loading="lazy">` : `<div class="ant-portrait-fallback" style="background:${c};box-shadow:0 0 18px ${c}"></div>`}
+          <span class="ant-status">${isDead ? 'Killed' : 'Alive'}</span>
+        </div>
+        <div class="insp-head ant-card-head">
+          <div class="insp-icon" style="background:${c}22;box-shadow:inset 0 0 0 1px ${c}66">
+            <div style="width:13px;height:13px;border-radius:3px;background:${c};box-shadow:0 0 10px ${c}"></div>
+          </div>
+          <div>
+            <div class="insp-kicker">${esc(a.role)}${a.hero ? ' · Gen ' + esc(a.gen) : ''}</div>
+            <div class="insp-name">${esc(displayName)}</div>
+            ${(persona || avatarTrait) ? `<div class="ant-traits">${persona ? esc(persona) : ''}${persona && avatarTrait ? ' · ' : ''}${avatarTrait ? esc(avatarTrait).replace(/-/g, ' ') : ''}</div>` : ''}
+          </div>
+        </div>
+      </div>
       <div class="metrics">
         <div class="metric"><div class="mk">Forecast Acc</div><div class="mv">${(rec && rec.forecast_accuracy != null) ? Math.round(rec.forecast_accuracy * 100) : (a.accuracy || (52 + (a.inst % 30)))}<small>%</small></div></div>
         <div class="metric"><div class="mk">Bankroll</div><div class="mv"><small>$</small>${rec && rec.bankroll != null ? Math.round(rec.bankroll) : (a.reputation || (30 + (a.inst % 50)))}</div></div>
@@ -828,18 +855,27 @@ DN.hud = (function () {
         <div class="metric"><div class="mk">Generation</div><div class="mv">${rec && rec.generation != null ? rec.generation : (a.gen || (1 + a.inst % 8))}</div></div>
       </div>
       <div class="vital-bar"><div class="vlabel"><span>Home colony</span><span style="color:${c}">${a.col.name}</span></div></div>
+      <div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>Status</span><span style="color:${isDead ? '#D96E54' : '#5FB84A'}">${esc(status)}</span></div></div>
       ${identityRows}
       <div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>Current task</span><span id="a-task">—</span></div></div>
       <div class="vital-bar" style="margin-top:9px"><div class="vlabel"><span>Carrying</span><span id="a-cargo">—</span></div></div>
       ${renderForecastOutcome(a)}
       <div class="section-label">Recent activity</div>
       <div class="insp-empty" style="font-size:12px">${antBlurb(a)}</div>
-      <button class="btn-primary" id="follow-ant" style="background:${following ? 'rgba(255,238,205,0.1)' : ''};color:${following ? 'var(--ink)' : ''};border-color:var(--border-strong)">
-        <svg viewBox="0 0 24 24" style="fill:${following ? 'var(--ink)' : '#2a1d08'}"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="${following ? 'var(--ink)' : '#2a1d08'}" stroke-width="2" fill="none"/></svg>
-        ${following ? 'Stop following' : 'Follow agent'}</button>
-      ${canReproduce ? `<button class="btn-primary" id="reproduce-ant" style="margin-top:9px;background:rgba(95,184,74,0.16);color:var(--ink);border-color:rgba(95,184,74,0.5)">
-        <svg viewBox="0 0 24 24" style="fill:none;stroke:var(--ink);stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><circle cx="12" cy="5" r="2"/><circle cx="7" cy="19" r="2"/><circle cx="17" cy="19" r="2"/><path d="M12 7v5M12 12l-5 5M12 12l5 5"/></svg>
-        Create child ant</button>` : ''}`;
+      <div class="ant-actions">
+        <button class="btn-primary ant-action" id="follow-ant" style="background:${following ? 'rgba(255,238,205,0.1)' : ''};color:${following ? 'var(--ink)' : ''};border-color:var(--border-strong)" title="${following ? 'Stop following' : 'Follow agent'}">
+          <svg viewBox="0 0 24 24" style="fill:${following ? 'var(--ink)' : '#2a1d08'}"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="${following ? 'var(--ink)' : '#2a1d08'}" stroke-width="2" fill="none"/></svg>
+          <span>${following ? 'Stop' : 'Follow'}</span>
+        </button>
+        ${canReproduce ? `<button class="btn-primary ant-action reproduce" id="reproduce-ant" title="Create child ant">
+          <svg viewBox="0 0 24 24" style="fill:none;stroke:var(--ink);stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><circle cx="12" cy="5" r="2"/><circle cx="7" cy="19" r="2"/><circle cx="17" cy="19" r="2"/><path d="M12 7v5M12 12l-5 5M12 12l5 5"/></svg>
+          <span>Reproduce</span>
+        </button>` : ''}
+        ${canKill ? `<button class="btn-primary ant-action danger" id="kill-ant" title="Kill ant">
+          <svg viewBox="0 0 24 24" style="fill:none;stroke:var(--ink);stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><path d="M6 6l12 12M18 6L6 18"/><circle cx="12" cy="12" r="9"/></svg>
+          <span>Kill</span>
+        </button>` : ''}
+      </div>`;
     $('follow-ant').addEventListener('click', () => DN.app.toggleFollow(a));
     const reproduceBtn = $('reproduce-ant');
     if (reproduceBtn) {
@@ -868,6 +904,36 @@ DN.hud = (function () {
           .finally(() => {
             reproduceBtn.disabled = false;
             reproduceBtn.innerHTML = normalHtml;
+          });
+      });
+    }
+    const killBtn = $('kill-ant');
+    if (killBtn) {
+      const normalHtml = killBtn.innerHTML;
+      killBtn.addEventListener('click', () => {
+        const agentId = rec.agent_id;
+        killBtn.disabled = true;
+        killBtn.textContent = 'Killing...';
+        H.pushThought('Killing ' + (ens || agentId) + ' and removing it from the active colony.', 'Lineage', '#D96E54');
+        if (DN.logTerm) DN.logTerm.push('LINEAGE', 'Killing ' + (ens || agentId) + ' from the ant card.');
+        DN.databridge.killAnt(agentId, { reason: 'manual_card' })
+          .then((payload) => {
+            const killed = payload.ant || {};
+            a.agentRecord = killed;
+            a.outcome = 'culled';
+            a.state = 'dead';
+            a.deadTimer = Math.max(a.deadTimer || 0, 2.0);
+            a.dead = true;
+            if (DN.ants && DN.ants.showOutcomeGlow) DN.ants.showOutcomeGlow();
+            H.pushThought((killed.ens_name || killed.agent_id || agentId) + ' marked dead.', 'Lineage', '#D96E54');
+            if (DN.logTerm) DN.logTerm.push('LINEAGE', (killed.ens_name || killed.agent_id || agentId) + ' marked dead.');
+            H.showAnt(a, following);
+          })
+          .catch((err) => {
+            H.pushThought('Kill failed: ' + (err.message || err), 'Lineage', '#D96E54');
+            if (DN.logTerm) DN.logTerm.push('LINEAGE', 'Kill failed: ' + (err.message || err));
+            killBtn.disabled = false;
+            killBtn.innerHTML = normalHtml;
           });
       });
     }

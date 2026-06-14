@@ -235,7 +235,40 @@ body.underground #atmos {
 .insp-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 6px; }
 .insp-icon { width: 40px; height: 40px; border-radius: 4px; flex: none; display: grid; place-items: center; }
 .insp-kicker { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-faint); font-weight: 650; }
-.insp-name { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.12; margin-top: 3px; }
+.insp-name { font-size: 19px; font-weight: 700; line-height: 1.12; margin-top: 3px; overflow-wrap: anywhere; }
+.ant-card { margin: -2px 0 14px; }
+.ant-card.is-dead .ant-portrait img { filter: grayscale(0.9) contrast(0.85); opacity: 0.68; }
+.ant-card-head { margin-top: 11px; margin-bottom: 0; }
+.ant-portrait {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 6px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 50% 38%, rgba(255,255,255,0.72), transparent 42%),
+    color-mix(in srgb, var(--ant-accent) 16%, var(--slot));
+  border: 1px solid color-mix(in srgb, var(--ant-accent) 42%, var(--hair));
+}
+.ant-portrait img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ant-portrait-fallback { width: 34px; height: 34px; border-radius: 6px; }
+.ant-status {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  background: rgba(255, 251, 238, 0.86);
+  border: 1px solid rgba(74, 58, 30, 0.16);
+  color: var(--ink);
+  font-size: 10px;
+  font-family: var(--mono);
+  text-transform: uppercase;
+}
+.ant-card.is-dead .ant-status { color: #D96E54; }
+.ant-traits { color: var(--ink-faint); font-size: 11px; line-height: 1.35; margin-top: 5px; overflow-wrap: anywhere; }
 .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin: 16px 0; }
 .metric { background: var(--slot); border: 1px solid var(--hair); border-radius: 4px; padding: 10px 12px; }
 .metric .mk { font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
@@ -254,7 +287,14 @@ body.underground #atmos {
   display: flex; align-items: center; justify-content: center; gap: 8px;
 }
 .btn-primary:hover { transform: translateY(-1px); filter: brightness(1.06); }
+.btn-primary:disabled { opacity: 0.58; cursor: wait; transform: none; }
 .btn-primary svg { width: 16px; height: 16px; fill: #2a1d08; }
+.ant-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(78px, 1fr)); gap: 7px; margin-top: 16px; }
+.ant-action { min-width: 0; margin-top: 0; padding: 10px 7px; font-size: 11px; line-height: 1; }
+.ant-action span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ant-action.reproduce { background: rgba(95,184,74,0.16); color: var(--ink); border-color: rgba(95,184,74,0.5); }
+.ant-action.danger { background: rgba(217,110,84,0.15); color: var(--ink); border-color: rgba(217,110,84,0.5); }
+.ant-action.reproduce svg, .ant-action.danger svg { stroke: var(--ink); fill: none; }
 .directives { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
 .dir-btn { border: 1px solid var(--hair); background: var(--slot); border-radius: 4px; padding: 9px 6px; cursor: pointer;
   text-align: center; font-size: 11px; font-weight: 600; color: var(--ink-soft); transition: all .18s; display: flex; flex-direction: column; align-items: center; gap: 5px; }

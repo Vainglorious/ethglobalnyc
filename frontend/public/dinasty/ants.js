@@ -691,6 +691,16 @@ DN.ants = (function () {
   // fewer records than ants we cycle (so every ant has a wallet); if there
   // are more we just use the first A.list.length of them. Heroes prefer
   // top-ranked records so their named UI matches the real leader.
+  function applyAgentRecord(a, rec) {
+    a.agentRecord = rec;
+    if (rec.ens_name) a.name = rec.ens_name;
+    if (rec.status === 'dead' || rec.status === 'killed') {
+      a.outcome = 'culled';
+      a.state = 'dead';
+      a.deadTimer = Math.max(a.deadTimer || 0, 2.0);
+    }
+  }
+
   A.bindAgentRecords = function (records) {
     if (!records || !records.length || !A.list.length) return;
     const sorted = records.slice().sort((x, y) => (y.bankroll || 0) - (x.bankroll || 0));
@@ -698,14 +708,13 @@ DN.ants = (function () {
     const heroes = A.list.filter(a => a.hero);
     for (let h = 0; h < heroes.length; h++) {
       const rec = sorted[h % sorted.length];
-      heroes[h].agentRecord = rec;
-      if (rec.ens_name) heroes[h].name = rec.ens_name;
+      applyAgentRecord(heroes[h], rec);
     }
     // Then everyone else round-robins across the rest
     let ri = 0;
     for (const a of A.list) {
       if (a.hero) continue;
-      a.agentRecord = sorted[ri % sorted.length];
+      applyAgentRecord(a, sorted[ri % sorted.length]);
       ri++;
     }
   };
