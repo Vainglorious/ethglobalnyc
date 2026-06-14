@@ -1,0 +1,78 @@
+================================================================================
+CLICKHOUSE_API — PROOF IT WORKS IN PRODUCTION (live pathway + bet resolutions)
+2026-06-14
+================================================================================
+
+LIVE URL: https://ethglobalnyc-production-5ce3.up.railway.app
+
+THE PATHWAY (demonstrated live)
+  your client --HTTPS--> clickhouse_api (Railway) --TLS--> ClickHouse Cloud --> back
+    - free:    GET  /markets/search       -> default_v3.polymarket_markets_all
+    - metered: POST /query uma_events      -> 402 -> pay -> umalabs.uma_oo_v2_events_decoded
+               (timestamp-gated; verified Worldcoin tier = half price)
+
+
+1) MARKET DATA (free discovery) — every market we bet on + OFFICIAL resolution
+   Read live from /markets/search (closed=True + Yes price 0/1 = resolved):
+
+     Will France win the 2026 FIFA World Cup?   Yes=0.1635  closed=False  -> OPEN (held)
+     Will Switzerland win on 2026-06-13?        Yes=0       closed=True   -> LOST (match was a 1-1 DRAW)
+     Will Brazil win on 2026-06-13?             Yes=0       closed=True   -> LOST
+     Will Scotland win on 2026-06-13?           Yes=1       closed=True   -> WON  ✅ (our double bet)
+     Will Türkiye win on 2026-06-14?            Yes=0       closed=True   -> LOST (Australia won)
+     Will Australia win on 2026-06-14?          Yes=1       closed=True   -> (confirms Türkiye lost)
+
+   NOTE: `active` stays True even after resolution; the resolution signal is
+   closed=True + outcome_price in {0,1}.
+
+   CORRECTION to an earlier mis-statement: Switzerland did NOT win — that match
+   resolved as a DRAW, so our Switzerland bet LOST. The live API is the source of truth.
+
+   BET SCORECARD (real trades, predictions.json):
+     WON:  Scotland (x2, ~7.41 shares -> ~$7.41 at $1/share)
+     LOST: Switzerland (~$2), Brazil (~$2), Türkiye (~$2)
+     OPEN: France WC-winner (24.84 shares @ ~0.16)
+   (predictions.json not yet annotated with outcomes — optional TODO.)
+
+
+2) x402 METERED PATHWAY (UMA dataset) — demonstrated live
+   (a) POST /query uma_events, NO payment -> HTTP 402:
+         pay 0.0112 USDC (0x3c499c54… ) on eip155:137, with a nonce  (the gate)
+   (b) POST /query uma_events, X-PAYMENT header + X-Human-Id (verified ant) -> 200:
+         paid=0.0056 (HALF — verified Worldcoin tier), verified="stub", timestamp-gated rows:
+           2026-06-14 05:30:27  Settle
+           2026-06-14 05:30:27  Settle
+           2026-06-14 03:29:54  ProposePrice
+           2026-06-14 03:29:49  ProposePrice
+           2026-06-14 02:46:57  Settle
+           2026-06-14 00:45:31  ProposePrice
+         (UmaCtfAdapter contract 0xee3afe347d5c… — the on-chain Polymarket resolver.)
+
+
+HONEST CAVEATS (asked + answered)
+  - ARC / USDC: NO real settlement enforced. verified="stub" -> ANY non-empty
+    X-PAYMENT passes. The 402->pay->200 HANDSHAKE is real; enforced Arc/USDC payment
+    is NOT (documented TODO). No restriction beyond sending the header.
+  - "Officially closed?" two layers:
+      * markets dataset = definitive per-market verdict (closed + price 0/1). This is
+        how we know Scotland won / others lost / France open.
+      * uma_events dataset = the on-chain resolution ACTIVITY (Propose->Settle) behind
+        those closures. Mapping a specific Settle event -> a specific one of OUR markets
+        needs decoding the questionID from the event topics — NOT yet wired (TODO). So
+        UMA proves resolution activity; the markets data gives the per-market answer.
+
+WHAT THIS PROVES
+  clickhouse_api is live + correct in prod: free discovery, x402 metering gate,
+  Worldcoin verified-tier discount, server-side timestamp gate, all serving live
+  ClickHouse data (markets + UMA). Judge-verifiable: anyone can curl the URL.
+
+NEXT (optional upgrades)
+  [ ] Annotate predictions.json with each bet's resolved outcome (won/lost/open).
+  [ ] Wire UMA event -> market questionID mapping so the API can say "THIS market
+      officially settled to X" (the real answer to "did it officially close").
+  [ ] Replace the x402 stub with real Arc/USDC settlement verification.
+
+SEE ALSO
+  clickhouse_api/README.md (Live deployment), notes/2026-06-14-clickhouse-api-railway-deploy.txt,
+  clickhouse/DATA_CATALOG.md, predictions.json
+================================================================================
