@@ -89,8 +89,11 @@ function readWallets(filePath) {
 }
 
 function normalizePrivateKey(value) {
-  if (!value) return "";
-  return value.startsWith("0x") ? value : `0x${value}`;
+  let normalized = String(value || "").trim();
+  if (!normalized) return "";
+  if (normalized.includes("=")) normalized = normalized.split("=").pop().trim();
+  normalized = normalized.replace(/^['"]|['"]$/g, "").trim();
+  return normalized.startsWith("0x") ? normalized : `0x${normalized}`;
 }
 
 function amountFromSim(simAmount, scale) {
