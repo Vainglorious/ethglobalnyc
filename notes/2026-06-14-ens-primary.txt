@@ -1,0 +1,125 @@
+================================================================================
+ENS — PRIMARY NAME / "SHOWCASE THE TRADES" PLAN
+2026-06-14
+================================================================================
+
+THE THREE NAMES (don't conflate them)
+-------------------------------------
+1. colonny.eth  — SEPOLIA TESTNET (ENS v2). The 200 agent subnames live here:
+   root-fable-0.colonny.eth -> 0x3fB4…078D, etc. Published on-chain via
+   colony/register_ens_identities.py (all SEPOLIA_* contracts). Forward-resolves
+   in Sepolia-aware tools only.
+2. colony.eth   — the name used in the PLAN / ens/README (offchain CCIP-Read
+   vision). Aspirational; not what's deployed.
+3. worldcolony.eth — MAINNET. OWNED BY US: controlling wallet
+   0x9e91D1E6cbc1341d7a8235214491BA1521dfa9a4 (same wallet that funded the treasury).
+   This is the one that resolves in real/mainnet ENS tools (app.ens.domains).
+
+TESTNET vs MAINNET — the answer to "does it matter / how does owning mainnet affect testnet"
+  - Mainnet ENS and Sepolia ENS are SEPARATE systems (different chains, registries).
+    They do NOT affect each other. Owning worldcolony.eth (mainnet) has ZERO effect
+    on colonny.eth (Sepolia), and vice versa — they're different names anyway.
+  - The agent subnames (colonny.eth) being on TESTNET is fine for the colony's
+    internal identity demo, BUT a judge resolving a name in a normal/mainnet ENS
+    tool will only see MAINNET names. So worldcolony.eth (mainnet) is the one that
+    matters for the live "resolve the name, see the colony" showcase.
+
+WHERE THE TRADES ACTUALLY ARE (from prior on-chain checks)
+  PolyGun trading addr 0xe9E32Ca24aa1eF725F650b5489281FE621363AA9 (Polygon):
+    - holds the open France-YES position (24.84 sh) + 28.62 pUSD
+    - is the `to` on every trade in predictions.json (the full buy/redeem history)
+  Treasury 0xcc16…31eB: funding + USDC->USDC.e swap only. NO trades, 0 pUSD.
+  => 0xe9E3 is the wallet that showcases the trades. CAVEAT: it's PolyGun's
+     CUSTODIAL contract — we do NOT hold its private key.
+
+STEPS — make worldcolony.eth showcase the trades
+-------------------------------------------------
+A) FORWARD record (this is the showcase: name -> trades wallet). You CAN do this:
+   1. app.ens.domains/worldcolony.eth, connect as owner 0x9e91D1E6…dfa9a4.
+   2. If no resolver set: set Resolver = ENS Public Resolver (1 tx, mainnet gas).
+   3. Records -> Addresses -> set ETH address = 0xe9E32Ca24aa1eF725F650b5489281FE621363AA9
+      (a valid EVM address; judges then view it on POLYGONSCAN for the trades).
+   4. Optional text records to tell the story:
+        url = link to predictions.json / the dashboard
+        description = "Colony agent trading wallet — live Polymarket bets"
+        avatar = colony image
+   => Now resolving worldcolony.eth returns the trades wallet. THIS is the demo move.
+
+B) PRIMARY name (reverse: address -> worldcolony.eth) — IMPORTANT LIMITATION:
+   A primary/reverse record must be set BY THE ADDRESS ITSELF (needs its private key).
+   - We do NOT control 0xe9E3 (PolyGun custodial) -> we CANNOT make worldcolony.eth
+     its primary name. So 0xe9E3 won't *display* "worldcolony.eth" on explorers.
+   - We CAN set worldcolony.eth as the primary name of a wallet WE control
+     (0x9e91D1E6… main, or 0xcc16… treasury) — but those don't hold the trades.
+   => For showcasing trades, use the FORWARD record (A). Primary-name on the trades
+      wallet is not possible given the custodial setup.
+
+CROSS-CHAIN NOTE
+  ENS (worldcolony.eth) is on Ethereum mainnet; the trades are on Polygon. That's
+  fine: the ETH address record stores 0xe9E3 (same EVM address works on Polygon);
+  the resolve -> then look at 0xe9E3 on Polygonscan = the trades. (If you want a
+  Polygon-native address record specifically, ENS also supports a Polygon coinType,
+  but the plain ETH address record is enough for the showcase.)
+
+RECOMMENDATION
+  - Point worldcolony.eth (mainnet) FORWARD record -> 0xe9E3…3AA9 + add url/description
+    text records. That's the cleanest "resolve the name -> see the colony's real
+    Polymarket trades" moment for judges.
+  - Accept that the primary/reverse name can't sit on the custodial trades wallet.
+  - The Sepolia colonny.eth subnames remain the per-agent identity layer (testnet).
+
+SETUP SESSION REFERENCE
+  ENS configuration was done with help from a ChatGPT session (walkthrough of the
+  app.ens.domains record-setting): https://chatgpt.com/share/6a2e6dc0-4b64-83e8-adcd-fb5c75688465
+  OUTCOME: ENS is set up with MAINNET records; worldcolony.eth resolves to the
+  trades wallet (0xe9E3…3AA9) and points to Polygonscan (notice record) for the
+  live Polymarket trades. DONE.
+
+*** CONFIRMED LIVE (2026-06-14) — read directly from the mainnet resolver ***
+  worldcolony.eth (resolver 0xf29100983e058b709f3d539b0c765937b804ac15):
+    ETH addr   = 0xe9E32Ca24aa1eF725F650b5489281FE621363AA9  (the trades wallet) ✓
+    url        = https://worldcolony.nyc   (LIVE site)  ✓
+    description= Colony … live Polymarket positions … view on Polygonscan  ✓
+    notice     = https://polygonscan.com/address/0xe9E32Ca24aa1eF725F650b5489281FE621363AA9  ✓
+    com.github = Vainglorious/ethglobalnyc  ✓
+    avatar     = (empty — optional, still unset)
+  Owner/setter wallet: 0x9e91D1E6cbc1341d7a8235214491BA1521dfa9a4.
+  First text-records tx: 0x7a2f0de84f186d1624c3d464c1297046172c023100143b3bcdf051fc79316fae
+  => "resolve worldcolony.eth -> trades wallet + story" is LIVE on mainnet. Only TODO: avatar.
+
+EXACT RECORDS (as set on worldcolony.eth)
+-----------------------------------------
+Connect owner wallet 0x9e91D1E6cbc1341d7a8235214491BA1521dfa9a4. Set Public Resolver
+if none. Then:
+
+  Address (ETH):
+    0xe9E32Ca24aa1eF725F650b5489281FE621363AA9
+
+  Address (POLYGON) — optional but recommended (trades are on Polygon):
+    0xe9E32Ca24aa1eF725F650b5489281FE621363AA9
+    (multichain setAddr coinType 2147483785 = 0x80000000|137; same EVM address.
+     In app.ens.domains: Records -> Addresses -> Add -> Polygon.)
+
+POLYGON / ENS REALITY
+  .eth names live ONLY on Ethereum mainnet — there is NO separate Polygon ENS
+  registry for them. Polygon apps resolve ENS by reading mainnet (or via a gateway).
+  "ENS for Polygon" = add a Polygon ADDRESS RECORD (coinType above) to the same
+  mainnet name. Not strictly required here since 0xe9E3 is the same address on both
+  chains (the ETH record already resolves to it -> view on Polygonscan), but the
+  Polygon record makes it explicit and shows multichain awareness for the ENS prize.
+  Primary/reverse on Polygon for 0xe9E3 is NOT possible (custodial, no key).
+
+  Text records (key = value):
+    description = Colony: an evolutionary swarm of forecasting agent "ants" betting real money on the 2026 World Cup. This wallet holds the colony's live Polymarket positions (executed via PolyGun). View its trades on Polygonscan.
+    url         = https://worldcolony.nyc   (the live site)
+    notice      = Live Polymarket trades (Polygon): https://polygonscan.com/address/0xe9E32Ca24aa1eF725F650b5489281FE621363AA9
+    com.github  = Vainglorious/ethglobalnyc
+    avatar      = (optional) hosted image URL or ipfs://… for the colony logo
+
+Self-contained paste-into-Claude-web guide: ens/worldcolony-ens-setup.md
+
+SEE ALSO
+  ens/worldcolony-ens-setup.md, ens/README.md, ens/.env.example,
+  colony/docs/ens-agent-identity.md, colony/register_ens_identities.py,
+  notes/2026-06-13-ens-todo.txt, notes/2026-06-13-colony_ens_dynamic.txt, predictions.json
+================================================================================
