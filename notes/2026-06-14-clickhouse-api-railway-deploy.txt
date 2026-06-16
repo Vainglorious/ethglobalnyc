@@ -1,0 +1,64 @@
+================================================================================
+CLICKHOUSE_API — RAILWAY DEPLOYMENT (LIVE)
+2026-06-14
+================================================================================
+
+LIVE URL
+  https://ethglobalnyc-production-5ce3.up.railway.app
+  (clickhouse_api — the metered, timestamp-gated knowledge plane)
+
+STATUS: DEPLOYED + VERIFIED IN PROD (2026-06-14)
+  /health   -> {"ok":true,"service":"clickhouse-api","clickhouse":"reachable"}
+  /config   -> datasets(markets/odds/uma_events), timestamp gate, pricing, verified tier
+  /markets/search -> real ClickHouse market rows (e.g. France Yes 0.1635)
+  /query odds (no payment)            -> HTTP 402 (x402 gate fires)
+  /query uma_events (paid + verified) -> 200, tier=verified, gated rows returned
+  => timestamp gate + x402 metering + Worldcoin verified-tier discount all working live.
+
+RAILWAY CONFIG (what made it work)
+  - Root Directory = clickhouse_api   (service is self-contained in this folder)
+  - Builder = Dockerfile (clickhouse_api/Dockerfile), pinned by clickhouse_api/railway.toml
+      [build] builder=dockerfile, dockerfilePath="Dockerfile"
+      [deploy] healthcheckPath="/health"
+  - Watch paths = clickhouse_api/**   (repo-root-relative; NOT clickhouse/** — that's the
+    docs/env rail, not the API)
+  - Variables (REQUIRED — image has no .env):
+      CLICKHOUSE_HOST=h919c97wno.us-east1.gcp.clickhouse.cloud
+      CLICKHOUSE_USER=adil_hackathon_claude
+      CLICKHOUSE_PASSWORD=<secret, set in Railway>
+      CLICKHOUSE_PORT=8443
+      (PORT is injected by Railway automatically; container ran on :8080)
+      Optional: CH_API_CORS_ORIGINS, CH_API_PAY_TO, CH_API_BASE_PRICE_USDC, ...
+
+BUILD-FIX HISTORY (the two failures we hit + fixes)
+  1. First deploy built the WRONG Dockerfile: log showed `npm --prefix arc ci` +
+     nodejs — Railway was auto-picking the repo-ROOT Dockerfile, not ours.
+     Fix: set the service to clickhouse_api (Root Directory).
+  2. Then clickhouse_api/Dockerfile failed: `COPY clickhouse ./clickhouse ->
+     "/clickhouse": not found`. Cause: the old Dockerfile used REPO-ROOT-relative
+     COPY paths, but Root Directory=clickhouse_api makes the build context that
+     folder. Fix: rewrote the Dockerfile self-contained (COPY requirements.txt . ;
+     COPY . . ; uvicorn main:app — no --app-dir, no COPY clickhouse) + added
+     clickhouse_api/.dockerignore (.venv,*.log,.env) + clickhouse_api/railway.toml.
+  3. Success: container "Application startup complete", uvicorn on 0.0.0.0:8080,
+     healthcheck GET /health 200.
+
+GOTCHAS LEARNED (Railway, for the team)
+  - uvicorn logs to STDERR -> Railway tags them [err] even though they're INFO/success.
+    "Application startup complete" under [err] is NORMAL, not an error.
+  - PORT is injected by Railway (saw :8080); Dockerfile CMD must use ${PORT:-8009}.
+  - /health returns 200 EVEN IF ClickHouse is unreachable (body {ok:false}); a green
+    healthcheck only proves the app is up — check the BODY for clickhouse:"reachable".
+  - The healthcheck client IP 100.64.0.2 is Railway's INTERNAL prober (CGNAT range
+    100.64.0.0/10), not our API's IP. Public access is via the *.up.railway.app domain.
+  - .dockerignore is relative to the build context; with Root Directory=clickhouse_api,
+    the repo-root .dockerignore does NOT apply -> we added clickhouse_api/.dockerignore.
+
+WHY IT MATTERS / DEMO
+  Strong, judge-verifiable artifact for the ClickHouse (and x402/Worldcoin) angle:
+  anyone can curl /health + /config + the 402->paid /query against the live URL.
+
+SEE ALSO
+  clickhouse_api/README.md (Live deployment section), clickhouse_api/DEPLOY.md,
+  clickhouse_api/railway.toml, clickhouse/DATA_CATALOG.md, notes/2026-06-13-clickhouse-api.txt
+================================================================================

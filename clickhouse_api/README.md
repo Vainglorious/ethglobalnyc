@@ -14,6 +14,30 @@ time-series, UMA resolution events) behind the three rules from `clickhouse/READ
 > (any `X-PAYMENT` header is accepted) — real Arc/x402 settlement verification is the TODO.
 > The timestamp gate is **real** and tested.
 
+## Live deployment (Railway)
+
+```
+https://ethglobalnyc-production-5ce3.up.railway.app
+```
+
+Verify (read-only — judges can run these):
+```bash
+B=https://ethglobalnyc-production-5ce3.up.railway.app
+curl -s "$B/health"    # {"ok":true,"service":"clickhouse-api","clickhouse":"reachable"}
+curl -s "$B/config"    # datasets, timestamp gate, pricing, verified-tier discount
+curl -s "$B/markets/search?q=Will%20France%20win&limit=2"
+# x402 gate: 402 without payment, 200 with a stub proof + verified Worldcoin tier:
+curl -i -s -X POST "$B/query" -H 'Content-Type: application/json' \
+  -d '{"dataset":"odds","polymarket_id":"2508958","as_of_ts":"2026-06-13 12:00:00","limit":3}' | head -1
+curl -s -X POST "$B/query" -H 'Content-Type: application/json' -H 'X-PAYMENT: 0xproof' \
+  -H 'X-Human-Id: 0x41e49b485e4b3e568ab23e28820f5c0be5135ec3322786f9d492ec8276608f0' \
+  -d '{"dataset":"uma_events","as_of_ts":"2026-06-14 23:59:59","limit":3}'
+```
+
+Deployed as a self-contained service: Railway **Root Directory = `clickhouse_api`**,
+build pinned by `clickhouse_api/railway.toml`, `CLICKHOUSE_*` set as Railway Variables
+(no `.env` in the image). Full steps + gotchas in `DEPLOY.md`.
+
 ## Run locally
 
 ```bash

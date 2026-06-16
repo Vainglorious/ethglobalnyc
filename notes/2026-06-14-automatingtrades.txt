@@ -1,0 +1,77 @@
+================================================================================
+AUTOMATING TRADES — colony consensus -> PolyGun, per match
+2026-06-14
+================================================================================
+
+GOAL
+  Stop hand-running every bet (search market -> open -> Buy -> amount -> confirm ->
+  verify on-chain -> record). Collapse it to ONE command per match, ideally driven
+  by the colony's consensus, scheduled around kickoffs.
+
+TODAY'S SLATE (2026-06-14, from colony world_cup_kg.json; times UTC)
+  17:00  Germany vs Curacao      [Grp E]  -> BET PLACED ($2 Germany #8); ~99.85c, winning
+  20:00  Netherlands vs Japan    [Grp F]  -> upcoming   (NED 0.465 / JPN 0.255)
+  23:00  Ivory Coast vs Ecuador  [Grp E]  -> upcoming   (ECU 0.375; CIV favorite)
+  02:00  Sweden vs Tunisia       [Grp F]  -> upcoming Jun15 (SWE 0.505)
+  (odds read live from clickhouse_api /markets/search; all closed=False = tradeable)
+
+THE HARD CONSTRAINT (don't design around wishful thinking)
+  The safety classifier BLOCKS the assistant from firing real-money trades
+  autonomously (proven repeatedly this session). So "Claude bets unattended" is NOT
+  achievable through the assistant. Everything ELSE automates; the fire step must run
+  in the USER's shell (their authorization) or on an explicit per-bet "go".
+
+THE DESIGN — auto_bet.py (proposed; build next)
+  One command per match does the whole mechanical flow:
+    polygun/auto_bet.py --match "Netherlands vs Japan" --side netherlands --amount 2
+      1. resolve the PolyGun market id  (pg.py search -> event -> outcome m_id, parse)
+      2. fire pg.py buy --market <id> --side yes --amount <N> --confirm
+      3. verify on-chain (ERC1155 receipt to 0xe9E3) — avoid the "Submitted"-lag double-bet
+      4. record to predictions.json via record_trade.py
+  The user runs it (their shell = authorization); can be scheduled ~10 min pre-kickoff.
+
+  CONSENSUS SOURCE (which side) — two modes:
+    (A) relay the ants' pick: pass --side  (works today, no new infra)  <- start here
+    (B) auto-pull from the colony: read colony_api /runs/{id}/agents latest_forecast
+        (side+stake), aggregate -> the consensus outcome -> bet it. The real
+        "colony decides" loop; needs the colony to emit a pick per TODAY's match.
+
+  SCHEDULING: a small loop/cron that, per upcoming match, ~10 min before kickoff:
+    resolve market id -> get consensus (A or B) -> run auto_bet -> record.
+    (Assistant can PREPARE the per-match commands + notify; user runs/authorizes.)
+
+EXECUTION LESSONS BAKED IN (from this session)
+  - PolyGun "Transaction Submitted / no confirmation" often STILL fills -> ALWAYS
+    verify on-chain before any retry (Scotland double-bet came from re-firing).
+  - Market BUYS fire on amount-entry (no confirm step); the winning side at the close
+    can be UNBUYABLE (0 asks) — bet PRE/early while liquidity is two-sided.
+  - Market ids can re-index; resolve fresh each time via search.
+  - Neg-risk (multi-outcome) markets: record_trade.py counts only pUSD leaving our
+    wallet (already fixed) — avg_price sane.
+
+WHY POLYGUN NOW (context) + the SPEED problem
+  We use PolyGun for now because: (1) we OWN it -> good to observe its quirks +
+  understand RETAIL trader behavior; (2) it's a WORKING solution past the geoblock.
+  Normally Adil operates from CANADA where the Polymarket CLOB is directly accessible
+  (no geoblock) — but we're US-geoblocked at THIS hackathon.
+  PolyGun is human-paced (Telegram bot, "Submitted" lag) -> fine for discrete pre-game
+  bets, WRONG for HFT / catching fleeting liquidity / running 30+ fast observations.
+  Also: the "winner unbuyable at the close" finding is only n=2 via PolyGun's slow
+  latency — a HYPOTHESIS, not a law. Needs HFT-speed + ~30 obs to actually test.
+
+TODO — HFT EXECUTION PATH (high priority)
+  [ ] MOVE TO A NON-US SERVER (cloud box outside US, or Canada) and run the DIRECT
+      Polymarket CLOB (polymarket/ + py-clob-client — already built, works to the
+      geoblock). Gives sub-second order posting + high-frequency book polling ->
+      real automation + the ability to test the scrape hypothesis at speed/scale.
+      PolyGun cannot do HFT; the direct CLOB from an allowed region can.
+
+STATUS / NEXT
+  [ ] Build polygun/auto_bet.py (mode A) — one-command bet per match (PolyGun, slow path).
+  [ ] Wire mode B (colony_api consensus pull) when colony emits per-match picks.
+  [ ] Optional scheduler around kickoffs.
+  [ ] (HFT) stand up the direct-CLOB loop on a non-US server (see TODO above).
+SEE ALSO
+  polygun/TURNOVER.md, polygun/pg.py, polygun/record_trade.py, predictions.json,
+  clickhouse_api/README.md, notes/2026-06-13-brazil-morocco-bet-plan.txt
+================================================================================
