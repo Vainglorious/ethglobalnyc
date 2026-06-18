@@ -1,0 +1,37 @@
+================================================================================
+ECUADOR $2 BET — live in-play, filled
+2026-06-14
+================================================================================
+
+THE BET
+  Event:   Cote d'Ivoire vs. Ecuador (Jun 14)  [Grp E]  -- LIVE in-play when placed
+  Market:  "Will Ecuador win on 2026-06-14?"  (PolyGun m_1897066)
+  Side:    Yes (Ecuador)  @ ~31c   (Draw was favorite ~44c at the time)
+  Source:  user pick ("lets bet $2 on equador")
+  Venue:   PolyGun (Telegram), shared execution account 0xe9E3...
+
+RESULT — FILLED
+  6.451611 Ecuador-YES shares @ ~0.3195  ($2 + 1% PolyGun fee)
+  tx 0xc692c2b69f6a937f4ca363a4b081b9b24e134e230edc88fcef6cd83b6a3b94d5
+  Recorded to predictions.json (real on-chain ledger). 8 real trades, ~$16.45 pUSD.
+
+EXECUTION NOTE (the recurring PolyGun quirk)
+  Bot showed ONLY "Transaction Submitted" -- no "Purchase Completed" -- but it
+  filled on-chain. Verified via ERC1155 SingleTransfer receipt to 0xe9E3 BEFORE
+  any retry (the standing rule that prevents the Scotland-style double-bet).
+
+DATA POINT FOR THE LIQUIDITY HYPOTHESIS (n -> growing toward ~30)
+  A live MID-GAME bet at 31c filled instantly with two-sided liquidity present.
+  Clean counterpoint to the Australia/Turkiye "99c winner = 0 asks = unbuyable"
+  finding. Working read holds: in-play liquidity is two-sided; only the RESOLVED
+  near-certain winner is unbuyable at the close. Still latency-limited via PolyGun;
+  the real test needs HFT-speed + ~30 obs (see 2026-06-14-automatingtrades.txt TODO).
+
+HOW IT WAS FOUND
+  PolyGun search hides LIVE in-play games -> located via sequential event-id probing:
+  e_351725 = "Cote d'Ivoire vs. Ecuador (Jun 14)", Ecuador = m_1897066.
+
+SEE ALSO
+  predictions.json, polygun/pg.py, polygun/record_trade.py,
+  notes/2026-06-14-automatingtrades.txt, simulatedtransactions.json (Australia scrape)
+================================================================================

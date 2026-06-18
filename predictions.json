@@ -171,6 +171,29 @@
       "block": 88470140,
       "tx_hash": "0xaf2fb94c9ec720771cbb6bac4ada5ccdc2456a854a0bf94e5e9c2fad5637d717",
       "note": "Ants/consensus pick. PolyGun showed only 'Transaction Submitted' (no confirmation) but it FILLED on-chain \u2014 verified before NOT retrying (avoided a Scotland-style double-bet)."
+    },
+    {
+      "id": 8,
+      "ts_utc": "2026-06-15T00:15:18Z",
+      "action": "buy",
+      "placed_by": "claude",
+      "method": "auto",
+      "bet_phase": "in-play",
+      "event": "Cote d'Ivoire vs. Ecuador (Jun 14)",
+      "market_question": "Will Ecuador win on 2026-06-14?",
+      "outcome": "Yes (Ecuador)",
+      "side": "yes",
+      "polygun_market_id": 1897066,
+      "outcome_token_id": "28508563298912772074214719307109307518904085025750423135797235005006783326548",
+      "shares": 6.451611,
+      "avg_price": 0.3195,
+      "pusd_to_maker": 2.061379,
+      "pusd_fee": null,
+      "pusd_total": 2.061379,
+      "status": "filled",
+      "block": 88518355,
+      "tx_hash": "0xc692c2b69f6a937f4ca363a4b081b9b24e134e230edc88fcef6cd83b6a3b94d5",
+      "note": "User pick. LIVE in-play bet @ ~31c (draw was favorite 44c). Filled fine \u2014 mid-game two-sided liquidity (contrast: 99c winners were unbuyable). PolyGun showed only 'Submitted'; verified filled on-chain."
     }
   ]
 }
