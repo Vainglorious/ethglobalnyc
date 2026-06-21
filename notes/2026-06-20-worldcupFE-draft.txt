@@ -1,0 +1,116 @@
+================================================================================
+WORLD CUP PREDICTIONS — FRONTEND BUILD (DRAFT / HANDOFF)
+2026-06-20  ·  branch: worldcup
+================================================================================
+
+WHAT THIS IS
+------------
+A temporary, World-Cup-themed surface added to the existing WorldColony frontend
+(the vanilla Three.js "dinasty" app served by Vite). It tells the betting story:
+the AI ant colony's real on-chain trades, simulated/counterfactual trades, the
+match schedule with colony picks, and the strategy (arbitrage / UMA / privileged
+ClickHouse data). Built to be ripped out cleanly after the tournament.
+
+Full design + decisions live in: notes/2026-06-20-worldcupFE.md
+This file is the short build/handoff summary.
+
+
+ARCHITECTURE (important)
+------------------------
+- NOT a separate page/route. It's an IN-APP OVERLAY inside index.html.
+- A prominent entry button (top-left) opens a full-screen layer (#wc-overlay) that
+  covers the whole 3D app + HUD with a top z-index. A "Back to the Colony" button
+  takes the entry button's spot to dismiss it. Esc also closes.
+- All content renders (vanilla JS, innerHTML) into #wc-content.
+- Everything is fenced with "WORLD CUP TEMP — remove after the tournament" comments
+  so teardown = delete the fenced blocks + the 3 worldcup/ files.
+
+
+FILES TOUCHED / ADDED (all under frontend/)
+-------------------------------------------
+ADDED:
+  public/worldcup/worldcup.js     - overlay toggle + all content render + data layer
+  public/worldcup/worldcup.css    - content styles (parchment/gold, reuses :root tokens)
+  public/worldcup/soccerball.svg  - public-domain ball (Wikimedia Commons) — button + favicon + hero
+  public/favicon.ico              - 16/32/48/64, generated from the ball (inkscape -> magick)
+  public/data/predictions.json            - copy of repo-root predictions.json (11 real trades)
+  public/data/simulatedtransactions.json  - copy of repo-root file (3 sims + lessons)
+  public/data/worldcup-games.json         - 104 fixtures extracted from colony/data/world_cup_kg.json
+                                            via the backend's _forecast_games_from_kg logic
+EDITED:
+  index.html                      - <head> favicon + worldcup.css link; body-level
+                                    WORLD CUP TEMP block (entry button, overlay, back
+                                    button) + <script src=worldcup.js>
+  public/dinasty/styles.css       - WORLD CUP TEMP block: #wc-cta / #wc-back pill,
+                                    soccer stitch stripe, #wc-overlay layer, open/close
+                                    states (body.wc-open)
+
+Screenshot/debug helpers (throwaway, in frontend/scripts/): wc-*.mjs
+
+
+CONTENT SECTIONS (top -> bottom in the overlay)
+-----------------------------------------------
+1. Hero — title, ball, blurb, link to worldcolony.eth
+2. Trading Identity — ENS worldcolony.eth (Ethereum) resolves to/executes as
+   0xe9E32Ca24aa1eF725F650b5489281FE621363AA9 on Polygon; treasury
+   0xcc16bEC342794f35a32d4Ba2c76BF9D759C131eB; pUSD. Buttons: PolygonScan,
+   Polymarket profile (https://polymarket.com/@xi31ydqg4cnd?tab=activity), ENS, Etherscan.
+3. Match Schedule & Colony Picks — next-match card, colony's historical picks,
+   upcoming grid. Country flags via flagcdn.com (TEAM_ISO map in worldcup.js).
+   Past/upcoming split on REF_DATE = 2026-06-20. Position badges per fixture.
+4. Outright / Futures — France-to-win cards (trade #1 manual, #2 auto).
+5. On-chain Ledger — table of the 11 real trades (match/date/pick/by/size/status/tx).
+   tx links -> polygonscan.com/tx/<hash>.
+6. Counterfactual Ledger — 3 simulated trades (Draw +$55, Under 2.5 +$4, Australia
+   "unfillable"/liquidity-wall) + lessons. Badged "Simulated — not executed".
+7. How the Edge Works — Arbitrage / UMA Oracle / Privileged Data (ClickHouse) blurbs.
+   Links: UMA https://oracle.uma.xyz/ , ClickHouse https://ethglobalnyc-production-5ce3.up.railway.app/config
+8. Footer — "World Colony © 2026 · worldcolony.eth · trades on Polygon, identity on
+   Ethereum, settlement on Arc testnet."
+
+
+COPY / LABELING DECISIONS
+-------------------------
+- Trade "placed_by" is mapped in the DISPLAY only (source JSON untouched):
+    "claude" -> "ANT-AI Engine"   (it's a whole swarm, not one model)
+    "adil"   -> "Human-Executed"
+- Footer intentionally has NO "ETHGlobal" and NO .json/KG data callouts.
+- PolymarketAnalytics link was intentionally DROPPED (data not good enough to show).
+
+
+DATA SOURCING
+-------------
+- Fixtures use the SAME source as the backend: colony/data/world_cup_kg.json (built from
+  OpenFootball 2026), extracted to public/data/worldcup-games.json (teams/date/time/
+  group/venue/score/played). Logic mirrors colony_api _forecast_games_from_kg.
+- Trades read from the two copied JSON snapshots. NOTE: these are snapshots — re-copy
+  from repo root if the source files change.
+
+
+HOW TO RUN
+----------
+  cd frontend && npm install
+  npm run dev -- --port 3000      # http://localhost:3000  (vite default is 5173; we override)
+Click the top-left "World Cup Predictions" button to open the overlay.
+
+
+DEPLOY (Vercel)
+---------------
+Nothing special: it's all static under public/ and ships into dist/ via `vite build`.
+No routes/rewrites needed (overlay, not a page). Adil is handling the Vercel deploy.
+
+
+OPEN / TODO (non-blocking — page is demo-ready)
+-----------------------------------------------
+1. PANAMA BET not yet pinned to its fixture. predictions.json trades #9-#11 carry only a
+   polygun_market_id (no match metadata), so they render as "Market #..." in the ledger
+   and Panama vs Croatia (2026-06-23) shows "No position". Fix = add to MARKET_OVERRIDES
+   in worldcup.js once confirmed which id (1897246 / 1897121) is Panama (+ the other two).
+   CONFIRMED facts: France = tournament-winner outright; Panama = Group L match ~Jun 23.
+2. Past colony picks show pick/price but not win/loss (KG only has scores for early
+   matches, so no result data for most picked games).
+3. Flags are CDN (flagcdn.com). Optional: vendor ~48 SVGs into public/worldcup/flags/
+   for full offline determinism.
+
+STATUS: DONE / demo-ready. Build verified in Chromium (Playwright), zero console errors.
+================================================================================

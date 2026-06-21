@@ -63,6 +63,63 @@ body.underground #atmos {
 .brand-txt h1 { font-family: var(--display); font-size: 12px; font-weight: 400; letter-spacing: 0; line-height: 1.15; text-shadow: var(--pixel-shadow); }
 .brand-txt p { font-size: 10px; color: var(--ink-faint); margin-top: 4px; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 600; }
 
+/* ============ WORLD CUP TEMP — remove this whole block after the tournament ============ */
+/* shared pill look for the entry button (#wc-cta) and the overlay back button (#wc-back) */
+#wc-cta, #wc-back {
+  position: fixed; top: 44px; left: 24px;
+  display: flex; align-items: center; gap: 11px;
+  padding: 9px 15px 9px 11px;
+  background: var(--panel-strong);
+  border: 2px solid var(--gold-deep); border-radius: 999px;
+  box-shadow: var(--shadow), 0 0 0 3px rgba(176, 126, 28, 0.10);
+  text-decoration: none; color: var(--ink); cursor: pointer;
+  font-family: inherit; -webkit-appearance: none; appearance: none;
+  overflow: hidden;
+  transition: transform .14s ease, box-shadow .2s ease, border-color .2s ease;
+}
+#wc-cta  { z-index: 2147483000; }   /* in front of the app (intro, fade, hud, modals) */
+#wc-back { z-index: 2147483200; }   /* above the overlay itself */
+/* football stitch stripe along the top edge — instantly reads as "soccer" */
+#wc-cta::before, #wc-back::before {
+  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 4px;
+  background: repeating-linear-gradient(90deg, #1b1b1b 0 9px, #f4f4f4 9px 18px);
+  opacity: .85;
+}
+#wc-cta:hover, #wc-back:hover {
+  transform: translateY(-1px) scale(1.02);
+  border-color: var(--gold);
+  box-shadow: var(--shadow), 0 0 18px rgba(255, 217, 136, .55);
+}
+.wc-ball { width: 30px; height: 30px; flex: none; display: grid; place-items: center;
+  filter: drop-shadow(0 1px 1px rgba(40, 30, 10, .35)); }
+.wc-ball img { width: 30px; height: 30px; display: block; }
+.wc-ball-back { font-family: var(--mono); font-size: 19px; font-weight: 700; color: var(--gold-deep); filter: none; }
+#wc-cta:hover .wc-ball:not(.wc-ball-back) { animation: wc-spin .9s ease; }   /* spins once on hover only — no idle cost */
+#wc-back:hover .wc-ball-back { transform: translateX(-3px); transition: transform .15s ease; }
+@keyframes wc-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.wc-txt { display: flex; flex-direction: column; line-height: 1.1; text-align: left; }
+.wc-kicker { font-family: var(--mono); font-size: 8px; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--gold-deep); font-weight: 700; }
+.wc-title { font-family: var(--display); font-size: 11px; color: var(--ink);
+  text-shadow: var(--pixel-shadow); margin-top: 3px; }
+.wc-arrow { font-family: var(--mono); font-size: 13px; color: var(--gold-deep);
+  margin-left: 1px; transition: transform .15s ease; }
+#wc-cta:hover .wc-arrow { transform: translateX(3px); }
+body.underground #wc-cta { opacity: 0; pointer-events: none; transition: opacity .4s; }
+
+/* full-screen overlay layer — covers the entire app while open */
+#wc-overlay {
+  position: fixed; inset: 0; z-index: 2147483100;   /* above #wc-cta, below #wc-back */
+  background: radial-gradient(circle at 50% 28%, #1f3326, #0d1a14 70%);
+  display: none; overflow-y: auto; color: var(--ink);
+}
+#wc-back { display: none; }                 /* both only exist while the overlay is open */
+body.wc-open #wc-overlay { display: block; }
+body.wc-open #wc-back { display: flex; }
+body.wc-open #wc-cta { display: none; }     /* swap entry button → back button in the same spot */
+#wc-content { min-height: 100%; padding: 92px 28px 40px; }   /* clear the top-left back button */
+/* ============ /WORLD CUP TEMP ============ */
+
 /* ---------- top stat HUD ---------- */
 #stats { position: absolute; top: 24px; left: 50%; transform: translateX(-50%); display: flex; padding: 7px 6px; gap: 2px; }
 .stat { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 5px 17px; min-width: 86px; position: relative; }

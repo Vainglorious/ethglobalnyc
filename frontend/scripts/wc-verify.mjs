@@ -1,0 +1,11 @@
+import { chromium } from 'playwright'
+const b = await chromium.launch()
+const p = await b.newPage()
+await p.goto('http://localhost:3000/', { waitUntil: 'networkidle' }).catch(()=>{})
+await p.waitForTimeout(3500)
+await p.click('#wc-cta'); await p.waitForTimeout(1200)
+const txt = await p.evaluate(()=>document.getElementById('wc-trades').innerText)
+console.log('contains "claude":', /claude/i.test(txt))
+console.log('contains "ANT-AI Engine":', /ANT-AI Engine/.test(txt))
+console.log('By-column samples:', (txt.match(/ANT-AI Engine|Adil/g)||[]).slice(0,12).join(', '))
+await b.close()

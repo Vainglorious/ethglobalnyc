@@ -1,0 +1,16 @@
+import { chromium } from 'playwright'
+const b = await chromium.launch({ args:['--use-gl=angle','--ignore-gpu-blocklist','--enable-webgl'] })
+const p = await b.newPage({ viewport: { width: 1280, height: 1000 }, deviceScaleFactor: 1.4 })
+const errs=[]; p.on('pageerror',e=>errs.push(e.message)); p.on('console',m=>{ if(m.type()==='error') errs.push('[c] '+m.text()) })
+await p.goto('http://localhost:3000/', { waitUntil: 'networkidle' }).catch(()=>{})
+await p.waitForTimeout(4000)
+await p.click('#wc-cta'); await p.waitForTimeout(1500)
+// scroll to matches
+await p.evaluate(()=>{ const m=document.getElementById('wc-matches'); if(m) m.scrollIntoView(); })
+await p.waitForTimeout(800)
+await p.screenshot({ path: '/tmp/wc-c2-matches.png' })
+await p.evaluate(()=>document.getElementById('wc-overlay').scrollBy(0, 620)); await p.waitForTimeout(500)
+await p.screenshot({ path: '/tmp/wc-c2-matches2.png' })
+const dbg = await p.evaluate(()=>{ const s=window.WorldCup&&window.WorldCup._state; return s? {loaded:s.loaded, games:(s.games&&s.games.count), preds:(s.predictions&&s.predictions.trades&&s.predictions.trades.length)} : 'no-state' })
+console.log('state:', JSON.stringify(dbg)); console.log('errors:', errs.slice(0,6).join(' | ')||'none')
+await b.close()

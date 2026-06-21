@@ -1,0 +1,61 @@
+================================================================================
+CLICKHOUSE API — PUBLIC EXPOSURE / STUB-GATE BUG (to fix later)
+2026-06-20
+================================================================================
+
+SUMMARY
+-------
+The ClickHouse knowledge-plane API is publicly reachable on the internet, and its
+"pay-to-read" x402 gate is a STUB — any junk X-PAYMENT header bypasses it and returns
+the supposedly-gated/"privileged" data for free. So effectively ALL data is accessible
+to anyone who knows the URL.
+
+NOTE: this is a BACKEND issue (clickhouse_api/), NOT the frontend. The World Cup page
+does NOT fetch this API — it only renders a clickable <a> link to it. No key/secret is
+in the frontend. (Frontend only fetch()es local /data/*.json + flagcdn images.)
+
+ENDPOINT
+--------
+https://ethglobalnyc-production-5ce3.up.railway.app   (Railway)
+
+LIVE PROBE (2026-06-20)
+-----------------------
+  /health                      -> 200, no auth  ({"ok":true,...})
+  /config                      -> 200, no auth  (datasets, pricing, pay_to address)
+  /markets/search?q=France     -> 200, no auth  (returns market rows)
+  POST /query  (no header)     -> 402           (gated, as intended)
+  POST /query  + 'X-PAYMENT: 0xanything'
+                               -> 200 + REAL DATA ROWS   <-- BUG: stub verifier accepts
+                                                             any header, no real payment
+  CORS: Access-Control-Allow-Origin = "*" (per /config / README defaults)
+
+Repro:
+  B=https://ethglobalnyc-production-5ce3.up.railway.app
+  curl -s -X POST "$B/query" -H 'Content-Type: application/json' -H 'X-PAYMENT: 0xanything' \
+    -d '{"dataset":"odds","polymarket_id":"2508958","as_of_ts":"2026-06-13 12:00:00","limit":2}'
+  # -> returns rows. No real settlement check.
+
+WHY IT'S LIKE THIS
+------------------
+Known/intentional for the hackathon: clickhouse_api/README.md says the x402 verifier is a
+STUB (any X-PAYMENT accepted); real Arc/x402 settlement verification is the TODO. /health
+and /config are meant to be judge-runnable (read-only). The timestamp gate (ts <= as_of_ts)
+IS real and tested (test_gate.py); only the PAYMENT gate is fake.
+
+RISK
+----
+- Low for a demo (no secrets, data is Polymarket/UMA public-ish corpus, judges should be
+  able to read /health + /config).
+- But: the "privileged / metered" story is not actually enforced — anyone can pull the
+  gated odds/uma_events data for free. Don't claim real metering until fixed.
+
+FIX LATER (backend, clickhouse_api/)
+------------------------------------
+- Replace the STUB x402 verifier with real Arc/x402 settlement verification on /query
+  (verify the X-PAYMENT proof against an actual on-chain/Gateway settlement + nonce).
+- Persist nonces / usage per (resource, humanId); free-trial + paid policy.
+- Consider tightening CORS from "*" if it ever serves anything sensitive.
+- Frontend: the strategy-card link already points at /config (read-only) — fine as-is.
+
+STATUS: noted, Adil to fix later. No frontend change needed.
+================================================================================
