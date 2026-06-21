@@ -1,0 +1,120 @@
+================================================================================
+TRADE AUTOMATION + DIRECT-CLOB BLOCKING — INVESTIGATION & TOOLING
+2026-06-21   (branch: worldcup)
+Goal: automate last-~5-min World Cup bets. PolyGun works but is TOO SLOW
+(Telegram, human-paced). We want DIRECT Polymarket CLOB for fast execution.
+This note records what works, and the hard CLOB blocker (so we don't re-derive it).
+================================================================================
+
+--------------------------------------------------------------------------------
+TL;DR — DIRECT CLOB IS BLOCKED, BUT NOT BY GEO OR FUNDS
+--------------------------------------------------------------------------------
+- We are NOT geoblocked from our current egress (Toronto/Canada). PROVEN LIVE
+  2026-06-21 ~20:13 UTC: client.get_server_time() returns; order POST comes back
+  HTTP 400 "invalid order version", NOT 403 "Trading restricted in your region".
+  A geoblock is a 403 at the gateway (what NYC got). We sail past it.
+- Auth works: client.get_api_keys() returns our L2 key (495e2d3a-…). Creds fine.
+- Order BUILDS + SIGNS fine (incl. neg_risk). Only the POST is rejected.
+- The rejection is UNIVERSAL: neg_risk=False AND neg_risk=True both -> identical
+  400 "invalid order version, please use the latest clob-client".
+- The "latest clob-client" we already have: py-clob-client 0.34.6 is the latest on
+  PyPI, AND the GitHub HEAD builds as the SAME 0.34.6 (force-reinstalled from
+  git+https://github.com/Polymarket/py-clob-client.git — no behavioural change).
+  py-order-utils is also at latest (0.3.2).
+=> CONCLUSION: Polymarket's CLOB server now expects an order schema/version that
+   the latest PUBLIC Python client does NOT produce. The maintained Polymarket
+   client is the TypeScript @polymarket/clob-client (npm); the Python port lags.
+   This is a CLIENT-SCHEMA wall, not geo/funds/auth/neg-risk.
+
+--------------------------------------------------------------------------------
+RECOMMENDED NEXT STEP (to actually get fast CLOB execution)
+--------------------------------------------------------------------------------
+Build a tiny Node executor using the MAINTAINED client:
+  npm i @polymarket/clob-client @ethersproject/wallet
+  -> create+sign+post the order in JS (it carries the current order version).
+The frontend already uses Node, so this is low-friction. Wrap it the same way as
+the Python scripts (side -> token -> market BUY -> record). That is the path to
+sub-second self-custody execution. (Python py-clob-client stays blocked until
+Polymarket updates it.)
+Alternative (harder): replicate the current EIP-712 order struct/version by hand
+in Python — only worth it if we can read the exact schema the TS client emits.
+
+--------------------------------------------------------------------------------
+WHAT WORKS TODAY — PolyGun (custodial, slower, but reliable)
+--------------------------------------------------------------------------------
+- polygun/pg.py buy --market <id> --side yes --amount <N> --confirm  (proven 11x).
+- 11 real trades in predictions.json, ALL execution_layer="polygun":
+  France WC x2, Switzerland, Brazil, Scotland(6/13) x2, Türkiye, Ecuador,
+  South Africa(#9), Panama(#10), Scotland(6/19, #11). record_trade.py now writes
+  execution_layer (default polygun; --execution-layer polymarket-clob for CLOB).
+- PolyGun CANNOT sell via pg.py (buy-only). So don't plan "test buy then sell".
+- PolyGun pUSD is custodial (wallet 0xe9E3…3AA9); self-sweep impossible.
+
+--------------------------------------------------------------------------------
+HOW WE READ PRICES (works everywhere — reads are NOT geoblocked)
+--------------------------------------------------------------------------------
+- Order book / price:  https://clob.polymarket.com/book?token_id=<token>  (bid/ask)
+- Market metadata/ids: https://gamma-api.polymarket.com/markets?clob_token_ids=<tok>
+                       https://gamma-api.polymarket.com/events?slug=<event-slug>
+- Our catalog search:  clickhouse_api /markets/search?q=  (question->token/closed/price)
+- Resolution:          clickhouse_api closed + Yes price 0/1 = settled won/lost.
+Reads are unauthenticated + region-free; only ORDER PLACEMENT (writes) is gated.
+
+--------------------------------------------------------------------------------
+TOOLING BUILT THIS SESSION (all under polygun/ and polymarket/)
+--------------------------------------------------------------------------------
+polygun/bet_bel_irn.py        One-command $2 bet (Belgium/Iran/Draw) via PolyGun.
+                              --show (live odds), <side> dry-run, <side> --go fires.
+                              Market ids: Belgium 1897168, IR Iran 1897173, Draw 1897171.
+polymarket/bet_bel_irn_clob.py  Same shape via DIRECT CLOB. --show + dry-run WORK
+                              (builds+signs). --go is blocked by the order-version
+                              wall above (will 400 until the Node path / client fix).
+polymarket/approve_usdce_clob.py  Bounded USDC.e allowance to the CLOB SIGNING
+                              exchanges (CTF 0x4bFb41d5…, NegRisk-CTF 0xC5d563…).
+                              NOTE: the older approve_usdce.py approved the WRONG
+                              (legacy) spenders 0xE111…/0xd91E80…/0xe2222…; use the
+                              _clob one for direct CLOB fills.
+polymarket/CLOB_SETUP.md      Setup + status doc for the CLOB path.
+polymarket/matchwatch.py      Tiny localhost webapp (stdlib + certifi): live SCORE
+                              (ESPN scoreboard API), a streaming COUNTDOWN to 90:00
+                              that goes NEGATIVE in stoppage, and live PRICES
+                              (Belgium/Iran/Draw). Auto-falls-back off :3000 (your
+                              frontend) to :3001. Run:
+                                polymarket/.venv/bin/python3 polymarket/matchwatch.py
+                              ESPN feed confirmed working (returned Belgium 0-0 Iran HT).
+
+--------------------------------------------------------------------------------
+KEY CONTRACT FACTS (Polygon mainnet, for CLOB)
+--------------------------------------------------------------------------------
+- USDC.e collateral:      0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174 (6dp)
+- CTF Exchange (binary):  0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E  <- order verifyingContract
+- NegRisk CTF Exchange:   0xC5d563A36AE78145C45a50134d48A1215220f80a  <- neg-risk verifyingContract
+- (py-clob-client config get_contract_config(137) — these are CURRENT, not stale.)
+- EIP-712 domain in py_order_utils base_builder: name "Polymarket CTF Exchange",
+  version "1". (We were blocked from editing site-packages to test version "2".)
+- Treasury / self-custody wallet (CLOB): 0xcc16bEC342794f35a32d4Ba2c76BF9D759C131eB
+  holds ~6 USDC.e + ~0.59 POL gas; USDC.e allowance was set to the LEGACY spenders
+  (needs the _clob approve to the signing exchanges for a real fill).
+
+--------------------------------------------------------------------------------
+CLASSIFIER GATING (what the assistant could NOT do; the USER did / must do)
+--------------------------------------------------------------------------------
+- pip install git+github py-clob-client  -> initially blocked; user authorized ->
+  ran it (force-reinstall). Did NOT fix the order-version wall (head == 0.34.6).
+- Editing installed dependency files (sed on site-packages base_builder.py) -> blocked.
+- Unlimited (MAX) USDC.e approve -> blocked. Bounded approve under explicit auth -> OK.
+- Real-money fires: allowed only on explicit, specific user authorization.
+
+--------------------------------------------------------------------------------
+POSITIONS / LEDGER (as of 2026-06-21)
+--------------------------------------------------------------------------------
+11 trades, ~$22.6 pUSD deployed, all PolyGun. WON: Scotland x2 (6/13). LOST:
+Switzerland, Brazil, Türkiye, Ecuador. OPEN: France WC-winner x2, South Africa(6/18),
+Panama(6/23), Scotland(6/19). PolyGun pUSD ~ low-20s + open positions. Arc treasury
+0x1be3… 17.998 USDC (separate ant economy, untouched).
+
+SEE ALSO
+  notes/2026-06-18-polymarket.txt (Toronto geoblock-cleared finding, first CLOB attempt),
+  polygun/bet_bel_irn.py, polymarket/bet_bel_irn_clob.py, polymarket/CLOB_SETUP.md,
+  polymarket/matchwatch.py, predictions.json, polygun/record_trade.py
+================================================================================

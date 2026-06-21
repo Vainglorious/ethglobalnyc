@@ -1,0 +1,62 @@
+Session notes — 2026-06-21 — World Cup frontend changes
+========================================================
+
+Summary
+-------
+This session was primarily git hygiene (add / commit / pull --rebase / push)
+across several days of World Cup frontend work, plus some colony/predictions
+updates earlier on. Work landed first on `main`, then moved to a dedicated
+`worldcup` feature branch.
+
+Branch history this session
+---------------------------
+- Started on `main`, then created a new local branch `worldcup` and pushed it
+  to origin (new remote branch, tracking set up with -u).
+- All World Cup FE work lives on `worldcup`. `main` advanced separately on the
+  remote (Supabase colony pipeline, modular KG run/replay UI, scouting KG
+  pipeline) and is currently 5 commits ahead of local `main`.
+
+Commits on `worldcup` (in order)
+--------------------------------
+1. 6c18bc0  Add World Cup frontend: flow scripts, data, styles, notes
+   - frontend/index.html, dinasty/styles.css
+   - frontend/public/data/{predictions,simulatedtransactions,worldcup-games}.json
+   - frontend/public/favicon.ico, public/worldcup/soccerball.svg
+   - frontend/scripts/wc-{flow,front,measure,shot}.mjs
+   - notes/2026-06-20-worldcupFE.md
+
+2. 4ac42d9  Add World Cup content/matches/trades scripts, styles, verify tooling
+   - frontend/public/worldcup/worldcup.{css,js}
+   - frontend/scripts/wc-{content,links,matches,trades,v2,verify}.mjs
+   - notes/2026-06-20-worldcupFE-draft.txt
+
+3. ce357fc  Add notes on ClickHouse API exposure bug
+   - notes/2026-06-20-clickhouseapiexposurebug.txt
+   - NOTE: filename flags a possible live security issue — follow up.
+
+4. 42a4361  Update simulated transactions data and worldcup.js
+   - frontend/public/data/simulatedtransactions.json
+   - frontend/public/worldcup/worldcup.js
+
+5. 9561c59  Update worldcup styles/script, add standings notes
+   - frontend/public/worldcup/worldcup.{css,js}
+   - notes/2026-06-21-standingsworldcup.md
+
+Earlier commits this session (on `main`, before the worldcup branch)
+--------------------------------------------------------------------
+- Predictions + Ecuador bet notes, Polymarket approve script
+- record_trade updates, Solana watch notes (SOLANA/)
+- Pitch materials + gitignore + incoming-commit notes
+
+Current state
+-------------
+- `worldcup` is fully pushed and in sync with origin/worldcup (HEAD 9561c59).
+- `main` (local) is behind origin/main by 5 commits — pull/fast-forward when ready.
+- A PR to merge worldcup -> main has not been opened yet:
+  https://github.com/Vainglorious/ethglobalnyc/pull/new/worldcup
+
+Follow-ups
+----------
+- Review/triage the ClickHouse API exposure note (potential security issue).
+- Decide whether to open the worldcup -> main PR.
+- Fast-forward local main to origin/main.

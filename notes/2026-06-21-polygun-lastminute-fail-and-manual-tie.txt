@@ -1,0 +1,58 @@
+================================================================================
+POLYGUN LAST-MINUTE EXECUTION FAILED → MANUAL TIE BET (recorded #12)
+2026-06-21   (branch: worldcup)   Belgium vs. IR Iran — DRAW (market 1897171)
+================================================================================
+
+WHAT HAPPENED
+- Tried to fire a $2 DRAW (tie) bet on Belgium vs IR Iran via the PolyGun path
+  (polygun/bet_bel_irn.py draw --go, and direct pg.py buy --market 1897171 --confirm).
+- EVERY automated attempt HUNG on the Telegram session and was killed. Root cause:
+  the PolyGun userbot session (polygun/pg.session) is a single-writer SQLite file;
+  my rapid back-to-back retries left overlapping pg.py processes fighting the lock
+  (saw 2 pg.py at once), plus Telegram dropped connections ("Server closed the
+  connection") under the burst of reconnects. Nothing got past telethon connect /
+  early navigation, so the amount was never sent.
+- The standing rule held: after EACH kill I verified on-chain (draw-token ERC1155
+  balance on 0xe9E3) = 0 shares, pUSD unchanged (20.01). => NOTHING fired, no
+  double-bet. (This is the rule that prevents the old Scotland double-bet.)
+- Adil then placed the tie bet MANUALLY in the bot (last ~1 min of play). FILLED.
+
+THE MANUAL BET (recorded predictions.json #12)
+- 2.197801 DRAW-YES shares @ ~0.91  (~$2; bought late when a 0-0 draw was already
+  ~91% priced in — a near-certain-outcome late entry, low return, high probability).
+- tx 0x85548bea17620b094277aec084a1fcea945c77bc33c2f0d691195451ad76e202  block 88913670
+- recorded with: --placed-by adil --method manual --execution-layer polygun
+
+THE LESSON (the important one)
+- PolyGun's Telegram path is TOO SLOW and TOO FRAGILE for last-minute execution.
+  It choked exactly when timing mattered and a human had to step in. This is the
+  concrete failure case that justifies building the fast self-custody path.
+- NEXT: build the Node executor on @polymarket/clob-client (sub-second, no Telegram,
+  carries the current order version the Python client lacks). See
+  notes/2026-06-21-clob-blocking-and-trade-automation.txt for why Python CLOB is
+  schema-blocked (NOT geoblocked — that's proven cleared from Toronto).
+- Operationally: NEVER run >1 pg.py at once (shared pg.session lock). One bet, let
+  it finish, verify on-chain, then the next.
+
+HOW TO FIND A POLYGUN BET TX ON-CHAIN (when the bot output is lost / it was manual)
+- The fill delivers ERC1155 ConditionalTokens to 0xe9E3 (PolyGun wallet).
+- eth_getLogs on CTF 0x4D97DCd97eC945f40cF65F87097ACe5EA0476045:
+    topic0 = TransferSingle 0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62
+    topic3 = to = 0x000000000000000000000000<0xe9E3 lowercased>
+  decode data -> (tokenId, value); match tokenId to the outcome's YES token.
+- RPC gotchas (this session):
+    * polygon-bor-rpc.publicnode.com -> HTTP 403 on eth_getLogs (fine for eth_call).
+    * 1rpc.io/matic -> WORKS for eth_getLogs. (llamarpc DNS failed in this env.)
+    * macOS python.org urllib needs SSL_CERT_FILE=$(certifi.where()) or it throws
+      CERTIFICATE_VERIFY_FAILED. (curl uses the system store and just works.)
+- Balance check (did it fill?): ERC1155 balanceOf(0xe9E3, tokenId) on the CTF
+  contract, selector 0x00fdd58e. >0 = filled.
+
+LEDGER STATE
+- 12 trades now. #12 is the manual draw. All execution_layer=polygun (still zero
+  direct-CLOB fills — that path is schema-blocked, see the companion note).
+
+SEE ALSO
+  notes/2026-06-21-clob-blocking-and-trade-automation.txt, predictions.json,
+  polygun/bet_bel_irn.py, polygun/record_trade.py, polymarket/bet_bel_irn_clob.py
+================================================================================
