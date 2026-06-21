@@ -16,7 +16,9 @@
     polygonscan: 'https://polygonscan.com/address/' + WALLET,
     polymarket: 'https://polymarket.com/@xi31ydqg4cnd?tab=activity',
     uma: 'https://oracle.uma.xyz/',
-    clickhouse: 'https://ethglobalnyc-production-5ce3.up.railway.app'
+    clickhouse: 'https://ethglobalnyc-production-5ce3.up.railway.app',
+    polygun: 'https://polygun.xyz',
+    polymarketanalytics: 'https://polymarketanalytics.com'
   };
   function txUrl(h) { return 'https://polygonscan.com/tx/' + h; }
   function shortAddr(a) { return a ? a.slice(0, 6) + '…' + a.slice(-4) : ''; }
@@ -352,7 +354,9 @@
     return '<section class="wc-section" id="wc-trades"><h2>On-chain Ledger</h2>' +
       '<div class="wc-lead">Real, executed trades — settled in <b>pUSD on Polygon</b>, verifiable by ' +
       'transaction hash. Picks come from the colony’s consensus, placed either with a human pressing ' +
-      'the final button or fully autonomously by code — both through our Polymarket rail (PolyGun).</div>' +
+      'the final button or fully autonomously by code — through our Polymarket execution layers ' +
+      '(<a href="' + LINK.polygun + '" target="_blank" rel="noopener">PolyGun</a> and ' +
+      '<a href="' + LINK.polymarketanalytics + '" target="_blank" rel="noopener">Polymarket Analytics</a>).</div>' +
       '<div class="wc-table-wrap"><table class="wc-table"><thead><tr>' +
         '<th>Match</th><th>Date</th><th>Pick</th><th>By</th><th>Size</th><th>Status</th><th>Tx</th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
@@ -391,7 +395,7 @@
 
   /* ---------------------------------------------------------------- render: strategy blurbs */
   function strategySection() {
-    return '<section class="wc-section"><h2>How the Edge Works</h2>' +
+    return '<section class="wc-section"><h2>Looking for Edges</h2>' +
       '<div class="wc-strategy">' +
         strat('Arbitrage', 'Bet the gap',
           'Our edge is the spread between the colony’s read and the live market price. When the ' +
@@ -401,8 +405,8 @@
         strat('UMA Oracle', 'The oracle is ground truth',
           'Polymarket’s markets settle on UMA’s Optimistic Oracle — the resolution and dispute ' +
           'events we decode in ClickHouse. Reading the oracle tells us how a market <i>will</i> resolve ' +
-          'before the crowd reprices, and where <b>not</b> to trade: you can’t scalp a ~99¢ winner at ' +
-          'the close — zero asks, nothing to fill against. Verified live: 0 asks for 5 minutes straight.',
+          'before the crowd reprices, and where <b>not</b> to trade: you can’t scalp a 96-99¢ winner at ' +
+          'the close.',
           LINK.uma, 'UMA Optimistic Oracle') +
         strat('Privileged Data', 'A metered knowledge plane',
           'The ants query a private ClickHouse API of Polymarket odds time-series + decoded UMA events. ' +

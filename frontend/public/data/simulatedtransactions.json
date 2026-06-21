@@ -50,7 +50,7 @@
       "resolves_to": "under 2.5 (2 goals)",
       "hypothetical_gross_payout_usd": 5.97,
       "hypothetical_net_pnl_usd": 3.97,
-      "why_not_executed": "O/U markets are NOT on PolyGun and Polymarket CLOB is US-geoblocked (403). We could DISCOVER the market + token id via ClickHouse but had no executable venue from here.",
+      "why_not_executed": "O/U markets are NOT on PolyGun and Polymarket CLOB is US-geoblocked. We could DISCOVER the market + token id via ClickHouse but had no executable venue from here.",
       "note": "Confirms the colony's read was correct; the gap was a venue that lets a US user trade the O/U, not the prediction."
     },
     {
@@ -67,20 +67,20 @@
       "token_id": "45307929350007847491024268648960623527752242214197163455465935647967776740420",
       "stake_usd": 5.00,
       "attempted": true,
-      "attempts": "Multiple real PolyGun market buys (70-min wake @52c, 6-min wake @57c) — all returned 'Buy Failed: no match'. CLOB-direct not attempted (US-geoblocked 403).",
+      "attempts": "Multiple real PolyGun market buys (70-min wake @52c, 6-min wake @57c) — all returned 'Buy Failed: no match'. CLOB-direct not attempted (US-geoblocked).",
       "entry_price_when_tried": "0.52 - 0.57 (then surged to 0.999 as Australia won)",
       "resolves_to": "Australia win (game decided in Australia's favor)",
       "hypothetical_if_filled_at_0.57": {"shares": 8.77, "gross_payout_usd": 8.77, "net_pnl_usd": 3.77},
-      "why_not_executed": "THE WINNING SIDE HAD 0 ASKS. CLOB book showed 0 asks / ~81 bids @ 0.999 for 5 straight minutes (05:58-06:03 UTC) — nobody sells a near-certain winner, so a market buy has nothing to fill against ('no match'). Not a tooling bug: market structure.",
-      "lesson": "The '99c scrape' is structurally UNBUYABLE at the close. Only holders who entered EARLIER (when asks existed) capture the 99->100 move. You cannot enter the winning side late."
+      "why_not_executed": "On this attempt the ask side was thin: the CLOB book showed ~0 asks / ~81 bids @ 0.999 in the window we tried (05:58-06:03 UTC), so the market buy had little to fill against ('no match'). Just what the book looked like in that moment for this market — not a tooling bug.",
+      "lesson": "Entering a near-certain winner late can be hard once asks thin out toward the close — earlier holders may capture more of the move. An edge we're still exploring: getting onto the soon-to-be winner sooner, while asks still exist."
     }
   ],
   "lessons": [
     "Edge was real on both legs (draw + under 2.5); we lost it to SPEED and VENUE, not to a wrong call.",
     "Draw arb needs a live-score feed faster than the market reprice + instant execution.",
     "Under 2.5 needs an executable venue for O/U (PolyGun doesn't index it; CLOB geoblocks US).",
-    "THE LIQUIDITY WALL (Australia scrape): you cannot buy a ~99c near-certain winner at the close — the winning side has 0 asks (no sellers), only bids. Market buys return 'no match'. The 99->100 scrape only pays those who entered EARLIER. Verified live: 0 asks for 5 min straight.",
-    "Implication for the colony's edge: enter on the colony's PRE/IN-GAME read while two-sided liquidity exists; don't plan to scalp the resolved winner.",
+    "Late-close liquidity can thin out on a near-certain winner: on the Australia leg the winning side showed almost no asks (mostly bids), so a late market buy found 'no match'. Small sample so far — we're exploring whether to get onto the soon-to-be winner earlier, while two-sided liquidity still exists.",
+    "Implication we're testing for the colony's edge: enter on the colony's PRE/IN-GAME read while two-sided liquidity exists — potentially sniping the soon-to-be winner before the book thins.",
     "Real, executed trades live in predictions.json; this file is hypothetical only."
   ]
 }
