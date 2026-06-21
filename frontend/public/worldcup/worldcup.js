@@ -195,7 +195,7 @@
   }
   /* the KG only has scores for early matches, so derive past/upcoming from the date.
      "Today" for the demo timeline is 2026-06-20 (mid-tournament). */
-  var REF_DATE = '2026-06-20';
+  var REF_DATE = '2026-06-21';
   function isUpcoming(g) { return (g.date || '9999') >= REF_DATE; }
   function isPast(g) { return (g.date || '0000') < REF_DATE; }
 
@@ -240,6 +240,10 @@
     var real = bets.filter(function (b) { return !b.simulated; });
     var sim = bets.filter(function (b) { return b.simulated; });
     var parts = [];
+    // settled = match already played (past the demo's "today"); open = still to come
+    var settled = isPast(g);
+    parts.push('<span class="wc-badge ' + (settled ? 'is-settled' : 'is-open') + '">' +
+      (settled ? 'Settled' : 'Open') + '</span>');
     real.forEach(function (b) {
       var cls = 'is-bet', label = 'Colony: ' + esc(b.pick);
       if (g.played && b.pick !== 'DRAW' && b.pick !== 'UNDER 2.5') {

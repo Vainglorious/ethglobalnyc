@@ -99,6 +99,8 @@
 .wc-badge.is-none  { background: var(--slot); color: var(--ink-faint); border: 1px solid var(--border); }
 .wc-badge.is-win   { background: rgba(31,94,40,.2);  color: #1f5e28; border: 1px solid rgba(31,94,40,.55); }
 .wc-badge.is-loss  { background: rgba(168,45,45,.16); color: #a82d2d; border: 1px solid rgba(168,45,45,.5); }
+.wc-badge.is-open    { background: rgba(31,94,168,.16); color: #1f5ea8; border: 1px solid rgba(31,94,168,.5); }
+.wc-badge.is-settled { background: var(--slot); color: var(--ink-soft); border: 1px solid var(--border-strong); }
 
 /* result chip on played games */
 .wc-score { font-family: var(--mono); font-weight: 700; color: var(--ink); }
