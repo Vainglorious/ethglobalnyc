@@ -48,6 +48,7 @@ EntityType = Literal[
     "formation",
     "genome",
     "predictor",
+    "synthesis",
     "debate_claim",
     "prediction",
 ]
@@ -358,6 +359,9 @@ class Forecast:
     bankroll: float
     decision_reason: str
     genome_id: str = ""
+    model: str = ""
+    datafeed_interests: list[str] = field(default_factory=list)
+    source_weights: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)

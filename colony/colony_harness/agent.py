@@ -110,13 +110,50 @@ def _critique_type(
     if abs(probability - target_claim.stated_home_probability) < 0.006:
         return "impact_size"
     if probability > target_claim.stated_home_probability:
-        return "underpriced_home"
-    return "overpriced_home"
+        return "home_probability_too_low"
+    return "home_probability_too_high"
+
+
+def _critique_label(critique_type: str, match: MatchContext) -> str:
+    labels = {
+        "source_quality": "source needs checking",
+        "counter_evidence": "counter-evidence matters",
+        "impact_size": "impact looks too large",
+        "home_probability_too_low": f"previous claim is too low on {match.home_team}",
+        "home_probability_too_high": f"previous claim is too high on {match.home_team}",
+        "underpriced_home": f"previous claim is too low on {match.home_team}",
+        "overpriced_home": f"previous claim is too high on {match.home_team}",
+    }
+    return labels.get(critique_type, critique_type.replace("_", " "))
+
+
+def _critique_summary(
+    critique_type: str,
+    *,
+    match: MatchContext,
+    target_subject: str,
+    counter_subject: str,
+) -> str:
+    subject = target_subject or counter_subject or "that evidence"
+    if critique_type == "source_quality":
+        return f"The reply questions whether {subject} is sourced strongly enough to drive the room."
+    if critique_type == "counter_evidence":
+        if target_subject and counter_subject and target_subject != counter_subject:
+            return f"The reply says {counter_subject} has to be weighed against {target_subject}."
+        return f"The reply says {subject} should not be the only thing driving the room."
+    if critique_type == "impact_size":
+        return f"The reply agrees {subject} matters, but says the previous claim moved too far."
+    if critique_type in {"home_probability_too_low", "underpriced_home"}:
+        return f"The reply says the previous claim is too pessimistic on {match.home_team}."
+    if critique_type in {"home_probability_too_high", "overpriced_home"}:
+        return f"The reply says the previous claim is too optimistic on {match.home_team}."
+    return "The reply challenges the previous claim."
 
 
 def _build_dispute_metadata(
     *,
     agent_id: str,
+    match: MatchContext,
     debate_role: str,
     probability: float,
     prior_claims: list[DebateClaim],
@@ -133,21 +170,31 @@ def _build_dispute_metadata(
     prefix = f"{target_claim.speaker_name}:"
     if target_message.startswith(prefix):
         target_message = target_message[len(prefix):].strip()
+    critique_type = _critique_type(
+        probability=probability,
+        target_claim=target_claim,
+        current_evidence=current_evidence,
+        target_evidence=target_evidence,
+    )
+    target_subject = _evidence_subject(target_evidence)
+    counter_subject = _evidence_subject(current_evidence)
     return {
         "target_claim_id": _claim_ref(target_claim),
         "target_speaker_id": target_claim.speaker_id,
         "target_speaker_name": target_claim.speaker_name,
         "target_genome_id": target_claim.genome_id,
         "target_excerpt": _short_text(target_message),
-        "critique_type": _critique_type(
-            probability=probability,
-            target_claim=target_claim,
-            current_evidence=current_evidence,
-            target_evidence=target_evidence,
+        "critique_type": critique_type,
+        "critique_label": _critique_label(critique_type, match),
+        "critique_summary": _critique_summary(
+            critique_type,
+            match=match,
+            target_subject=target_subject,
+            counter_subject=counter_subject,
         ),
         "probability_gap": round(probability - target_claim.stated_home_probability, 4),
-        "target_subject": _evidence_subject(target_evidence),
-        "counter_subject": _evidence_subject(current_evidence),
+        "target_subject": target_subject,
+        "counter_subject": counter_subject,
         "target_source_quality": _source_quality(target_evidence) if target_evidence else "not_evidenced",
     }
 
@@ -517,7 +564,6 @@ class AntAgent:
                 "qwen-3": 0.01,
                 "MiniMax-M3": 0.012,
                 "MiniMax-M2.7": -0.002,
-                "MiniMax-M2.7-highspeed": -0.006,
                 "claude-haiku": 0.004,
                 "parametric": 0.0,
             }.get(self.genome.model, 0.0)
@@ -564,6 +610,7 @@ class AntAgent:
         voice_prior_claims = [claim for claim in (prior_claims or []) if claim.speaker_id != self.agent_id]
         dispute = _build_dispute_metadata(
             agent_id=self.agent_id,
+            match=match,
             debate_role=debate_role,
             probability=probability,
             prior_claims=prior_claims or [],
@@ -668,6 +715,7 @@ class AntAgent:
             )
 
         stake = round(max(0.0001, self.bankroll * _stake_fraction(self.genome)), 4)
+        source_weights = self.genome.source_weights.normalized().to_dict()
         return Forecast(
             agent_id=self.agent_id,
             wallet_address=self.wallet_address,
@@ -690,6 +738,9 @@ class AntAgent:
             bankroll=round(self.bankroll, 4),
             decision_reason=decision_reason,
             genome_id=self.genome_id,
+            model=self.genome.model,
+            datafeed_interests=[label for label, value in source_weights.items() if value >= 0.18],
+            source_weights=source_weights,
         )
 
     def commit_bet(self, forecast: Forecast, round_id: str) -> BetCommitment:

@@ -162,9 +162,17 @@ def _social_text(claim: DebateClaim, *, match: MatchContext) -> str:
     text = text.replace("home", match.home_team).replace("away", match.away_team)
     if claim.dispute:
         target = claim.dispute.get("target_speaker_name") or "the previous claim"
-        critique = str(claim.dispute.get("critique_type") or "challenge").replace("_", " ")
+        critique = _dispute_label(claim.dispute)
         return f"Replying to {target}, {text} [{critique}]"
     return text
+
+
+def _dispute_label(dispute: dict) -> str:
+    return str(
+        dispute.get("critique_label")
+        or dispute.get("critique_summary")
+        or str(dispute.get("critique_type") or "challenge").replace("_", " ")
+    )
 
 
 def _grounded_elements(claim: DebateClaim) -> list[dict]:

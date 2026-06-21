@@ -324,7 +324,7 @@ DN.lifecycle = (function () {
   function startAgentRun() {
     if (!DN.databridge || !DN.databridge.startDemoRun) {
       L.scoutingDone = true;
-      L.runError = new Error('Backend demo run API unavailable.');
+      L.runError = new Error('Backend run API unavailable.');
       if (DN.logTerm) DN.logTerm.push('SYSTEM', L.runError.message);
       L.runPromise = Promise.resolve(null);
       return L.runPromise;
@@ -377,7 +377,7 @@ DN.lifecycle = (function () {
     if (L.skipScouting) return startAgentRun();
     if (!DN.databridge || !DN.databridge.startDemoRun) {
       L.scoutingDone = true;
-      L.runError = new Error('Backend demo run API unavailable.');
+      L.runError = new Error('Backend run API unavailable.');
       if (DN.logTerm) DN.logTerm.push('SYSTEM', L.runError.message);
       L.runPromise = Promise.resolve(null);
       return L.runPromise;
@@ -417,7 +417,7 @@ DN.lifecycle = (function () {
           L.backendDone = true;
           if (DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(res.id);
           if (DN.hud && DN.hud._pollComms) DN.hud._pollComms();
-          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Demo run ' + res.id + ' complete — debate transcript ready.');
+          if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Run ' + res.id + ' complete — debate transcript ready.');
         }
         return res || null;
       })
@@ -604,7 +604,7 @@ DN.lifecycle = (function () {
         L.convergeTarget = 0;
         L.convergeReturned = 0;
         if (DN.hud && DN.hud.updateBackendFlow) DN.hud.updateBackendFlow({ stage: 'info', mode: 'Ants getting info' });
-        if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Static review: backend forecasts are ready; ants stay in place for the demo.');
+        if (DN.logTerm) DN.logTerm.push('SYSTEM', 'Static review: backend forecasts are ready; ants stay in place for the run.');
         return;
       }
       // Send every visible worker to the crystal. To make them read as a
@@ -786,7 +786,7 @@ DN.lifecycle = (function () {
       // ARC_TREASURY_PRIVATE_KEY, etc.) — force-release after 12s so
       // the demo still advances to egress_roam and ants emerge.
       setTimeout(() => {
-        if (!released && DN.logTerm) DN.logTerm.push('SYSTEM', 'Settle still in flight after 12s — advancing to egress so the demo continues.');
+        if (!released && DN.logTerm) DN.logTerm.push('SYSTEM', 'Settle still in flight after 12s — advancing to egress so the run continues.');
         release();
       }, 12000);
     },

@@ -101,7 +101,8 @@ def _compact_dispute(dispute: dict) -> str:
         return "- no structured dispute target"
     fields = [
         ("target speaker", dispute.get("target_speaker_name") or dispute.get("target_speaker_id")),
-        ("critique type", str(dispute.get("critique_type") or "").replace("_", " ")),
+        ("critique", dispute.get("critique_label") or str(dispute.get("critique_type") or "").replace("_", " ")),
+        ("meaning", dispute.get("critique_summary")),
         ("target subject", dispute.get("target_subject")),
         ("counter subject", dispute.get("counter_subject")),
         ("target excerpt", dispute.get("target_excerpt")),
@@ -171,8 +172,8 @@ def _market_stance(*, match: MatchContext, probability: float, persona: str = ""
             return _choose(
                 seed + ":stance-home-up",
                 [
-                    f"Slightly higher on {match.home_team} for me.",
-                    f"The home price still looks light to me.",
+                f"Slightly higher on {match.home_team} for me.",
+                    f"The market looks a bit too low on {match.home_team}.",
                     f"I would nudge {match.home_team} up.",
                 ],
             )
@@ -189,16 +190,16 @@ def _market_stance(*, match: MatchContext, probability: float, persona: str = ""
             return _choose(
                 seed + ":stance-home-overpriced-contrarian",
                 [
-                    f"{match.home_team} can be the favorite and still be overpriced.",
-                    f"I still have {match.home_team} ahead, just not at this price.",
-                    f"The favorite label is fine; the price is the issue.",
+                    f"{match.home_team} can be the favorite and still be rated too highly.",
+                    f"I still have {match.home_team} ahead, just by a smaller margin.",
+                    f"The favorite label is fine; the gap is the issue.",
                 ],
             )
         return _choose(
             seed + ":stance-home-overpriced",
             [
-                f"{match.home_team} is still favored for me, but the price is too high.",
-                f"I keep {match.home_team} in front, but I would trim the price.",
+                f"{match.home_team} is still favored for me, but not by that much.",
+                f"I keep {match.home_team} in front, but I would trim the gap.",
                 f"I am not flipping sides; I am just cutting the favorite.",
             ],
         )
@@ -365,9 +366,9 @@ def _evidence_brief(evidence: dict) -> str:
         return f"{source} gives a lineup note on {raw_subject}"
     if claim_type == "market_preview":
         if "above the consensus home price" in claim:
-            return f"{source} has {subject} above the consensus home price"
+            return f"{source} has {subject} above the market's home estimate"
         if "below the consensus home price" in claim:
-            return f"{source} has {subject} below the consensus home price"
+            return f"{source} has {subject} below the market's home estimate"
         return f"{source} is mostly market context"
     return f"{source} points to {subject}"
 
@@ -690,9 +691,9 @@ def _template_challenge_sentence(
     return _choose(
                 seed + ":challenge-not-bearish-enough",
                 [
-                f"I cut harder than that. {previous_subject} still feels underpriced.",
-                "That names the risk, but barely moves for it.",
-                f"The room is still too light on {previous_subject}.",
+                f"I would cut the home side more. {previous_subject} still needs more weight.",
+                "That names the risk, but barely changes the read.",
+                f"The room is still not giving {previous_subject} enough weight.",
             ],
         )
 
@@ -719,7 +720,7 @@ def _template_structured_dispute_sentence(dispute: dict, *, seed: str = "") -> s
             [
                 f"Hold on, {subject} needs a cleaner source before it drives the room.",
                 "The topic may be right, but the source quality is not enough.",
-                f"I want a better source for {subject} before moving price.",
+                f"I want a better source for {subject} before changing the room's read.",
             ],
         )
     if critique_type == "counter_evidence":
@@ -729,8 +730,8 @@ def _template_structured_dispute_sentence(dispute: dict, *, seed: str = "") -> s
                 seed + ":structured-counter-evidence",
                 [
                     f"I buy part of {target_subject}, but {counter_subject} is the live counterweight.",
-                    f"{target_start} is not the whole trade; {counter_subject} still has to be priced.",
-                    f"The room cannot price {target_subject} without netting it against {counter_subject}.",
+                    f"{target_start} is not the whole picture; {counter_subject} still has to count.",
+                    f"The room cannot weigh {target_subject} without netting it against {counter_subject}.",
                 ],
             )
         subject = counter_subject or target_subject or "that point"
@@ -752,24 +753,24 @@ def _template_structured_dispute_sentence(dispute: dict, *, seed: str = "") -> s
                 f"Keep {subject} in the mix, just with a smaller move.",
             ],
         )
-    if critique_type == "underpriced_home":
+    if critique_type in {"home_probability_too_low", "underpriced_home"}:
         subject = target_subject or counter_subject or "that risk"
         return _choose(
-            seed + ":structured-underpriced-home",
+            seed + ":structured-home-probability-too-low",
             [
-                f"That cut is too large; {subject} does not erase the other side.",
-                f"I push back on how much we cut for {subject}, not on the topic itself.",
-                f"{subject} matters, but I still think the home side is light.",
+                f"That is too harsh on the home side; {subject} does not erase the full case.",
+                f"I accept {subject}, but the previous claim cuts the home side too much.",
+                f"{subject} matters, but I still think the home side deserves more credit.",
             ],
         )
-    if critique_type == "overpriced_home":
+    if critique_type in {"home_probability_too_high", "overpriced_home"}:
         subject = target_subject or counter_subject or "that risk"
         return _choose(
-            seed + ":structured-overpriced-home",
+            seed + ":structured-home-probability-too-high",
             [
-                f"I cut harder than that; {subject} is still underpriced.",
-                "The previous claim names the risk, but does not move enough for it.",
-                f"The room is still light on {subject}.",
+                f"I would cut the home side more; {subject} is still not weighted enough.",
+                "The previous claim names the risk, but stays too optimistic.",
+                f"The room is still not giving {subject} enough weight.",
             ],
         )
     return ""
@@ -784,7 +785,7 @@ def _template_role_sentence(debate_role: str, *, direction: Side, match: MatchCo
             [
                 "I do not buy the leap yet.",
                 "That feels one step too far for me.",
-                "Slow down before moving the price that much.",
+                "Slow down before moving the read that much.",
             ],
         )
     if debate_role == "source_auditor":
@@ -793,7 +794,7 @@ def _template_role_sentence(debate_role: str, *, direction: Side, match: MatchCo
             [
                 "Separate the story from the source quality first.",
                 "The source matters as much as the headline here.",
-                "Before moving price, I want the cleaner source.",
+                "Before changing the room's read, I want the cleaner source.",
             ],
         )
     if debate_role == "skeptic":

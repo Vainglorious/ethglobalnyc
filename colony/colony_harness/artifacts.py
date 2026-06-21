@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -69,16 +69,21 @@ def write_compact_run_artifacts(
     _write_social_space(path / "social_space.json", result)
     _write_social_activity_config(path / "social_activity_config.json", result)
     _write_rooms(path / "rooms.json", result)
+    _write_participants(path / "participants.json", result)
+    _write_debate_trace(path / "debate_trace.json", result)
     _write_conversation_memory(path / "conversation_memory.json", result)
     _write_forecasts(path / "forecasts.csv", result)
     _write_collective_decision(path / "decision.json", result)
     _write_compact_collective_decision(path / "decision.compact.json", result)
+    _write_vote_trace(path / "vote_trace.json", result)
     _write_findings(path / "findings.json", result)
     _write_scouting_audit(path / "scouting_audit.json", result)
+    _write_kg_summary(path / "kg_summary.json", result)
     _write_knowledge_views(path / "knowledge_views.json", result)
     _write_world_graph(path / "world_graph.json", result)
     _write_kg_manifest(path / "kg_manifest.json", result)
     _write_compact_events(path / "events.compact.jsonl", result)
+    _write_run_report(path / "run_report.md", match, result)
     if debug:
         _write_debug_report(path / "debug.md", match, result)
     return path
@@ -107,11 +112,17 @@ def _write_summary(path: Path, match: MatchContext, result: RoundResult) -> None
         f"- Knowledge views: public={summary['public_views']} shared={summary['shared_views']} private={summary['private_views']}",
         f"- Risk profiles: {_risk_profile_summary(summary.get('risk_profiles', {}))}",
         "",
-        "## Opinion Distribution",
+        "## Probability Lean Distribution",
         "",
         f"- {match.home_team}/home predictions: {summary.get('prediction_home', 0)}",
         f"- Draw predictions: {summary.get('prediction_draw', 0)}",
         f"- {match.away_team}/away predictions: {summary.get('prediction_away', 0)}",
+        "",
+        "## Forecast Vote Distribution",
+        "",
+        f"- Home bets: {summary['home_bets']}",
+        f"- Draw bets: {summary.get('draw_bets', 0)}",
+        f"- Away bets: {summary['away_bets']}",
         "",
         "## Betting",
         "",
@@ -143,16 +154,21 @@ def _write_summary(path: Path, match: MatchContext, result: RoundResult) -> None
         "- `social_space.json`: room/action graph describing the simulated social space.",
         "- `social_activity_config.json`: OASIS-inspired activation, feed ranking, and action-space config.",
         "- `rooms.json`: structured room membership, representatives, and syntheses.",
+        "- `participants.json`: every participating ant with vote, room, debate, social, and model metadata.",
+        "- `debate_trace.json`: compact replay of room debates, disputes, evidence references, and final chamber.",
         "- `conversation_memory.json`: queryable debate claims, dispute edges, and debater reputation summary.",
         "- `forecasts.csv`: final group-stage outcome pick for every predictor.",
-        "- `decision.compact.json`: compact colony-level bet decision for execution and demos.",
+        "- `vote_trace.json`: colony vote breakdown, per-ant votes, and per-ant prediction records.",
+        "- `decision.compact.json`: compact colony-level bet decision for execution review.",
         "- `decision.json`: full structured decision with every weighted agent vote.",
         "- `findings.json`: normalized findings used by this run.",
         "- `scouting_audit.json`: scout coverage, claim types, source quality, and source provenance summary.",
+        "- `kg_summary.json`: compact KG coverage, source, readiness, and backlog summary.",
         "- `knowledge_views.json`: filtered predictor views derived from the full graph.",
         "- `world_graph.json`: lightweight round subgraph with match, teams, findings, evidence claims, sources, players, predictions, and debate claims.",
         "- `kg_manifest.json`: KG schema version, ingestion entrypoints, counts, and integrity status.",
         "- `events.compact.jsonl`: compact machine-readable event stream.",
+        "- `run_report.md`: human-readable post-run audit across KG, debate, participants, and vote.",
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -209,7 +225,8 @@ def _append_claim_lines(lines: list[str], claim, *, heading_level: str) -> None:
     )
     if claim.dispute:
         target = claim.dispute.get("target_speaker_name") or claim.dispute.get("target_speaker_id") or "previous claim"
-        critique_type = str(claim.dispute.get("critique_type") or "dispute").replace("_", " ")
+        critique_type = _display_critique_type(claim.dispute)
+        critique_summary = claim.dispute.get("critique_summary") or ""
         excerpt = claim.dispute.get("target_excerpt") or ""
         probability_gap = claim.dispute.get("probability_gap")
         if isinstance(probability_gap, int | float):
@@ -221,10 +238,12 @@ def _append_claim_lines(lines: list[str], claim, *, heading_level: str) -> None:
                 "Dispute:",
                 "",
                 f"- Target: {target}",
-                f"- Critique type: {critique_type}",
+                f"- Critique: {critique_type}",
                 f"- Disagreement size: {gap_text}",
             ]
         )
+        if critique_summary:
+            lines.append(f"- Meaning: {critique_summary}")
         if excerpt:
             lines.append(f"- Target excerpt: \"{excerpt}\"")
         target_subject = claim.dispute.get("target_subject")
@@ -286,7 +305,7 @@ def _write_social_feed(path: Path, result: RoundResult) -> None:
                 "",
                 f"- Topic: {action.topic}",
                 f"- Stance: {action.stance}",
-                f"- Tags: {', '.join(action.tags) if action.tags else 'none'}",
+                f"- Tags: {_display_tags(action.tags)}",
                 f"- Env action: {action.metadata.get('oasis_action', 'n/a')} at h={action.metadata.get('simulated_hour', 'n/a')}, rank={action.metadata.get('recommendation_score', 'n/a')}",
                 "",
                 action.text,
@@ -459,6 +478,25 @@ def _room_lean(value: float | None) -> str:
     return "contested"
 
 
+def _display_tags(tags: list[str]) -> str:
+    if not tags:
+        return "none"
+    return ", ".join(_display_tag(tag) for tag in tags)
+
+
+def _display_tag(tag: str) -> str:
+    labels = {
+        "home_probability_too_low": "previous claim too low on home side",
+        "home_probability_too_high": "previous claim too high on home side",
+        "underpriced_home": "previous claim too low on home side",
+        "overpriced_home": "previous claim too high on home side",
+        "counter_evidence": "counter-evidence matters",
+        "impact_size": "impact size disputed",
+        "source_quality": "source quality disputed",
+    }
+    return labels.get(tag, tag.replace("_", " "))
+
+
 def _claim_stance(claim) -> str:
     if claim.direction == "home":
         return "leans home"
@@ -487,6 +525,14 @@ def _disagreement_label(value: float) -> str:
         size = "small"
     direction = "toward home" if value > 0 else "toward away" if value < 0 else "flat"
     return f"{size}, {direction}"
+
+
+def _display_critique_type(dispute: dict) -> str:
+    return str(
+        dispute.get("critique_label")
+        or dispute.get("critique_summary")
+        or str(dispute.get("critique_type") or "dispute").replace("_", " ")
+    )
 
 
 def _risk_profile_summary(profiles: dict) -> str:
@@ -712,9 +758,12 @@ def _write_forecasts(path: Path, result: RoundResult) -> None:
                 "wallet_address",
                 "ens_name",
                 "genome_id",
+                "model",
                 "access_tier",
                 "visible_findings",
                 "persona",
+                "datafeed_interests",
+                "source_weights",
                 "risk_profile",
                 "social_stance",
                 "activity_level",
@@ -734,6 +783,447 @@ def _write_forecasts(path: Path, result: RoundResult) -> None:
         writer.writeheader()
         for forecast in result.forecasts:
             writer.writerow(forecast.to_dict())
+
+
+def _write_participants(path: Path, result: RoundResult) -> None:
+    room_ids_by_agent: dict[str, set[str]] = defaultdict(set)
+    representative_rooms_by_agent: dict[str, set[str]] = defaultdict(set)
+    room_claim_counts: Counter[str] = Counter()
+    final_claim_counts: Counter[str] = Counter()
+    dispute_made_counts: Counter[str] = Counter()
+    dispute_received_counts: Counter[str] = Counter()
+    model_by_agent: dict[str, str] = {}
+    evidence_subjects_by_agent: dict[str, set[str]] = defaultdict(set)
+    claim_types_by_agent: dict[str, Counter[str]] = defaultdict(Counter)
+
+    for room in result.rooms:
+        for agent_id in room.participant_ids:
+            room_ids_by_agent[agent_id].add(room.room_id)
+        for agent_id in room.representative_ids:
+            representative_rooms_by_agent[agent_id].add(room.room_id)
+        for claim in room.claims:
+            if claim.speaker_id == "colony_synthesis":
+                continue
+            room_claim_counts[claim.speaker_id] += 1
+            model_by_agent[claim.speaker_id] = claim.model
+            claim_types_by_agent[claim.speaker_id][claim.claim_type] += 1
+            for subject in _claim_evidence_subjects(claim):
+                evidence_subjects_by_agent[claim.speaker_id].add(subject)
+            if claim.dispute:
+                dispute_made_counts[claim.speaker_id] += 1
+                target_id = str(claim.dispute.get("target_speaker_id") or "")
+                if target_id:
+                    dispute_received_counts[target_id] += 1
+
+    for claim in result.claims:
+        if claim.speaker_id == "colony_synthesis":
+            continue
+        final_claim_counts[claim.speaker_id] += 1
+        model_by_agent[claim.speaker_id] = claim.model
+        claim_types_by_agent[claim.speaker_id][claim.claim_type] += 1
+        for subject in _claim_evidence_subjects(claim):
+            evidence_subjects_by_agent[claim.speaker_id].add(subject)
+        if claim.dispute:
+            dispute_made_counts[claim.speaker_id] += 1
+            target_id = str(claim.dispute.get("target_speaker_id") or "")
+            if target_id:
+                dispute_received_counts[target_id] += 1
+
+    action_counts_by_agent: dict[str, Counter[str]] = defaultdict(Counter)
+    targeted_by_counts: Counter[str] = Counter()
+    for action in result.social_actions:
+        action_counts_by_agent[action.actor_id][action.action_type] += 1
+        if action.target_actor_id:
+            targeted_by_counts[action.target_actor_id] += 1
+
+    views_by_agent = {view.agent_id: view for view in result.knowledge_views}
+    votes_by_agent = {
+        str(item.get("agent_id") or ""): item for item in result.collective_decision.agent_votes
+    }
+    predictions_by_agent = {
+        str(item.get("agent_id") or ""): item for item in result.collective_decision.agent_predictions
+    }
+
+    participants = []
+    for forecast in result.forecasts:
+        view = views_by_agent.get(forecast.agent_id)
+        vote = votes_by_agent.get(forecast.agent_id, {})
+        prediction = predictions_by_agent.get(forecast.agent_id, {})
+        participants.append(
+            {
+                "agent_id": forecast.agent_id,
+                "wallet_address": forecast.wallet_address,
+                "ens_name": forecast.ens_name,
+                "genome_id": forecast.genome_id,
+                "model": forecast.model or model_by_agent.get(forecast.agent_id, ""),
+                "persona": forecast.persona,
+                "risk_profile": forecast.risk_profile,
+                "status": "alive_for_run",
+                "access_tier": forecast.access_tier,
+                "visible_findings": forecast.visible_findings,
+                "visible_finding_ids": [] if view is None else [finding.finding_id for finding in view.visible_findings],
+                "datafeed_focus": _forecast_datafeed_focus(forecast),
+                "social_profile": {
+                    "stance": forecast.social_stance,
+                    "activity_level": forecast.activity_level,
+                    "influence_weight": forecast.influence_weight,
+                    "response_delay": forecast.response_delay,
+                    "active_windows": _split_windows(forecast.active_windows),
+                    "actions": dict(sorted(action_counts_by_agent[forecast.agent_id].items())),
+                    "targeted_by_actions": targeted_by_counts.get(forecast.agent_id, 0),
+                },
+                "debate": {
+                    "rooms": sorted(room_ids_by_agent[forecast.agent_id]),
+                    "representative_rooms": sorted(representative_rooms_by_agent[forecast.agent_id]),
+                    "room_claims": room_claim_counts.get(forecast.agent_id, 0),
+                    "final_claims": final_claim_counts.get(forecast.agent_id, 0),
+                    "disputes_made": dispute_made_counts.get(forecast.agent_id, 0),
+                    "disputes_received": dispute_received_counts.get(forecast.agent_id, 0),
+                    "claim_types": dict(sorted(claim_types_by_agent[forecast.agent_id].items())),
+                    "evidence_subjects": sorted(evidence_subjects_by_agent[forecast.agent_id])[:12],
+                },
+                "forecast": forecast.to_dict(),
+                "vote": vote,
+                "prediction": prediction.get("prediction", {}),
+            }
+        )
+
+    payload = {
+        "round_id": result.round_id,
+        "participant_count": len(participants),
+        "model_counts": dict(Counter(item["model"] for item in participants if item["model"])),
+        "risk_profile_counts": dict(Counter(item["risk_profile"] for item in participants)),
+        "access_tier_counts": dict(Counter(item["access_tier"] for item in participants)),
+        "participants": participants,
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_debate_trace(path: Path, result: RoundResult) -> None:
+    room_claims = [claim for room in result.rooms for claim in room.claims]
+    all_claims = room_claims + result.claims
+    payload = {
+        "round_id": result.round_id,
+        "summary": {
+            "rooms": len(result.rooms),
+            "room_claims": len(room_claims),
+            "final_claims": len(result.claims),
+            "disputes": sum(1 for claim in all_claims if claim.dispute),
+            "evidence_subjects": result.summary.get("subject_count", 0),
+            "subject_shifts": result.summary.get("subject_shift_count", 0),
+            "carried_claims": result.summary.get("carried_claim_count", 0),
+        },
+        "rooms": [
+            {
+                "room_id": room.room_id,
+                "stance": room.stance,
+                "evidence_focus": room.evidence_focus,
+                "participant_ids": room.participant_ids,
+                "representative_ids": room.representative_ids,
+                "synthesis": {
+                    "home_probability": room.synthesis_home_probability,
+                    "confidence": room.synthesis_confidence,
+                    "text": room.synthesis,
+                },
+                "claims": [_trace_claim(claim) for claim in room.claims],
+            }
+            for room in result.rooms
+        ],
+        "final_chamber": [_trace_claim(claim) for claim in result.claims],
+        "dispute_edges": [_trace_dispute(claim) for claim in all_claims if claim.dispute],
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_vote_trace(path: Path, result: RoundResult) -> None:
+    decision = result.collective_decision
+    payload = {
+        "round_id": result.round_id,
+        "note": (
+            "raw_forecast_sides are actual bet/pick votes; raw_prediction_winners are probability-implied "
+            "match winners from each ant's post-debate probability."
+        ),
+        "method": decision.method,
+        "final_prediction": decision.prediction,
+        "recommendation": decision.recommendation,
+        "vote_breakdown": decision.vote_breakdown,
+        "top_supporters": decision.top_supporters,
+        "agent_votes": decision.agent_votes,
+        "agent_predictions": decision.agent_predictions,
+        "forecasts": [forecast.to_dict() for forecast in result.forecasts],
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_kg_summary(path: Path, result: RoundResult) -> None:
+    all_claims = [claim for finding in result.findings for claim in finding.evidence_claims]
+    entity_counts = Counter(entity.entity_type for entity in result.world_graph.entities)
+    relationship_counts = Counter(relationship.relation_type for relationship in result.world_graph.relationships)
+    source_domains = sorted({str(claim.get("source_domain") or "") for claim in all_claims if claim.get("source_domain")})
+    coverage = _scouting_coverage_audit(all_claims)
+    team_coverage = _team_scouting_coverage_audit(result)
+    backlog = _scouting_backlog_audit(team_coverage)
+    integrity = _kg_integrity_audit(result)
+    readiness = _kg_readiness_audit(
+        result,
+        coverage=coverage,
+        team_coverage=team_coverage,
+        scouting_backlog=backlog,
+        integrity=integrity,
+    )
+    payload = {
+        "round_id": result.round_id,
+        "schema_version": KG_SCHEMA_VERSION,
+        "graph": {
+            "graph_id": result.world_graph.graph_id,
+            "entity_count": len(result.world_graph.entities),
+            "relationship_count": len(result.world_graph.relationships),
+            "entity_counts": dict(sorted(entity_counts.items())),
+            "relationship_counts": dict(sorted(relationship_counts.items())),
+        },
+        "evidence": {
+            "finding_count": len(result.findings),
+            "evidence_claim_count": len(all_claims),
+            "claim_types": dict(_counter(claim.get("claim_type") for claim in all_claims)),
+            "claim_impacts": dict(_counter(claim.get("impact") for claim in all_claims)),
+            "metric_claim_count": sum(1 for claim in all_claims if claim.get("metrics")),
+        },
+        "sources": {
+            "source_types": dict(Counter(finding.source_type for finding in result.findings)),
+            "access_levels": dict(Counter(finding.access_level for finding in result.findings)),
+            "source_domains": source_domains,
+            "source_quality": dict(_counter(claim.get("source_quality") for claim in all_claims)),
+            "source_kind": dict(_counter(claim.get("source_kind") for claim in all_claims)),
+        },
+        "knowledge_views": {
+            "count": len(result.knowledge_views),
+            "access_tiers": dict(Counter(view.access_tier for view in result.knowledge_views)),
+            "avg_visible_findings": _average_visible_findings(result),
+        },
+        "coverage": {
+            "required_claim_type_coverage": coverage.get("required_claim_type_coverage"),
+            "present_required_claim_types": coverage.get("present_required_claim_types"),
+            "missing_required_claim_types": coverage.get("missing_required_claim_types"),
+            "teams_with_missing_required_claims": team_coverage.get("teams_with_missing_required_claims"),
+        },
+        "backlog": {
+            "item_count": backlog.get("item_count", 0),
+            "items": list(backlog.get("items") or [])[:20],
+        },
+        "readiness": readiness,
+        "integrity": {
+            "passes": integrity.get("passes"),
+            "orphan_relationship_count": integrity.get("orphan_relationship_count"),
+            "duplicate_evidence_claim_group_count": integrity.get("duplicate_evidence_claim_group_count"),
+            "summarizes_evidence_claim_missing_target_count": integrity.get(
+                "summarizes_evidence_claim_missing_target_count"
+            ),
+        },
+        "admission": _kg_admission_audit(result),
+        "findings": [_scout_audit_row(finding) for finding in result.findings],
+        "files": {
+            "world_graph": "world_graph.json",
+            "kg_manifest": "kg_manifest.json",
+            "scouting_audit": "scouting_audit.json",
+            "knowledge_views": "knowledge_views.json",
+            "findings": "findings.json",
+        },
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_run_report(path: Path, match: MatchContext, result: RoundResult) -> None:
+    summary = result.summary
+    vote_breakdown = result.collective_decision.vote_breakdown
+    entity_counts = Counter(entity.entity_type for entity in result.world_graph.entities)
+    all_claims = [claim for finding in result.findings for claim in finding.evidence_claims]
+    coverage = _scouting_coverage_audit(all_claims)
+    team_coverage = _team_scouting_coverage_audit(result)
+    backlog = _scouting_backlog_audit(team_coverage)
+    integrity = _kg_integrity_audit(result)
+    readiness = _kg_readiness_audit(
+        result,
+        coverage=coverage,
+        team_coverage=team_coverage,
+        scouting_backlog=backlog,
+        integrity=integrity,
+    )
+    lines = [
+        f"# Run Report: {result.round_id}",
+        "",
+        "## Match",
+        "",
+        f"- Fixture: {match.home_team} vs {match.away_team}",
+        f"- Schedule: {match.match_date} {match.match_time}".strip(),
+        f"- Venue: {match.venue_name or 'n/a'}",
+        "",
+        "## Health",
+        "",
+        f"- Participants: {len(result.forecasts)} ants",
+        f"- KG readiness: {readiness.get('status')} (integrity_passes={integrity.get('passes')})",
+        f"- Debate: {len(result.rooms)} rooms, {summary.get('room_claims', 0)} room claims, {summary.get('final_claims', 0)} final claims",
+        f"- Disputes: {summary.get('dispute_count', 0)} disputes, {summary.get('subject_shift_count', 0)} subject shifts",
+        f"- Vote participation: {summary.get('participating_bets', 0)}/{summary.get('population', 0)}",
+        "",
+        "## KG",
+        "",
+        f"- Findings: {len(result.findings)}",
+        f"- Evidence claims: {len(all_claims)}",
+        f"- Entity counts: {_counter_text(entity_counts)}",
+        f"- Required coverage: {coverage.get('required_claim_type_coverage')}",
+        f"- Missing required claim types: {', '.join(coverage.get('missing_required_claim_types') or []) or 'none'}",
+        f"- Scouting backlog: {backlog.get('item_count', 0)} items",
+        "",
+        "## Participants",
+        "",
+        f"- Models: {_counter_text(Counter(forecast.model for forecast in result.forecasts if forecast.model))}",
+        f"- Risk profiles: {_counter_text(Counter(forecast.risk_profile for forecast in result.forecasts))}",
+        f"- Access tiers: {_counter_text(Counter(forecast.access_tier for forecast in result.forecasts))}",
+        "",
+        "## Debate",
+        "",
+    ]
+    for room in result.rooms:
+        lines.append(
+            f"- {room.room_id}: {len(room.participant_ids)} ants, reps={len(room.representative_ids)}, "
+            f"focus={room.evidence_focus}, lean={_room_lean(room.synthesis_home_probability)}, "
+            f"claims={len(room.claims)}"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Vote",
+            "",
+            f"- Final recommendation: {result.collective_decision.recommendation.get('side')} ({result.collective_decision.recommendation.get('winner')})",
+            f"- Confidence: {result.collective_decision.prediction.get('confidence')}",
+            f"- Forecast vote distribution: {_counter_text(vote_breakdown.get('raw_forecast_sides') or {})}",
+            f"- Probability lean distribution: {_counter_text(vote_breakdown.get('raw_prediction_winners') or {})}",
+            f"- Weighted support: {_counter_text(vote_breakdown.get('weighted_side_support') or {})}",
+            "",
+            "## Main Files",
+            "",
+            "- `run_report.md`: this audit.",
+            "- `kg_summary.json`: compact KG/source/readiness summary.",
+            "- `participants.json`: per-ant identity, rooms, debate activity, vote, and model.",
+            "- `debate_trace.json`: structured room and final chamber replay.",
+            "- `vote_trace.json`: complete weighted vote and prediction trace.",
+            "- `world_graph.json` / `kg_manifest.json`: graph payload and load manifest.",
+        ]
+    )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _split_windows(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _forecast_datafeed_focus(forecast) -> list[str]:
+    interests = list(getattr(forecast, "datafeed_interests", []) or [])
+    if interests:
+        return interests
+    weights = getattr(forecast, "source_weights", {}) or {}
+    if isinstance(weights, dict):
+        ranked = sorted(weights.items(), key=lambda item: float(item[1] or 0.0), reverse=True)
+        return [str(label) for label, value in ranked if float(value or 0.0) >= 0.18]
+    return []
+
+
+def _trace_claim(claim) -> dict:
+    return {
+        "claim_id": _claim_memory_id(claim),
+        "speaker_id": claim.speaker_id,
+        "speaker_name": claim.speaker_name,
+        "genome_id": claim.genome_id,
+        "model": claim.model,
+        "persona": claim.persona,
+        "phase": claim.debate_phase or "final",
+        "room_id": claim.room_id or "global",
+        "role": claim.debate_role or "speaker",
+        "access_tier": claim.access_tier,
+        "visible_findings": claim.visible_findings,
+        "claim_type": claim.claim_type,
+        "selection_reason": claim.selection_reason,
+        "direction": claim.direction,
+        "stated_home_probability": claim.stated_home_probability,
+        "confidence": claim.confidence,
+        "evidence_tags": claim.evidence_tags,
+        "evidence_subjects": _claim_evidence_subjects(claim),
+        "referenced_evidence": [_compact_evidence(evidence) for evidence in claim.referenced_evidence],
+        "dispute": claim.dispute,
+        "diagnostics": claim.diagnostics,
+        "message": claim.message,
+    }
+
+
+def _trace_dispute(claim) -> dict:
+    dispute = dict(claim.dispute)
+    return {
+        "source_claim_id": _claim_memory_id(claim),
+        "source_speaker_id": claim.speaker_id,
+        "source_speaker_name": claim.speaker_name,
+        "source_genome_id": claim.genome_id,
+        "target_claim_id": dispute.get("target_claim_id"),
+        "target_speaker_id": dispute.get("target_speaker_id"),
+        "target_speaker_name": dispute.get("target_speaker_name"),
+        "target_genome_id": dispute.get("target_genome_id"),
+        "critique_type": dispute.get("critique_type"),
+        "critique_label": dispute.get("critique_label"),
+        "critique_summary": dispute.get("critique_summary"),
+        "probability_gap": dispute.get("probability_gap"),
+        "target_subject": dispute.get("target_subject"),
+        "counter_subject": dispute.get("counter_subject"),
+        "target_source_quality": dispute.get("target_source_quality"),
+        "target_excerpt": dispute.get("target_excerpt"),
+    }
+
+
+def _compact_evidence(evidence: dict) -> dict:
+    return {
+        "finding_id": evidence.get("finding_id"),
+        "scout_name": evidence.get("scout_name"),
+        "source_type": evidence.get("source_type"),
+        "access_level": evidence.get("access_level"),
+        "claim_type": evidence.get("claim_type"),
+        "impact": evidence.get("impact"),
+        "subject": evidence.get("subject") or evidence.get("team") or evidence.get("player"),
+        "team": evidence.get("team"),
+        "player": evidence.get("player"),
+        "source_title": evidence.get("source_title"),
+        "source_url": evidence.get("source_url"),
+        "source_domain": evidence.get("source_domain"),
+        "source_kind": evidence.get("source_kind"),
+        "source_quality": evidence.get("source_quality"),
+        "source_recency_bucket": evidence.get("source_recency_bucket"),
+        "metrics": evidence.get("metrics") or {},
+        "claim": _short_field(evidence.get("claim"), limit=320),
+    }
+
+
+def _short_field(value: object, *, limit: int = 220) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    clipped = text[: limit - 3].rstrip(" .")
+    if " " in clipped:
+        clipped = clipped.rsplit(" ", 1)[0].rstrip(" .")
+    return f"{clipped}..."
+
+
+def _average_visible_findings(result: RoundResult) -> float:
+    if not result.knowledge_views:
+        return 0.0
+    return round(
+        sum(len(view.visible_findings) for view in result.knowledge_views) / len(result.knowledge_views),
+        4,
+    )
+
+
+def _counter_text(values) -> str:
+    if not values:
+        return "none"
+    items = values.items() if hasattr(values, "items") else Counter(values).items()
+    return ", ".join(f"{key}={value}" for key, value in sorted(items, key=lambda item: str(item[0])))
 
 
 def _write_collective_decision(path: Path, result: RoundResult) -> None:

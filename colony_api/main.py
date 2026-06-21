@@ -35,6 +35,7 @@ DEFAULT_RUNS_ROOT = REPO_ROOT / "colony" / "runs" / "api"
 RUNS_ROOT = Path(os.environ.get("COLONY_API_RUNS_DIR", str(DEFAULT_RUNS_ROOT))).resolve()
 RUN_DEMO = REPO_ROOT / "colony" / "run_demo.py"
 RUN_MATCH = REPO_ROOT / "colony" / "run_match.py"
+RUN_SUPABASE_COLONY = REPO_ROOT / "colony" / "tools" / "run_supabase_colony.py"
 SCOUTING_MATRIX = REPO_ROOT / "colony" / "scouting_matrix.py"
 SCOUTING_SOURCE_CATALOG = REPO_ROOT / "colony" / "config" / "scouting_source_catalog.json"
 COLONY_ENV = REPO_ROOT / "colony" / ".env"
@@ -59,7 +60,28 @@ COLONY_SRC = REPO_ROOT / "colony"
 if str(COLONY_SRC) not in sys.path:
     sys.path.insert(0, str(COLONY_SRC))
 
+from colony_harness.ant_records import generate_ant_rows, next_agent_index  # noqa: E402
+from colony_harness.colony_config import (  # noqa: E402
+    ALLOWED_ANT_COUNTS,
+    ALLOWED_PRESETS,
+    ALLOWED_RISK_PROFILES,
+    CONFIG_SCHEMA_VERSION,
+    MODEL_SPECIES,
+    describe_colony_config,
+    normalize_colony_config,
+)
 from colony_harness.genes import Genome, SourceWeights, mutate_genome  # noqa: E402
+from colony_harness.supabase_client import (  # noqa: E402
+    SupabaseRequestError,
+    delete_colony,
+    delete_colony_ants,
+    fetch_colony,
+    fetch_colony_ants,
+    load_supabase_settings,
+    update_ant_status,
+    upsert_colony,
+    upsert_colony_ants,
+)
 from colony_harness.wallets import WalletStore  # noqa: E402
 
 ENS_ADJECTIVES = [
@@ -129,6 +151,54 @@ class KGRunRequest(BaseModel):
     )
     timeout: int = Field(default=120, ge=5, le=300)
     camel_agents: int = Field(default=4, ge=0, le=12)
+
+
+class UserColonyConfigRequest(BaseModel):
+    ant_count: Literal[50, 100, 200] = 50
+    preset: Literal["market", "scout", "quant"] = "market"
+    risk_profile: Literal["cautious", "balanced", "aggressive"] = "balanced"
+    model_preference: str = "mixed"
+    personality_mix: list[str] | None = None
+    kg_focus: list[str] | None = None
+    source_weights: dict[str, float] | None = None
+
+
+class UserColonyUpsertRequest(BaseModel):
+    pubkey: str = Field(min_length=1)
+    angle: float = 0.0
+    dist: float = 120.0
+    accent: int = 0xB07E1C
+    name: str | None = None
+    visibility: Literal["public", "private", "unlisted"] = "public"
+    config: UserColonyConfigRequest = Field(default_factory=UserColonyConfigRequest)
+
+
+class UserColonyAntRosterRequest(BaseModel):
+    target_count: Literal[50, 100, 200] | None = None
+    count: int | None = Field(default=None, ge=1, le=200)
+    replace: bool = False
+    seed: int = Field(default=42, ge=0)
+
+
+class UserColonyAntStatusRequest(BaseModel):
+    status: Literal["alive", "dead", "inactive", "retired"]
+
+
+class UserColonyRunRequest(BaseModel):
+    match: str = "Brazil vs Morocco"
+    match_id: str | None = None
+    data_mode: Literal["synthetic", "public", "openfootball"] = "public"
+    rooms: int = Field(default=5, ge=1, le=50)
+    agents: int | None = Field(default=None, ge=1, le=200)
+    seed: int = Field(default=42, ge=0)
+    voice_mode: Literal["template", "llm"] = "template"
+    refresh_data: bool = False
+    include_camel: bool = False
+    include_x: bool = False
+    include_telegram: bool = False
+    include_polygun: bool = False
+    include_deepseek_scout: bool = False
+    debug: bool = True
 
 
 class RunRecord(BaseModel):
@@ -242,6 +312,16 @@ def _read_metadata(run_id: str) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _run_created_sort_key(metadata: dict) -> str:
+    return str(
+        metadata.get("created_at")
+        or metadata.get("started_at")
+        or metadata.get("completed_at")
+        or metadata.get("id")
+        or ""
+    )
+
+
 def _write_metadata(run_id: str, payload: dict) -> None:
     path = _metadata_path(run_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -257,6 +337,149 @@ def _append_run_event(run_id: str, event: dict) -> None:
     with RUN_EVENT_LOCK:
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _supabase_settings_or_503():
+    try:
+        return load_supabase_settings(COLONY_ENV)
+    except SupabaseRequestError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def _run_supabase_call(func):
+    try:
+        return func()
+    except SupabaseRequestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _clean_pubkey(pubkey: str) -> str:
+    cleaned = str(pubkey or "").strip()
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="pubkey is required")
+    return cleaned
+
+
+def _short_pubkey(pubkey: str) -> str:
+    return pubkey if len(pubkey) <= 12 else f"{pubkey[:4]}...{pubkey[-4:]}"
+
+
+def _default_colony_name(pubkey: str) -> str:
+    return f"Colony {_short_pubkey(pubkey)}"
+
+
+def _colony_config_from_request(config: UserColonyConfigRequest | dict | None) -> dict:
+    if isinstance(config, UserColonyConfigRequest):
+        payload = config.dict(exclude_none=True)
+    else:
+        payload = dict(config or {})
+    if str(payload.get("model_preference") or "") not in MODEL_SPECIES:
+        raise HTTPException(status_code=400, detail=f"Unsupported model_preference: {payload.get('model_preference')}")
+    return normalize_colony_config(payload)
+
+
+def _colony_ant_summary(rows: list[dict]) -> dict:
+    statuses: dict[str, int] = {}
+    models: dict[str, int] = {}
+    personas: dict[str, int] = {}
+    for row in rows:
+        status = str(row.get("status") or "")
+        model = str(row.get("model") or "")
+        persona = str(row.get("persona") or "")
+        if status:
+            statuses[status] = statuses.get(status, 0) + 1
+        if model:
+            models[model] = models.get(model, 0) + 1
+        if persona:
+            personas[persona] = personas.get(persona, 0) + 1
+    return {
+        "total": len(rows),
+        "statuses": dict(sorted(statuses.items())),
+        "models": dict(sorted(models.items())),
+        "personas": dict(sorted(personas.items())),
+    }
+
+
+def _colony_payload(settings, pubkey: str) -> dict:
+    row = fetch_colony(settings, pubkey, select="*")
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Colony not found: {pubkey}")
+    ants = fetch_colony_ants(
+        settings,
+        pubkey,
+        status="all",
+        select="agent_id,status,model,persona,risk_profile,datafeed_interests,parent_agent_id,generation,genome_id,updated_at",
+    )
+    return {
+        "colony": row,
+        "config_description": describe_colony_config(row.get("config") if isinstance(row.get("config"), dict) else {}),
+        "ant_summary": _colony_ant_summary(ants),
+    }
+
+
+def _ensure_colony_ant_roster(settings, pubkey: str, request: UserColonyAntRosterRequest) -> dict:
+    colony = fetch_colony(settings, pubkey, select="pubkey,name,config")
+    if colony is None:
+        raise HTTPException(status_code=404, detail=f"Colony not found: {pubkey}")
+    colony_config = normalize_colony_config(colony.get("config") if isinstance(colony.get("config"), dict) else {})
+    if request.count is not None and request.target_count is not None:
+        raise HTTPException(status_code=400, detail="Use either count or target_count, not both")
+
+    existing = [] if request.replace else fetch_colony_ants(settings, pubkey, status="all", select="agent_id")
+    deleted: list[dict] = []
+    if request.replace:
+        deleted = delete_colony_ants(settings, pubkey)
+
+    if request.count is not None:
+        start_index = next_agent_index(existing)
+        target_count = start_index + request.count
+        max_count = max(ALLOWED_ANT_COUNTS)
+        if target_count > max_count:
+            raise HTTPException(status_code=400, detail=f"Max supported roster size is {max_count}")
+        min_agent_index = start_index
+    else:
+        target_count = int(request.target_count or colony_config["ant_count"])
+        min_agent_index = 0
+    if target_count not in ALLOWED_ANT_COUNTS and request.count is None:
+        raise HTTPException(status_code=400, detail=f"target_count must be one of {sorted(ALLOWED_ANT_COUNTS)}")
+
+    existing_ids = {str(row.get("agent_id") or "") for row in existing}
+    generated_rows = generate_ant_rows(
+        pubkey=pubkey,
+        colony_config=colony_config,
+        population_size=target_count,
+        seed=request.seed,
+        status="alive",
+    )
+    rows_to_write = [
+        row
+        for row in generated_rows
+        if row["agent_id"] not in existing_ids and _agent_index(row["agent_id"]) >= min_agent_index
+    ]
+    written = upsert_colony_ants(settings, rows_to_write) if rows_to_write else []
+    roster = fetch_colony_ants(
+        settings,
+        pubkey,
+        status="all",
+        select="agent_id,status,model,persona,risk_profile,datafeed_interests,parent_agent_id,generation,genome_id,updated_at",
+    )
+    return {
+        "pubkey": pubkey,
+        "target_count": target_count,
+        "deleted": len(deleted),
+        "written": len(written),
+        "ant_summary": _colony_ant_summary(roster),
+        "ants": roster,
+    }
+
+
+def _agent_index(agent_id: str) -> int:
+    match = re.fullmatch(r"ant_(\d+)", str(agent_id))
+    if not match:
+        return 0
+    return int(match.group(1))
 
 
 def _safe_artifact_path(run_id: str, relative_path: str) -> Path:
@@ -349,7 +572,70 @@ def _latest_event(run_id: str, event_type: str) -> dict | None:
     return latest
 
 
-def _prediction_record(metadata: dict, *, include_incomplete: bool = True) -> dict | None:
+def _agent_predictions_with_forecasts(run_id: str, decision: dict | None) -> list[dict]:
+    predictions = [
+        dict(item)
+        for item in ((decision or {}).get("agent_predictions") or [])
+        if isinstance(item, dict)
+    ]
+    try:
+        events = _read_events(run_id)
+    except HTTPException:
+        events = []
+    forecasts_by_agent = {
+        str(event.get("agent_id")): event
+        for event in events
+        if event.get("event_type") == "forecast" and event.get("agent_id")
+    }
+    seen = {str(item.get("agent_id")) for item in predictions if item.get("agent_id")}
+    for item in predictions:
+        agent_id = str(item.get("agent_id") or "")
+        forecast = forecasts_by_agent.get(agent_id)
+        if forecast:
+            item["forecast"] = {
+                "side": forecast.get("side"),
+                "stake": forecast.get("stake"),
+                "home_probability": forecast.get("home_probability"),
+                "edge": forecast.get("edge"),
+                "market_edge": forecast.get("market_edge"),
+                "bankroll": forecast.get("bankroll"),
+                "decision_reason": forecast.get("decision_reason"),
+            }
+    for agent_id, forecast in sorted(forecasts_by_agent.items()):
+        if agent_id in seen:
+            continue
+        predictions.append(
+            {
+                "agent_id": agent_id,
+                "ens_name": forecast.get("ens_name"),
+                "model": forecast.get("model"),
+                "persona": forecast.get("persona"),
+                "risk_profile": forecast.get("risk_profile"),
+                "bet_intent": {
+                    "side": forecast.get("side"),
+                    "value": forecast.get("edge"),
+                    "risk_profile": forecast.get("risk_profile"),
+                },
+                "forecast": {
+                    "side": forecast.get("side"),
+                    "stake": forecast.get("stake"),
+                    "home_probability": forecast.get("home_probability"),
+                    "edge": forecast.get("edge"),
+                    "market_edge": forecast.get("market_edge"),
+                    "bankroll": forecast.get("bankroll"),
+                    "decision_reason": forecast.get("decision_reason"),
+                },
+            }
+        )
+    return predictions
+
+
+def _prediction_record(
+    metadata: dict,
+    *,
+    include_incomplete: bool = True,
+    include_agents: bool = False,
+) -> dict | None:
     run_id = str(metadata.get("id") or "")
     if not run_id:
         return None
@@ -385,7 +671,7 @@ def _prediction_record(metadata: dict, *, include_incomplete: bool = True) -> di
         "events": f"/runs/{run_id}/events" if (_run_dir(run_id) / "events.jsonl").exists() else None,
     }
 
-    return {
+    record = {
         "run_id": run_id,
         "kind": metadata.get("kind") or "demo",
         "status": metadata.get("status"),
@@ -416,6 +702,145 @@ def _prediction_record(metadata: dict, *, include_incomplete: bool = True) -> di
         },
         "artifacts": {key: value for key, value in artifacts.items() if value},
     }
+    if include_agents:
+        record["agent_predictions"] = _agent_predictions_with_forecasts(run_id, decision)
+        record["top_supporters"] = (decision or {}).get("top_supporters") or []
+    return record
+
+
+def _match_text_key(value: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+
+def _match_words(value: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold()).strip()
+
+
+def _split_match_teams(match: str | None) -> tuple[str, str] | None:
+    parts = re.split(r"\s+v(?:s\.?)?\s+", str(match or "").strip(), maxsplit=1, flags=re.IGNORECASE)
+    if len(parts) != 2:
+        return None
+    home = parts[0].strip()
+    away = parts[1].strip()
+    if not home or not away:
+        return None
+    return home, away
+
+
+def _safe_probability(value) -> float | None:
+    try:
+        probability = float(value)
+    except (TypeError, ValueError):
+        return None
+    if probability <= 0.0 or probability >= 1.0:
+        return None
+    return probability
+
+
+def _market_claim_price(metrics: dict) -> float | None:
+    for key in ("clob_midpoint", "price", "last_price", "best_ask", "best_bid"):
+        probability = _safe_probability(metrics.get(key))
+        if probability is not None:
+            return probability
+    return None
+
+
+def _market_claim_side(claim: dict, *, home_team: str, away_team: str) -> str | None:
+    metrics = claim.get("metrics") if isinstance(claim.get("metrics"), dict) else {}
+    question = str(metrics.get("question") or claim.get("claim") or claim.get("subject") or "")
+    words = _match_words(question)
+    home = _match_words(home_team)
+    away = _match_words(away_team)
+    if "draw" in words:
+        return "draw"
+    if "win" not in words:
+        return None
+    if home and home in words:
+        return "home"
+    if away and away in words:
+        return "away"
+    return None
+
+
+def _market_side_probabilities_from_findings(findings_path: Path, *, home_team: str, away_team: str) -> dict[str, float]:
+    try:
+        payload = json.loads(findings_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if isinstance(payload, dict):
+        findings = payload.get("findings") or []
+    elif isinstance(payload, list):
+        findings = payload
+    else:
+        findings = []
+
+    probabilities: dict[str, float] = {}
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        for claim in finding.get("evidence_claims") or []:
+            if not isinstance(claim, dict):
+                continue
+            metrics = claim.get("metrics") if isinstance(claim.get("metrics"), dict) else {}
+            if claim.get("claim_type") != "market_snapshot":
+                continue
+            if str(metrics.get("outcome") or "").casefold() != "yes":
+                continue
+            side = _market_claim_side(claim, home_team=home_team, away_team=away_team)
+            price = _market_claim_price(metrics)
+            if side and price is not None:
+                probabilities[side] = price
+    return probabilities
+
+
+def _metadata_matches_request(metadata: dict, *, match: str, match_id: str | None) -> bool:
+    if match_id and metadata.get("match_id") == match_id:
+        return True
+    return bool(match and _match_text_key(metadata.get("match")) == _match_text_key(match))
+
+
+def _latest_market_override_for_match(match: str, match_id: str | None) -> dict | None:
+    teams = _split_match_teams(match)
+    if teams is None or not RUNS_ROOT.exists():
+        return None
+    home_team, away_team = teams
+    candidates: list[dict] = []
+    for path in RUNS_ROOT.glob("kg_*/metadata.json"):
+        try:
+            metadata = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if metadata.get("kind") != "kg" or metadata.get("status") != "succeeded":
+            continue
+        if not _metadata_matches_request(metadata, match=match, match_id=match_id):
+            continue
+        candidates.append(metadata)
+    candidates.sort(key=lambda item: str(item.get("completed_at") or item.get("created_at") or ""), reverse=True)
+
+    for metadata in candidates:
+        run_id = str(metadata.get("id") or "")
+        latest = _latest_compact_dir(run_id)
+        if latest is None:
+            continue
+        side_probabilities = _market_side_probabilities_from_findings(
+            latest / "findings.json",
+            home_team=home_team,
+            away_team=away_team,
+        )
+        home = side_probabilities.get("home")
+        away = side_probabilities.get("away")
+        if home is None or away is None or (home + away) <= 0:
+            continue
+        home_anchor = home / (home + away)
+        return {
+            "home_anchor": round(home_anchor, 6),
+            "side_probabilities": {key: round(value, 6) for key, value in side_probabilities.items()},
+            "source": f"Polymarket KG {run_id}",
+            "kg_run_id": run_id,
+            "home_team": home_team,
+            "away_team": away_team,
+        }
+    return None
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -1261,6 +1686,63 @@ def _build_kg_command(request: KGRunRequest, run_dir: Path) -> list[str]:
     return command
 
 
+def _build_colony_run_command(
+    pubkey: str,
+    request: UserColonyRunRequest,
+    run_dir: Path,
+    *,
+    market_override: dict | None = None,
+) -> list[str]:
+    command = [
+        sys.executable,
+        str(RUN_SUPABASE_COLONY),
+        "--env",
+        str(COLONY_ENV),
+        "--pubkey",
+        pubkey,
+        "--match",
+        request.match,
+        "--data-mode",
+        request.data_mode,
+        "--voice-mode",
+        request.voice_mode,
+        "--seed",
+        str(request.seed),
+        "--runs-dir",
+        str(run_dir / "compact"),
+        "--rooms",
+        str(request.rooms),
+    ]
+    if request.match_id:
+        command.extend(["--match-id", request.match_id])
+    if request.agents is not None:
+        command.extend(["--agents", str(request.agents)])
+    if request.refresh_data:
+        command.append("--refresh-data")
+    if request.include_camel:
+        command.append("--include-camel")
+    if request.include_x:
+        command.append("--include-x")
+    if request.include_telegram:
+        command.append("--include-telegram")
+    if request.include_polygun:
+        command.append("--include-polygun")
+    if request.include_deepseek_scout:
+        command.append("--include-deepseek-scout")
+    if market_override:
+        command.extend(["--market-home-probability", str(market_override["home_anchor"])])
+        command.extend(
+            [
+                "--market-side-probabilities-json",
+                json.dumps(market_override["side_probabilities"], sort_keys=True),
+            ]
+        )
+        command.extend(["--market-source", str(market_override["source"])])
+    if request.debug:
+        command.append("--debug")
+    return command
+
+
 def _emit_kg_stream_events(run_id: str, compact_dir: Path) -> None:
     graph_path = compact_dir / "world_graph.json"
     manifest_path = compact_dir / "kg_manifest.json"
@@ -1374,12 +1856,12 @@ def _execute_run(run_id: str, command: list[str]) -> None:
     metadata["status"] = "running"
     metadata["started_at"] = _utc_now()
     _write_metadata(run_id, metadata)
-    if metadata.get("kind") == "scouting":
+    if metadata.get("kind") in {"scouting", "colony"}:
         _append_run_event(
             run_id,
             {
                 "event_type": "kg_stage",
-                "stage": "scouting_process_started",
+                "stage": "colony_process_started" if metadata.get("kind") == "colony" else "scouting_process_started",
                 "match": metadata.get("match"),
                 "data_mode": metadata.get("data_mode"),
             },
@@ -1440,7 +1922,7 @@ def _execute_run(run_id: str, command: list[str]) -> None:
                         handle.write(compact_text)
                 else:
                     root_events.write_text(compact_text, encoding="utf-8")
-        if metadata.get("kind") in {"scouting", "kg"} and returncode == 0:
+        if metadata.get("kind") in {"scouting", "kg", "colony"} and returncode == 0:
             _emit_kg_stream_events(run_id, latest)
     _write_metadata(run_id, metadata)
 
@@ -1962,6 +2444,11 @@ def get_config() -> dict:
             "kg_modules": "/kg/modules",
             "start_scouting_run": "/scouting/run",
             "start_demo_run": "/runs/demo",
+            "colony": "/colonies/{pubkey}",
+            "create_colony": "/colonies",
+            "colony_ants": "/colonies/{pubkey}/ants",
+            "colony_ant_status": "/colonies/{pubkey}/ants/{agent_id}/status",
+            "start_colony_run": "/colonies/{pubkey}/run",
             "list_runs": "/runs",
             "predictions": "/predictions",
             "run": "/runs/{run_id}",
@@ -2015,6 +2502,150 @@ def get_config() -> dict:
             "lineage_id",
         ],
     }
+
+
+@app.get("/colonies/{pubkey}")
+def get_user_colony(pubkey: str) -> dict:
+    cleaned = _clean_pubkey(pubkey)
+    settings = _supabase_settings_or_503()
+    return _run_supabase_call(lambda: _colony_payload(settings, cleaned))
+
+
+@app.post("/colonies")
+def upsert_user_colony(request: UserColonyUpsertRequest) -> dict:
+    settings = _supabase_settings_or_503()
+    pubkey = _clean_pubkey(request.pubkey)
+    config = _colony_config_from_request(request.config)
+    row = {
+        "pubkey": pubkey,
+        "angle": request.angle,
+        "dist": request.dist,
+        "accent": int(request.accent),
+        "name": request.name or _default_colony_name(pubkey),
+        "config": config,
+        "visibility": request.visibility,
+        "config_schema_version": CONFIG_SCHEMA_VERSION,
+    }
+    written = _run_supabase_call(lambda: upsert_colony(settings, row))
+    payload = _run_supabase_call(lambda: _colony_payload(settings, pubkey))
+    payload["written"] = written
+    return payload
+
+
+@app.delete("/colonies/{pubkey}")
+def delete_user_colony(pubkey: str) -> dict:
+    cleaned = _clean_pubkey(pubkey)
+    settings = _supabase_settings_or_503()
+    deleted_ants = _run_supabase_call(lambda: delete_colony_ants(settings, cleaned))
+    deleted_colonies = _run_supabase_call(lambda: delete_colony(settings, cleaned))
+    return {
+        "pubkey": cleaned,
+        "deleted": len(deleted_colonies),
+        "deleted_ants": len(deleted_ants),
+        "rows": deleted_colonies,
+        "ants": deleted_ants,
+    }
+
+
+@app.get("/colonies/{pubkey}/ants")
+def get_user_colony_ants(
+    pubkey: str,
+    status: Literal["alive", "dead", "inactive", "retired", "all"] = "all",
+    limit: int = 200,
+) -> dict:
+    cleaned = _clean_pubkey(pubkey)
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 500")
+    settings = _supabase_settings_or_503()
+    colony = _run_supabase_call(lambda: fetch_colony(settings, cleaned, select="pubkey"))
+    if colony is None:
+        return {"pubkey": cleaned, "ants": [], "ant_summary": _colony_ant_summary([])}
+    rows = _run_supabase_call(lambda: fetch_colony_ants(settings, cleaned, status=status, limit=limit))
+    return {"pubkey": cleaned, "ants": rows, "ant_summary": _colony_ant_summary(rows)}
+
+
+@app.post("/colonies/{pubkey}/ants")
+def ensure_user_colony_ants(pubkey: str, request: UserColonyAntRosterRequest) -> dict:
+    cleaned = _clean_pubkey(pubkey)
+    settings = _supabase_settings_or_503()
+    return _run_supabase_call(lambda: _ensure_colony_ant_roster(settings, cleaned, request))
+
+
+@app.patch("/colonies/{pubkey}/ants/{agent_id}/status")
+def set_user_colony_ant_status(pubkey: str, agent_id: str, request: UserColonyAntStatusRequest) -> dict:
+    cleaned = _clean_pubkey(pubkey)
+    cleaned_agent_id = str(agent_id or "").strip()
+    if not cleaned_agent_id:
+        raise HTTPException(status_code=400, detail="agent_id is required")
+    settings = _supabase_settings_or_503()
+    colony = _run_supabase_call(lambda: fetch_colony(settings, cleaned, select="pubkey"))
+    if colony is None:
+        raise HTTPException(status_code=404, detail=f"Colony not found: {cleaned}")
+    rows = _run_supabase_call(
+        lambda: update_ant_status(settings, pubkey=cleaned, agent_id=cleaned_agent_id, status=request.status)
+    )
+    return {"pubkey": cleaned, "agent_id": cleaned_agent_id, "updated": len(rows), "ants": rows}
+
+
+@app.post("/colonies/{pubkey}/run", response_model=RunRecord, status_code=202)
+def start_user_colony_run(pubkey: str, request: UserColonyRunRequest, background_tasks: BackgroundTasks) -> dict:
+    cleaned = _clean_pubkey(pubkey)
+    if not RUN_SUPABASE_COLONY.exists():
+        raise HTTPException(status_code=500, detail="colony/tools/run_supabase_colony.py is missing")
+    settings = _supabase_settings_or_503()
+    colony = _run_supabase_call(lambda: fetch_colony(settings, cleaned, select="pubkey,name,config"))
+    if colony is None:
+        raise HTTPException(status_code=404, detail=f"Colony not found: {cleaned}")
+
+    RUNS_ROOT.mkdir(parents=True, exist_ok=True)
+    run_id = f"colony_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    run_dir = _run_dir(run_id)
+    run_dir.mkdir(parents=True, exist_ok=False)
+    market_override = _latest_market_override_for_match(request.match, request.match_id)
+    command = _build_colony_run_command(cleaned, request, run_dir, market_override=market_override)
+    metadata = {
+        "id": run_id,
+        "kind": "colony",
+        "status": "queued",
+        "created_at": _utc_now(),
+        "started_at": None,
+        "completed_at": None,
+        "returncode": None,
+        "command": command,
+        "run_dir": str(run_dir),
+        "events_path": str(run_dir / "events.jsonl"),
+        "compact_runs_dir": str(run_dir / "compact"),
+        "pubkey": cleaned,
+        "colony_name": colony.get("name"),
+        "match": request.match,
+        "match_id": request.match_id,
+        "data_mode": request.data_mode,
+        "market_override": market_override,
+    }
+    _write_metadata(run_id, metadata)
+    if market_override:
+        _append_run_event(
+            run_id,
+            {
+                "event_type": "kg_stage",
+                "stage": "market_anchor_loaded",
+                "match": request.match,
+                "market_override": market_override,
+            },
+        )
+    _append_run_event(
+        run_id,
+        {
+            "event_type": "kg_stage",
+            "stage": "colony_run_queued",
+            "pubkey": cleaned,
+            "match": request.match,
+            "match_id": request.match_id,
+            "data_mode": request.data_mode,
+        },
+    )
+    background_tasks.add_task(_execute_run, run_id, command)
+    return metadata
 
 
 @app.get("/forecast/config")
@@ -2786,12 +3417,13 @@ def list_runs() -> dict:
     if not RUNS_ROOT.exists():
         return {"runs": []}
     runs = []
-    for path in sorted(RUNS_ROOT.iterdir(), reverse=True):
+    for path in RUNS_ROOT.iterdir():
         if not path.is_dir():
             continue
         metadata_path = path / "metadata.json"
         if metadata_path.exists():
             runs.append(json.loads(metadata_path.read_text(encoding="utf-8")))
+    runs.sort(key=_run_created_sort_key, reverse=True)
     return {"runs": runs}
 
 
@@ -2799,14 +3431,18 @@ def list_runs() -> dict:
 def list_predictions(limit: int = 50, include_incomplete: bool = True) -> dict:
     if not RUNS_ROOT.exists():
         return {"count": 0, "predictions": []}
-    records = []
-    for path in sorted(RUNS_ROOT.iterdir(), reverse=True):
+    metadata_rows = []
+    for path in RUNS_ROOT.iterdir():
         if not path.is_dir():
             continue
         metadata_path = path / "metadata.json"
         if not metadata_path.exists():
             continue
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata_rows.append(json.loads(metadata_path.read_text(encoding="utf-8")))
+    metadata_rows.sort(key=_run_created_sort_key, reverse=True)
+
+    records = []
+    for metadata in metadata_rows:
         record = _prediction_record(metadata, include_incomplete=include_incomplete)
         if record is not None:
             records.append(record)
@@ -2890,7 +3526,7 @@ def get_run(run_id: str) -> dict:
 @app.get("/runs/{run_id}/prediction")
 def get_run_prediction(run_id: str) -> dict:
     metadata = _read_metadata(run_id)
-    record = _prediction_record(metadata, include_incomplete=True)
+    record = _prediction_record(metadata, include_incomplete=True, include_agents=True)
     if record is None:
         raise HTTPException(status_code=404, detail=f"Prediction not found for run: {run_id}")
     return record

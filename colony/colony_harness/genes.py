@@ -15,7 +15,6 @@ ModelSpecies = Literal[
     "qwen-3",
     "MiniMax-M3",
     "MiniMax-M2.7",
-    "MiniMax-M2.7-highspeed",
     "claude-haiku",
     "parametric",
 ]
@@ -25,7 +24,6 @@ LLM_MODEL_SPECIES: list[ModelSpecies] = [
     "qwen-3",
     "MiniMax-M3",
     "MiniMax-M2.7",
-    "MiniMax-M2.7-highspeed",
     "claude-haiku",
 ]
 

@@ -328,6 +328,53 @@ class ScoutingQualityTests(unittest.TestCase):
         self.assertEqual(lineup_claim.player, "Nayef Aguerd")
         self.assertEqual(lineup_claim.source_recency_bucket, "last_7_days")
 
+    def test_cross_team_player_claim_filter_rejects_foreign_player_card(self) -> None:
+        wrong_claim = live_scouts_module.EvidenceClaim(
+            claim_type="injury_availability",
+            subject="Christian Pulisic",
+            claim="United States star Christian Pulisic is out of the team's World Cup clash with Australia.",
+            team="Portugal",
+            player="Christian Pulisic",
+            impact="negative_home",
+            confidence=0.56,
+            source_title=(
+                "Portugal 2026 Squad - ESPN - United States star Christian Pulisic is out of "
+                "the team's World Cup clash with Australia"
+            ),
+            source_url="https://www.espn.com/soccer/team/squad/_/id/482/portugal",
+        )
+        valid_claim = live_scouts_module.EvidenceClaim(
+            claim_type="injury_availability",
+            subject="Ruben Dias",
+            claim="Portugal defender Ruben Dias is doubtful for the next World Cup match.",
+            team="Portugal",
+            player="Ruben Dias",
+            impact="negative_home",
+            confidence=0.56,
+            source_title="Portugal team news: Ruben Dias fitness update",
+            source_url="https://example.test/portugal-team-news",
+        )
+
+        filtered = live_scouts_module._filter_cross_team_player_claims(
+            [wrong_claim, valid_claim],
+            home_team="Portugal",
+            away_team="Uzbekistan",
+        )
+        filtered_items = live_scouts_module._filter_official_squad_items(
+            [
+                NewsItem(
+                    title=wrong_claim.source_title,
+                    source="ESPN",
+                    link=wrong_claim.source_url,
+                    published="",
+                )
+            ],
+            team="Portugal",
+        )
+
+        self.assertEqual(filtered, [valid_claim])
+        self.assertEqual(filtered_items, [])
+
     def test_match_history_metrics_use_source_context(self) -> None:
         claims = _extract_claims_from_text(
             text="Brazil vs Morocco Past H2H Results, Asian Handicap Win%: 100.0%, Total Goals Over%: 100.0%.",
@@ -1338,7 +1385,7 @@ class ScoutingQualityTests(unittest.TestCase):
         self.assertEqual(missing_player_form[0]["recommended_scout"], "player_form_scout")
         self.assertIn("team_scouting_topic:", missing_player_form[0]["target_entity_id"])
 
-    def test_world_graph_integrity_accepts_synthesis_debate_claims_without_forecasts(self) -> None:
+    def test_world_graph_integrity_tracks_synthesis_without_counting_it_as_predictor(self) -> None:
         match = MatchContext(
             round_id="round:test",
             home_team="Brazil",
@@ -1368,7 +1415,8 @@ class ScoutingQualityTests(unittest.TestCase):
         graph = build_world_graph(match, claims=[claim])
         integrity = _kg_integrity_audit(type("Result", (), {"world_graph": graph})())
 
-        self.assertTrue(any(entity.entity_id == "predictor:colony_synthesis" for entity in graph.entities))
+        self.assertTrue(any(entity.entity_id == "synthesis:colony_synthesis" for entity in graph.entities))
+        self.assertFalse(any(entity.entity_id == "predictor:colony_synthesis" for entity in graph.entities))
         self.assertTrue(integrity["passes"])
         self.assertEqual(integrity["orphan_relationship_count"], 0)
 

@@ -134,7 +134,7 @@ def apply_world_verifications(
             if not allow_manual:
                 raise ValueError(
                     f"{agent.agent_id} ({agent.wallet_address}) has no Worldcoin AgentKit receipt. "
-                    "Run colony/register_world_agent.py for this agent first, or pass --allow-manual-world-agent for demos."
+                    "Run colony/register_world_agent.py for this agent first, or pass --allow-manual-world-agent for local testing."
                 )
             agent.world_verified = True
             verified_count += 1

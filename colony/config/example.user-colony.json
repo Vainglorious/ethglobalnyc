@@ -1,0 +1,23 @@
+{
+  "preset": "market",
+  "ant_count": 50,
+  "model_preference": "mixed",
+  "risk_profile": "balanced",
+  "personality_mix": [
+    "market contrarian",
+    "crowd watcher",
+    "quiet value hunter",
+    "defensive skeptic"
+  ],
+  "kg_focus": [
+    "odds",
+    "market_context",
+    "sentiment"
+  ],
+  "source_weights": {
+    "stats": 0.16,
+    "odds": 0.52,
+    "news": 0.12,
+    "debate": 0.2
+  }
+}

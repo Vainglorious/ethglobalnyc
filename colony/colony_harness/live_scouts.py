@@ -16,7 +16,7 @@ import unicodedata
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
@@ -70,6 +70,68 @@ STAR_PLAYERS = {
     "Haiti": ["nazon", "ducken nazon", "pierrot", "frantzdy pierrot", "placide"],
     "Qatar": ["akram afif", "afif", "almoez ali", "al-haydos", "barsham"],
     "Switzerland": ["xhaka", "granit xhaka", "akanji", "embolo", "sommer", "ndoye", "zakaria"],
+}
+
+NATIONAL_TEAM_ALIASES = {
+    "Algeria": ("Algeria",),
+    "Argentina": ("Argentina",),
+    "Australia": ("Australia", "Socceroos"),
+    "Austria": ("Austria",),
+    "Belgium": ("Belgium", "Red Devils"),
+    "Bosnia and Herzegovina": ("Bosnia", "Bosnia and Herzegovina"),
+    "Brazil": ("Brazil", "Selecao"),
+    "Canada": ("Canada",),
+    "Cape Verde": ("Cape Verde",),
+    "Colombia": ("Colombia",),
+    "Croatia": ("Croatia",),
+    "Curaçao": ("Curaçao", "Curacao"),
+    "Czech Republic": ("Czech Republic", "Czechia"),
+    "DR Congo": ("DR Congo", "D.R. Congo", "Democratic Republic of Congo"),
+    "Ecuador": ("Ecuador",),
+    "Egypt": ("Egypt",),
+    "England": ("England",),
+    "France": ("France",),
+    "Germany": ("Germany",),
+    "Ghana": ("Ghana",),
+    "Haiti": ("Haiti",),
+    "Iran": ("Iran",),
+    "Iraq": ("Iraq",),
+    "Ivory Coast": ("Ivory Coast", "Cote d'Ivoire", "Côte d'Ivoire"),
+    "Japan": ("Japan",),
+    "Jordan": ("Jordan",),
+    "Mexico": ("Mexico",),
+    "Morocco": ("Morocco",),
+    "Netherlands": ("Netherlands", "Holland"),
+    "New Zealand": ("New Zealand",),
+    "Norway": ("Norway",),
+    "Panama": ("Panama",),
+    "Paraguay": ("Paraguay",),
+    "Portugal": ("Portugal",),
+    "Qatar": ("Qatar",),
+    "Saudi Arabia": ("Saudi Arabia",),
+    "Scotland": ("Scotland",),
+    "Senegal": ("Senegal",),
+    "South Africa": ("South Africa",),
+    "South Korea": ("South Korea", "Korea Republic"),
+    "Spain": ("Spain",),
+    "Sweden": ("Sweden",),
+    "Switzerland": ("Switzerland",),
+    "Tunisia": ("Tunisia",),
+    "Turkey": ("Turkey", "Turkiye", "Türkiye"),
+    "USA": ("USA", "U.S.", "United States", "USMNT"),
+    "Uruguay": ("Uruguay",),
+    "Uzbekistan": ("Uzbekistan",),
+}
+
+PLAYER_CONTEXT_CLAIM_TYPES = {
+    "injury_availability",
+    "injury_return",
+    "key_players",
+    "lineup",
+    "player_form",
+    "player_profile",
+    "player_ratings",
+    "squad_roster",
 }
 
 
@@ -671,6 +733,39 @@ def public_match_context_from_tournament_match(
         confidence=0.5,
         known_players=known_players,
     )
+    availability_claims = _filter_cross_team_player_claims(availability_claims, home_team=home_team, away_team=away_team)
+    x_claims = _filter_cross_team_player_claims(x_claims, home_team=home_team, away_team=away_team)
+    camel_claims = _filter_cross_team_player_claims(camel_claims, home_team=home_team, away_team=away_team)
+    camel_deep_claims = _filter_cross_team_player_claims(camel_deep_claims, home_team=home_team, away_team=away_team)
+    team_form_claims = _filter_cross_team_player_claims(team_form_claims, home_team=home_team, away_team=away_team)
+    player_form_claims = _filter_cross_team_player_claims(player_form_claims, home_team=home_team, away_team=away_team)
+    squad_depth_claims = _filter_cross_team_player_claims(squad_depth_claims, home_team=home_team, away_team=away_team)
+    match_history_claims = _filter_cross_team_player_claims(match_history_claims, home_team=home_team, away_team=away_team)
+    tactical_claims = _filter_cross_team_player_claims(tactical_claims, home_team=home_team, away_team=away_team)
+    official_squad_claims = _filter_cross_team_player_claims(official_squad_claims, home_team=home_team, away_team=away_team)
+    squad_roster_claims = _filter_cross_team_player_claims(squad_roster_claims, home_team=home_team, away_team=away_team)
+    key_player_claims = _filter_cross_team_player_claims(key_player_claims, home_team=home_team, away_team=away_team)
+    player_rating_claims = _filter_cross_team_player_claims(
+        player_rating_claims,
+        home_team=home_team,
+        away_team=away_team,
+    )
+    injury_return_claims = _filter_cross_team_player_claims(
+        injury_return_claims,
+        home_team=home_team,
+        away_team=away_team,
+    )
+    coach_form_claims = _filter_cross_team_player_claims(coach_form_claims, home_team=home_team, away_team=away_team)
+    attacking_profile_claims = _filter_cross_team_player_claims(
+        attacking_profile_claims,
+        home_team=home_team,
+        away_team=away_team,
+    )
+    defensive_profile_claims = _filter_cross_team_player_claims(
+        defensive_profile_claims,
+        home_team=home_team,
+        away_team=away_team,
+    )
 
     market, stats, odds, news = public_probabilities(
         home_team=home_team,
@@ -813,6 +908,7 @@ def public_match_context_from_tournament_match(
             timeout_seconds=timeout_seconds,
         )
     )
+    findings = _filter_cross_team_player_findings(findings, home_team=home_team, away_team=away_team)
     return MatchContext(
         round_id=round_id,
         home_team=home_team,
@@ -1269,6 +1365,149 @@ def _claim_matches_team(claim: EvidenceClaim, team: str) -> bool:
     candidates = [claim.team, claim.subject]
     team_key = _fold_text(team)
     return any(_fold_text(str(candidate or "")) == team_key for candidate in candidates)
+
+
+def _filter_cross_team_player_claims(
+    claims: list[EvidenceClaim],
+    *,
+    home_team: str,
+    away_team: str,
+) -> list[EvidenceClaim]:
+    return [
+        claim
+        for claim in claims
+        if not _is_cross_team_player_claim(claim.to_dict(), home_team=home_team, away_team=away_team)
+    ]
+
+
+def _filter_cross_team_player_findings(
+    findings: list[Finding],
+    *,
+    home_team: str,
+    away_team: str,
+) -> list[Finding]:
+    filtered_findings: list[Finding] = []
+    for finding in findings:
+        if not finding.evidence_claims:
+            filtered_findings.append(finding)
+            continue
+        filtered_claims = [
+            claim
+            for claim in finding.evidence_claims
+            if not _is_cross_team_player_claim(claim, home_team=home_team, away_team=away_team)
+        ]
+        if not filtered_claims:
+            continue
+        if len(filtered_claims) == len(finding.evidence_claims):
+            filtered_findings.append(finding)
+        else:
+            filtered_findings.append(replace(finding, evidence_claims=filtered_claims))
+    return filtered_findings
+
+
+def _is_cross_team_player_claim(claim: dict, *, home_team: str, away_team: str) -> bool:
+    claim_type = str(claim.get("claim_type") or "").strip()
+    if claim_type not in PLAYER_CONTEXT_CLAIM_TYPES:
+        return False
+    player = _clean_text(str(claim.get("player") or ""))
+    if len(_fold_text(player)) < 4:
+        return False
+    text = " ".join(
+        _clean_text(str(claim.get(key) or ""))
+        for key in ("claim", "source_title", "subject")
+        if claim.get(key)
+    )
+    foreign_teams = _foreign_national_team_mentions(text, allowed_teams=(home_team, away_team))
+    if not foreign_teams:
+        return False
+    return _foreign_team_owns_player(text, player=player, foreign_teams=foreign_teams)
+
+
+def _foreign_national_team_mentions(text: str, *, allowed_teams: tuple[str, ...]) -> list[str]:
+    allowed_alias_keys = {
+        _fold_text(alias)
+        for team in allowed_teams
+        for alias in _national_team_aliases(team)
+        if alias
+    }
+    mentions: list[str] = []
+    lowered = text.lower()
+    for team, aliases in NATIONAL_TEAM_ALIASES.items():
+        team_aliases = _national_team_aliases(team, explicit_aliases=aliases)
+        if any(_fold_text(alias) in allowed_alias_keys for alias in team_aliases):
+            continue
+        if any(_alias_in_text(alias, lowered) for alias in team_aliases):
+            mentions.append(team)
+    return mentions
+
+
+def _foreign_team_owns_player(text: str, *, player: str, foreign_teams: list[str]) -> bool:
+    folded_text = _fold_text(text)
+    player_key = _fold_text(player)
+    player_pattern = _token_pattern(player_key)
+    role_pattern = _foreign_player_role_pattern()
+    for team in foreign_teams:
+        for alias in _national_team_aliases(team):
+            alias_key = _fold_text(alias)
+            if not alias_key:
+                continue
+            alias_pattern = _token_pattern(alias_key)
+            if re.search(rf"{alias_pattern}.{{0,50}}\b(?:{role_pattern})\b.{{0,35}}{player_pattern}", folded_text):
+                return True
+            if re.search(rf"{player_pattern}.{{0,80}}\b(?:for|from|of|with)\b.{{0,25}}{alias_pattern}", folded_text):
+                return True
+    return False
+
+
+def _has_foreign_player_source_signal(text: str, *, allowed_teams: tuple[str, ...]) -> bool:
+    foreign_teams = _foreign_national_team_mentions(text, allowed_teams=allowed_teams)
+    if not foreign_teams:
+        return False
+    folded_text = _fold_text(text)
+    role_pattern = _foreign_player_role_pattern()
+    name_pattern = r"[a-z][a-z.'-]+(?:\s+[a-z][a-z.'-]+){0,3}"
+    for team in foreign_teams:
+        for alias in _national_team_aliases(team):
+            alias_key = _fold_text(alias)
+            if not alias_key:
+                continue
+            alias_pattern = _token_pattern(alias_key)
+            if re.search(rf"{alias_pattern}.{{0,50}}\b(?:{role_pattern})\b\s+{name_pattern}", folded_text):
+                return True
+    return False
+
+
+def _foreign_player_role_pattern() -> str:
+    roles = (
+        "star",
+        "captain",
+        "forward",
+        "striker",
+        "winger",
+        "midfielder",
+        "defender",
+        "goalkeeper",
+        "keeper",
+        "playmaker",
+        "international",
+        "player",
+    )
+    return "|".join(roles)
+
+
+def _national_team_aliases(team: str, *, explicit_aliases: tuple[str, ...] | None = None) -> tuple[str, ...]:
+    aliases = [team]
+    aliases.extend(explicit_aliases or NATIONAL_TEAM_ALIASES.get(team, ()))
+    team_key = _fold_text(team)
+    for canonical, values in NATIONAL_TEAM_ALIASES.items():
+        candidates = (canonical, *values)
+        if any(_fold_text(candidate) == team_key for candidate in candidates):
+            aliases.extend(candidates)
+    return tuple(dict.fromkeys(alias for alias in aliases if alias))
+
+
+def _token_pattern(text: str) -> str:
+    return rf"(?<![\w-]){re.escape(text)}(?![\w-])"
 
 
 def _match_team_name(value: str, *, home_team: str, away_team: str) -> str:
@@ -2127,6 +2366,8 @@ def _filter_topic_items(
         text = f"{item.title} {item.source} {item.link}".lower()
         if _is_noisy_public_item(text):
             continue
+        if _has_foreign_player_source_signal(text, allowed_teams=(team,)):
+            continue
         if topic == "recent_form":
             if any(noisy in text for noisy in ("prediction", "predictions", "odds", "pick", "betting", "tips")):
                 continue
@@ -2253,6 +2494,8 @@ def _filter_official_squad_items(items: list[NewsItem], *, team: str) -> list[Ne
     for item in items:
         text = f"{item.title} {item.source} {item.link}".lower()
         if _is_noisy_public_item(text):
+            continue
+        if _has_foreign_player_source_signal(text, allowed_teams=(team,)):
             continue
         if not _item_mentions_team_or_player(text, team):
             continue

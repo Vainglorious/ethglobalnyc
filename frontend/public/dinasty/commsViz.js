@@ -39,6 +39,16 @@ DN.commsViz = (function () {
     return text.slice(0, 8) + '...' + text.slice(-6);
   }
 
+  function marketSideLabel(side, ev) {
+    if (DN.databridge && DN.databridge.marketSideLabel) {
+      return DN.databridge.marketSideLabel(side, ev || {});
+    }
+    if (side === 'draw') return 'Draw';
+    if (side === 'home') return 'Team A';
+    if (side === 'away') return 'Team B';
+    return String(side || 'unknown');
+  }
+
   function findAntByAgentId(agentId) {
     if (!agentId || !DN.ants || !DN.ants.list) return null;
     return DN.ants.list.find(a => a.agentRecord && (
@@ -234,8 +244,9 @@ DN.commsViz = (function () {
     V._sawForecast = true;
     if (!DN.logTerm) return;
     const aid = ev.ens_name || ev.agent_id || 'agent';
-    const side = ev.side || 'pass';
-    const prob = ev.home_probability != null ? Number(ev.home_probability).toFixed(2) : '—';
+    const side = marketSideLabel(ev.side || 'pass', ev);
+    const firstSide = marketSideLabel('home', ev);
+    const prob = ev.home_probability != null ? firstSide + ' ' + Number(ev.home_probability).toFixed(2) : '—';
     const edge = ev.edge != null ? Number(ev.edge).toFixed(2) : '—';
     const bank = ev.bankroll != null ? Math.round(Number(ev.bankroll)) : '—';
     const economy = economyState();
@@ -245,7 +256,7 @@ DN.commsViz = (function () {
     }
     const contractBit = economy.contract ? ', contract ' + shortHash(economy.contract) : '';
     const marketBit = economy.market_key ? ', market ' + economy.market_key : '';
-    DN.logTerm.push('FORECAST', aid + ' → ' + side + ' @ ' + prob + ' (edge ' + edge + ', bankroll $' + bank + contractBit + marketBit + ')');
+    DN.logTerm.push('FORECAST', aid + ' → ' + side + ' · ' + prob + ' (edge ' + edge + ', bankroll $' + bank + contractBit + marketBit + ')');
   };
 
   V.sawForecast = function () { return !!V._sawForecast; };

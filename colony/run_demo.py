@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a local Colony debate harness demo."""
+"""Run a local Colony debate harness round."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from pathlib import Path
 
 from colony_harness import ColonyHarness
 from colony_harness.artifacts import create_run_dir, write_compact_run_artifacts
+from colony_harness.colony_config import ant_count_from_config, describe_colony_config, load_colony_config
 from colony_harness.console import print_debate_quality, print_final_feed, print_room_debug
 from colony_harness.env import load_env_file
 from colony_harness.identity import assign_ens_names, write_identity_records
@@ -30,6 +31,11 @@ def load_config(path: Path) -> dict:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the Colony debate harness.")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG), help="Path to a colony config JSON file.")
+    parser.add_argument(
+        "--colony-config",
+        default=None,
+        help="Path to a user colony config JSON file, typically from Supabase colonies.config.",
+    )
     parser.add_argument("--agents", type=int, default=None, help="Override population size.")
     parser.add_argument(
         "--rooms",
@@ -118,7 +124,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--allow-manual-world-agent",
         action="store_true",
-        help="Demo escape hatch: allow --world-agent without a stored AgentKit receipt.",
+        help="Local testing escape hatch: allow --world-agent without a stored AgentKit receipt.",
     )
     parser.add_argument(
         "--allow-manual-verified-root",
@@ -177,6 +183,7 @@ def _apply_match_override(config: dict, *, match: str | None, match_id: str | No
 def main() -> None:
     args = parse_args()
     load_env_file(args.env)
+    colony_config = load_colony_config(args.colony_config)
     config = _apply_match_override(
         load_config(Path(args.config)),
         match=args.match,
@@ -211,14 +218,16 @@ def main() -> None:
         return
 
     configured_agents = int(population.get("agents", 40))
+    population_size = args.agents or ant_count_from_config(colony_config, configured_agents)
     room_budget = _resolve_room_budget(
         rooms=args.rooms,
         speakers=args.speakers,
         default=int(population.get("speaker_slots", 6)),
     )
-    loaded_agents = _load_population_if_present(args.population_state, expected_agents=args.agents)
+    expected_agents = population_size if colony_config is not None or args.agents is not None else None
+    loaded_agents = _load_population_if_present(args.population_state, expected_agents=expected_agents)
     harness = ColonyHarness(
-        population_size=args.agents or configured_agents,
+        population_size=population_size,
         speaker_slots=room_budget,
         seed=args.seed if args.seed is not None else int(population.get("seed", 42)),
         voice_model=voice_model,
@@ -227,6 +236,7 @@ def main() -> None:
         wallet_provider=args.wallet_provider,
         dynamic_env_path=args.dynamic_env,
         agents=loaded_agents,
+        colony_config=colony_config,
     )
     _apply_world_agents(args, harness)
     ens_parent = _resolve_ens_parent(args)
@@ -243,6 +253,9 @@ def main() -> None:
 
     print(f"Colony round: {result.round_id}")
     print(f"Match: {match.home_team} vs {match.away_team}")
+    if colony_config is not None:
+        note = " (loaded population state genomes preserved)" if loaded_agents is not None else ""
+        print(f"Colony config: {describe_colony_config(colony_config)}{note}")
     print(f"Population: {result.summary['population']} predictors")
     if args.population_state:
         status = "loaded" if loaded_agents is not None else "created"

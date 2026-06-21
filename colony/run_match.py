@@ -6,14 +6,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 
 from colony_harness import ColonyHarness
 from colony_harness.artifacts import create_run_dir, write_compact_run_artifacts
+from colony_harness.colony_config import ant_count_from_config, describe_colony_config, load_colony_config
 from colony_harness.console import print_debate_quality, print_final_feed, print_room_debug
 from colony_harness.env import load_env_file
 from colony_harness.identity import assign_ens_names, write_identity_records
 from colony_harness.live_scouts import public_match_context_from_tournament_match
+from colony_harness.models import Finding
 from colony_harness.population import load_population_state, normalize_agent_lineages, save_population_state
 from colony_harness.scouts import (
     mock_match_context_from_tournament_match,
@@ -94,6 +97,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--agents", type=int, default=None, help="Population size.")
     parser.add_argument(
+        "--colony-config",
+        default=None,
+        help="Path to a user colony config JSON file, typically from Supabase colonies.config.",
+    )
+    parser.add_argument(
         "--rooms",
         type=int,
         default=None,
@@ -114,6 +122,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--runs-dir", default="colony/runs", help="Directory for automatic compact run logs.")
     parser.add_argument("--no-run-log", action="store_true", help="Disable automatic compact run logs.")
     parser.add_argument("--debug", action="store_true", help="Write an additional human-readable debug.md report.")
+    parser.add_argument(
+        "--market-home-probability",
+        type=float,
+        default=None,
+        help="Override the binary home-vs-away market anchor used by the debate model.",
+    )
+    parser.add_argument(
+        "--market-side-probabilities-json",
+        default="",
+        help='Optional raw 1X2 market probabilities JSON, e.g. {"home":0.15,"draw":0.23,"away":0.62}.',
+    )
+    parser.add_argument("--market-source", default="", help="Human-readable source label for market override.")
     parser.add_argument(
         "--agent-wallets",
         action="store_true",
@@ -176,7 +196,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--allow-manual-world-agent",
         action="store_true",
-        help="Demo escape hatch: allow --world-agent without a stored AgentKit receipt.",
+        help="Local testing escape hatch: allow --world-agent without a stored AgentKit receipt.",
     )
     parser.add_argument(
         "--allow-manual-verified-root",
@@ -203,9 +223,115 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _clamp_probability(value: float) -> float:
+    return max(0.01, min(0.99, float(value)))
+
+
+def _parse_market_side_probabilities(raw: str) -> dict[str, float]:
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"--market-side-probabilities-json is invalid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SystemExit("--market-side-probabilities-json must be a JSON object")
+    probabilities: dict[str, float] = {}
+    for side in ("home", "draw", "away"):
+        if side not in payload or payload[side] is None:
+            continue
+        try:
+            probabilities[side] = _clamp_probability(float(payload[side]))
+        except (TypeError, ValueError) as exc:
+            raise SystemExit(f"Market probability for {side} must be numeric") from exc
+    return probabilities
+
+
+def _market_override_home_anchor(args: argparse.Namespace, side_probabilities: dict[str, float]) -> float | None:
+    if args.market_home_probability is not None:
+        return _clamp_probability(float(args.market_home_probability))
+    home = side_probabilities.get("home")
+    away = side_probabilities.get("away")
+    if home is None or away is None:
+        return None
+    denominator = home + away
+    if denominator <= 0:
+        return None
+    return _clamp_probability(home / denominator)
+
+
+def _apply_market_override(match, args: argparse.Namespace):
+    side_probabilities = _parse_market_side_probabilities(args.market_side_probabilities_json)
+    anchor = _market_override_home_anchor(args, side_probabilities)
+    if anchor is None:
+        return match
+
+    source = args.market_source or "market override"
+    summary = (
+        f"{source} sets binary market anchor for {match.home_team} vs {match.away_team} "
+        f"to {anchor:.3f}."
+    )
+    if side_probabilities:
+        labels = {
+            "home": match.home_team,
+            "draw": "Draw",
+            "away": match.away_team,
+        }
+        market_line = ", ".join(
+            f"{labels[side]}={side_probabilities[side]:.3f}"
+            for side in ("home", "draw", "away")
+            if side in side_probabilities
+        )
+        summary = f"{summary} Raw 1X2 market: {market_line}."
+
+    metrics = {
+        "binary_home_probability": anchor,
+        "source": source,
+    }
+    for side in ("home", "draw", "away"):
+        if side in side_probabilities:
+            metrics[f"market_{side}_probability"] = side_probabilities[side]
+
+    finding = Finding(
+        finding_id=f"{match.round_id}:market_anchor_override",
+        scout_name="market_anchor_override",
+        access_level="public",
+        source_type="market",
+        finding_name="market_anchor_override",
+        home_probability=anchor,
+        home_delta=round(anchor - match.market_home_probability, 4),
+        confidence=0.9,
+        cost=0.0,
+        citations=[],
+        summary=summary,
+        evidence_claims=[
+            {
+                "claim": summary,
+                "claim_type": "market_anchor",
+                "confidence": 0.9,
+                "extraction_method": "kg_polymarket_override",
+                "impact": "market_anchor",
+                "metrics": metrics,
+                "source_kind": "market_snapshot",
+                "source_quality": "strong",
+                "source_title": source,
+                "subject": f"{match.home_team} vs {match.away_team}",
+                "team": "",
+            }
+        ],
+    )
+    return replace(
+        match,
+        market_home_probability=anchor,
+        odds_home_signal=anchor,
+        findings=[finding, *list(match.findings)],
+    )
+
+
 def main() -> None:
     args = parse_args()
     load_env_file(args.env)
+    colony_config = load_colony_config(args.colony_config)
     graph = _load_openfootball_graph(args) if args.data_mode == "openfootball" else _load_graph(Path(args.kg))
     match_entity = _select_match(graph, match_id=args.match_id, match_name=args.match)
     if args.data_mode == "public":
@@ -228,11 +354,14 @@ def main() -> None:
         rescout_targets = []
         match = mock_match_context_from_tournament_match(match_entity)
 
+    match = _apply_market_override(match, args)
     voice_model = llm_voice_model_from_env() if args.voice_mode == "llm" else TemplateVoiceModel()
     room_budget = _resolve_room_budget(rooms=args.rooms, speakers=args.speakers, default=6)
-    loaded_agents = _load_population_if_present(args.population_state, expected_agents=args.agents)
+    population_size = args.agents or ant_count_from_config(colony_config, 40)
+    expected_agents = population_size if colony_config is not None or args.agents is not None else None
+    loaded_agents = _load_population_if_present(args.population_state, expected_agents=expected_agents)
     harness = ColonyHarness(
-        population_size=args.agents or 40,
+        population_size=population_size,
         speaker_slots=room_budget,
         seed=args.seed,
         voice_model=voice_model,
@@ -241,6 +370,7 @@ def main() -> None:
         wallet_provider=args.wallet_provider,
         dynamic_env_path=args.dynamic_env,
         agents=loaded_agents,
+        colony_config=colony_config,
     )
     _apply_world_agents(args, harness)
     ens_parent = _resolve_ens_parent(args)
@@ -259,6 +389,26 @@ def main() -> None:
     print(f"KG match id: {match_entity['entity_id']}")
     print(f"Match: {match.home_team} vs {match.away_team}")
     print(f"Schedule: {attrs.get('date')} {attrs.get('time')} | {attrs.get('group')} | {attrs.get('ground')}")
+    if args.market_home_probability is not None or args.market_side_probabilities_json:
+        side_probabilities = _parse_market_side_probabilities(args.market_side_probabilities_json)
+        side_labels = {
+            "home": match.home_team,
+            "draw": "Draw",
+            "away": match.away_team,
+        }
+        raw_market = " | ".join(
+            f"{side_labels[side]}={side_probabilities[side]:.1%}"
+            for side in ("home", "draw", "away")
+            if side in side_probabilities
+        )
+        raw_suffix = f" | 1X2 {raw_market}" if raw_market else ""
+        print(
+            "Market override: "
+            f"{args.market_source or 'market override'} | "
+            f"{match.home_team} vs {match.away_team} anchor={match.market_home_probability:.1%}"
+            f"{raw_suffix}"
+        )
+
     print(f"Data mode: {args.data_mode}")
     if args.data_mode == "openfootball":
         print(f"OpenFootball scout: cache={args.openfootball_cache} refresh={'yes' if args.refresh_data else 'no'}")
@@ -276,6 +426,9 @@ def main() -> None:
             "Focused re-scout targets: "
             + ", ".join(f"{target.get('team')}:{target.get('claim_type')}" for target in rescout_targets)
         )
+    if colony_config is not None:
+        note = " (loaded population state genomes preserved)" if loaded_agents is not None else ""
+        print(f"Colony config: {describe_colony_config(colony_config)}{note}")
     print(f"Population: {result.summary['population']} predictors")
     if args.population_state:
         status = "loaded" if loaded_agents is not None else "created"

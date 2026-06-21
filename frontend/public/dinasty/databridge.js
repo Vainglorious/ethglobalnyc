@@ -20,12 +20,52 @@ DN.databridge = (function () {
   let ti = 0;
   let records = [], forecasts = [], rooms = [], summary = null;
   let runEvents = [];
+  let activeMarketMatch = null;
   const COL = { debate: '#8E79C4', forecast: '#3FA89F', economy: '#E8A23D', lineage: '#D96E54' };
 
   const r1 = (n) => Math.round((n || 0) * 10) / 10;
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
+  function marketOutcomeLabels(source) {
+    const match = (source && (source.match || source.market || source.metadata)) || activeMarketMatch || {};
+    const first = match.home_team || match.team1 || match.team_a ||
+      (source && (source.home_team || source.team1 || source.team_a)) || 'Team A';
+    const second = match.away_team || match.team2 || match.team_b ||
+      (source && (source.away_team || source.team2 || source.team_b)) || 'Team B';
+    return { home: first, draw: 'Draw', away: second };
+  }
+
+  function marketSideLabel(side, source) {
+    const labels = marketOutcomeLabels(source);
+    return labels[side] || String(side || 'unknown');
+  }
+
+  function marketSideCountsText(values, source) {
+    return ['home', 'draw', 'away'].map((side) => {
+      const raw = values && values[side] != null ? values[side] : 0;
+      return marketSideLabel(side, source) + '=' + raw;
+    }).join(' · ');
+  }
+
+  B.marketOutcomeLabels = marketOutcomeLabels;
+  B.marketSideLabel = marketSideLabel;
+
+  function rememberMarketMatch(body) {
+    body = body || {};
+    if (body.home_team && body.away_team) {
+      activeMarketMatch = { home_team: body.home_team, away_team: body.away_team };
+      return;
+    }
+    const label = String(body.match || '');
+    const parts = label.split(/\s+v(?:s\.?)?\s+/i);
+    if (parts.length >= 2 && parts[0] && parts[1]) {
+      activeMarketMatch = { home_team: parts[0].trim(), away_team: parts.slice(1).join(' vs ').trim() };
+    }
+  }
+
   function build(events) {
+    const marketEvent = events.find((e) => e && e.match && e.match.home_team && e.match.away_team);
+    if (marketEvent) rememberMarketMatch(marketEvent.match);
     records = events.filter((e) => e.event_type === 'agent_record');
     forecasts = events.filter((e) => e.event_type === 'forecast');
     rooms = events.filter((e) => e.event_type === 'debate_room');
@@ -38,11 +78,12 @@ DN.databridge = (function () {
 
     const q = [];
     if (summary) {
+      const labels = marketOutcomeLabels(summary);
       q.push([
-        'Round resolved — market home probability ' +
+        'Round resolved — market probability for ' + labels.home + ' ' +
           Math.round(summary.market_home_probability * 100) +
           '%, $' + r1(summary.total_staked) + ' staked across ' + summary.population +
-          ' agents (' + summary.home_bets + ' home · ' + (summary.draw_bets || 0) + ' draw · ' + summary.away_bets + ' away).',
+          ' agents (' + marketSideCountsText({ home: summary.home_bets, draw: summary.draw_bets, away: summary.away_bets }, summary) + ').',
         'Forecast', COL.economy,
       ]);
     }
@@ -348,6 +389,11 @@ DN.databridge = (function () {
     return apiJson('/runs/' + encodeURIComponent(runId) + '/prediction');
   };
 
+  B.fetchRunAgents = function (runId) {
+    if (!runId) return Promise.reject(new Error('run id required'));
+    return apiJson('/runs/' + encodeURIComponent(runId) + '/agents');
+  };
+
   B.fetchRunKg = function (runId) {
     if (!runId) return Promise.reject(new Error('run id required'));
     return apiJson('/runs/' + encodeURIComponent(runId) + '/kg')
@@ -365,6 +411,55 @@ DN.databridge = (function () {
         B.kgRunDefaults = payload.defaults || {};
         return payload;
       });
+  };
+
+  B.fetchUserColony = function (pubkey) {
+    if (!pubkey) return Promise.reject(new Error('Wallet public key required.'));
+    return apiJson('/colonies/' + encodeURIComponent(pubkey));
+  };
+
+  B.createUserColony = function (payload) {
+    if (!payload || !payload.pubkey) return Promise.reject(new Error('Wallet public key required.'));
+    return apiJson('/colonies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  };
+
+  B.deleteUserColony = function (pubkey) {
+    if (!pubkey) return Promise.reject(new Error('Wallet public key required.'));
+    return apiJson('/colonies/' + encodeURIComponent(pubkey), { method: 'DELETE' });
+  };
+
+  B.fetchUserColonyAnts = function (pubkey, opts) {
+    if (!pubkey) return Promise.reject(new Error('Wallet public key required.'));
+    opts = opts || {};
+    const params = new URLSearchParams();
+    params.set('status', opts.status || 'all');
+    params.set('limit', String(opts.limit || 200));
+    return apiJson('/colonies/' + encodeURIComponent(pubkey) + '/ants?' + params.toString());
+  };
+
+  B.ensureUserColonyAnts = function (pubkey, opts) {
+    if (!pubkey) return Promise.reject(new Error('Wallet public key required.'));
+    return apiJson('/colonies/' + encodeURIComponent(pubkey) + '/ants', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts || {}),
+    });
+  };
+
+  B.setUserColonyAntStatus = function (pubkey, agentId, status) {
+    if (!pubkey || !agentId) return Promise.reject(new Error('Wallet public key and agent id required.'));
+    return apiJson(
+      '/colonies/' + encodeURIComponent(pubkey) + '/ants/' + encodeURIComponent(agentId) + '/status',
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      },
+    );
   };
 
   B.fetchScoutingKgForMatch = function (opts) {
@@ -400,6 +495,20 @@ DN.databridge = (function () {
       };
     }
     if (event.event_type === 'kg_stage') {
+      if (event.stage === 'market_anchor_loaded' && event.market_override) {
+        const override = event.market_override || {};
+        const probs = override.side_probabilities || {};
+        const labels = marketOutcomeLabels({
+          home_team: override.home_team,
+          away_team: override.away_team,
+          match: event.match,
+        });
+        const rawMarket = ['home', 'draw', 'away'].filter((side) => probs[side] != null).map((side) =>
+          labels[side] + ' ' + Math.round(Number(probs[side] || 0) * 100) + '%'
+        ).join(' · ');
+        const anchor = override.home_anchor == null ? '' : ' · binary ' + labels.home + ' ' + Math.round(Number(override.home_anchor || 0) * 100) + '%';
+        return { level: 'MARKET', message: (rawMarket || 'Market anchor loaded') + anchor };
+      }
       const stage = compactScoutingLabel(event.stage || 'kg_stage', 44);
       const match = event.match ? ' · ' + event.match : '';
       return { level: 'SCOUT', message: 'Stage: ' + stage + match };
@@ -426,6 +535,55 @@ DN.databridge = (function () {
     if (event.event_type === 'scouting_audit') {
       const backlog = event.backlog_count == null ? 'n/a' : event.backlog_count;
       return { level: 'SCOUT', message: 'Audit complete · backlog ' + backlog };
+    }
+    if (event.event_type === 'round_summary') {
+      return {
+        level: 'RUN',
+        message: 'Colony round: ' + (event.population || 0) + ' ants · ' +
+          (event.room_count || 0) + ' rooms · ' +
+          'market order: ' + marketSideCountsText({ home: event.home_bets, draw: event.draw_bets, away: event.away_bets }, event),
+      };
+    }
+    if (event.event_type === 'debate_room') {
+      const claims = event.claims || [];
+      const room = event.room_id || event.room || 'room';
+      return {
+        level: 'DEBATE',
+        message: compactScoutingLabel(room, 32) + ' · ' + claims.length + ' claims',
+      };
+    }
+    if (event.event_type === 'debate_claim') {
+      return {
+        level: 'DEBATE',
+        message: compactScoutingLabel(event.message || event.claim_type || 'debate claim', 120),
+      };
+    }
+    if (event.event_type === 'forecast') {
+      const side = event.side || 'pass';
+      const stake = event.stake == null ? '' : ' · stake ' + Number(event.stake || 0).toFixed(2);
+      const pFirst = event.home_probability == null ? '' : ' · ' + marketSideLabel('home', event) + ' ' + Math.round(Number(event.home_probability || 0) * 100) + '%';
+      return {
+        level: 'VOTE',
+        message: (event.agent_id || 'ant') + ' votes ' + marketSideLabel(side, event) + stake + pFirst,
+      };
+    }
+    if (event.event_type === 'collective_decision') {
+      const prediction = event.prediction || {};
+      const vote = event.vote_breakdown || {};
+      const sides = vote.raw_forecast_sides || {};
+      const sentence = prediction.sentence ||
+        ('Decision: ' + (prediction.winner || event.decision_winner || 'unknown'));
+      return {
+        level: 'DECISION',
+        message: compactScoutingLabel(sentence, 120) +
+          ' · market order: ' + marketSideCountsText(sides, event),
+      };
+    }
+    if (event.event_type === 'settlement_summary') {
+      return {
+        level: 'SETTLE',
+        message: 'Settlement ' + (event.status || 'pending') + ' · staked ' + Number(event.staked_total || 0).toFixed(2),
+      };
     }
     if (/scout|scouting/i.test(event.event_type)) {
       return { level: 'SCOUT', message: compactScoutingLabel(event.event_type, 48) };
@@ -470,6 +628,7 @@ DN.databridge = (function () {
     );
     const showGraphOnComplete = body.show_completed_graph !== false;
     delete body.show_completed_graph;
+    rememberMarketMatch(body);
     if (DN.logTerm) DN.logTerm.push('KG', 'Submitting KG run for ' + body.match + '...');
     return fetch(apiUrl + '/kg/run', {
       method: 'POST',
@@ -510,6 +669,7 @@ DN.databridge = (function () {
     );
     const showGraphOnComplete = body.show_completed_graph !== false;
     delete body.show_completed_graph;
+    rememberMarketMatch(body);
     if (DN.logTerm) DN.logTerm.push('SCOUT', 'Submitting scouting run for ' + body.match + '...');
     return fetch(apiUrl + '/scouting/run', {
       method: 'POST',
@@ -531,6 +691,47 @@ DN.databridge = (function () {
         if (DN.logTerm) DN.logTerm.push('SCOUT', 'Run ' + run.id + ' queued · opening event stream.');
         if (!window.EventSource) return pollScoutingRun(run.id, { showGraphOnComplete });
         return streamScoutingRun(run.id, { showGraphOnComplete });
+      });
+  };
+
+  B.startUserColonyRun = function (pubkey, opts) {
+    if (!apiUrl) return Promise.reject(new Error('No backend API configured.'));
+    if (!pubkey) return Promise.reject(new Error('Wallet public key required.'));
+    const body = Object.assign(
+      {
+        match: 'Brazil vs Morocco',
+        data_mode: 'public',
+        rooms: 5,
+        seed: 42,
+        voice_mode: 'template',
+        debug: true,
+      },
+      opts || {},
+    );
+    const showGraphOnComplete = body.show_completed_graph !== false;
+    delete body.show_completed_graph;
+    rememberMarketMatch(body);
+    if (DN.logTerm) DN.logTerm.push('COLONY', 'Submitting colony run for ' + body.match + '...');
+    return fetch(apiUrl + '/colonies/' + encodeURIComponent(pubkey) + '/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+      .then((r) => (r.ok ? r.json() : r.text().then((t) => Promise.reject(new Error(t || r.status)))))
+      .then((run) => {
+        B.runId = run.id;
+        if (B.resetCommsRun) B.resetCommsRun(run.id);
+        if (DN.kgview && DN.kgview.showScoutingProgress) {
+          DN.kgview.showScoutingProgress({
+            match: body.match,
+            matchId: body.match_id,
+          });
+        } else if (DN.kgview) {
+          DN.kgview.reset('Live colony run');
+        }
+        if (DN.logTerm) DN.logTerm.push('COLONY', 'Run ' + run.id + ' queued from selected colony.');
+        if (!window.EventSource) return pollScoutingRun(run.id, { showGraphOnComplete, title: 'Completed colony run' });
+        return streamScoutingRun(run.id, { showGraphOnComplete, title: 'Completed colony run' });
       });
   };
 

@@ -357,10 +357,9 @@ DN.colony = (function () {
 
     col._foundAnim = { t: 0, sw, dust, dustVel, antsSpawned: false };
 
-    // Kick the migration off RIGHT NOW so the founder column is already
-    // marching across the field while the mound rises. By the time the
-    // animation completes, the lead ants are arriving at the new entrance.
-    if (DN.ants && DN.ants.addColony) {
+    // Optional founder migration. Product-created wallet colonies use this
+    // as persisted state first, so they can skip the visual ant swarm.
+    if (opts.spawnAnts !== false && DN.ants && DN.ants.addColony) {
       DN.ants.addColony(col, parent);
       col._foundAnim.antsSpawned = true;
       if (DN.logTerm && parent) {

@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Press+Start+2P&family=Pixelify+Sans:wght@400;500;600;700&family=Silkscreen:wght@400;700&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="/dinasty/styles.css?v=20260614-kill-ens">
+<link rel="stylesheet" href="/dinasty/styles.css?v=20260621-results-visible">
 </head>
 <body>
 <canvas id="scene"></canvas>
@@ -73,6 +73,14 @@
       <svg viewBox="0 0 24 24"><path d="M12 3c3 4 5 6 5 9a5 5 0 0 1-10 0c0-3 2-5 5-9z"/></svg>
       <span class="tip">Drop forage cache &nbsp;<b>F</b></span>
     </div>
+    <div class="tool" data-tool="found">
+      <svg viewBox="0 0 24 24"><path d="M3 20h18M5 20c1-6 4-9 7-9s6 3 7 9"/><path d="M12 3v3M10.5 4.5h3"/></svg>
+      <span class="tip">Found your colony</span>
+    </div>
+    <div class="tool" id="tool-map">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="6" r="3"/><path d="M6 21c0-4 3-6 6-6s6 2 6 6"/><path d="M3 6l4-2v14l-4 2zM21 6l-4-2v14l4 2z"/></svg>
+      <span class="tip">Toggle Ant view &nbsp;<b>V</b></span>
+    </div>
     <div class="tool" id="tool-recenter">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
       <span class="tip">World overview</span>
@@ -86,7 +94,7 @@
   </div>
 
   <!-- explore controls hint -->
-  <div id="keys" class="panel"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>mouse</kbd> look · <kbd>shift</kbd> sprint · <kbd>esc</kbd> exit</div>
+  <div id="keys" class="panel"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> walk · <kbd>ctrl</kbd> sprint · <kbd>mouse</kbd> look · <kbd>esc</kbd> exit ant view</div>
 
   <!-- enter colony banner -->
   <div id="enterbanner" class="panel"></div>
@@ -94,6 +102,9 @@
   <!-- floating tooltip -->
   <div id="tooltip" class="panel"></div>
 </div>
+
+<!-- phantom wallet — body-level so it stays above every overlay (intro, loading, etc.) -->
+<div id="wallet" class="panel"></div>
 
 <!-- dive fade -->
 <div id="fade"></div>
@@ -115,21 +126,27 @@
 <script src="/dinasty/world.js"></script>
 <script src="/dinasty/flora.js"></script>
 <script src="/dinasty/resources.js"></script>
-<script src="/dinasty/colony.js"></script>
-<script src="/dinasty/ants.js?v=20260614-kill-ens"></script>
+<script src="/dinasty/colony.js?v=20260621-no-create-swarm"></script>
+<script src="/dinasty/ants.js?v=20260621-no-create-swarm"></script>
 <script src="/dinasty/trails.js"></script>
 <script src="/dinasty/underground.js"></script>
 <script src="/dinasty/camera.js"></script>
 <script src="/dinasty/kgview.js"></script>
-<script src="/dinasty/hud.js?v=20260614-discussion-pacing"></script>
+<script src="/dinasty/hud.js?v=20260621-runs-newest-first"></script>
 <script src="/dinasty/logTerm.js"></script>
 <script src="/dinasty/txTable.js"></script>
-<script src="/dinasty/commsViz.js?v=20260614-discussion-pacing"></script>
+<script src="/dinasty/commsViz.js?v=20260621-run-results"></script>
 <script src="/dinasty/crystal.js"></script>
 <script src="/dinasty/lifecycle.js?v=20260614-discussion-pacing"></script>
 <script src="/dinasty/interactions.js"></script>
+<script src="/dinasty/wallet.js"></script>
+<script src="/dinasty/onboarding.js"></script>
+<script src="/dinasty/minimap.js"></script>
+<script src="/dinasty/queen.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/config.js?v=20260620-kg-plugins"></script>
+<script src="/dinasty/supa.js"></script>
 <script src="/dinasty/main.js"></script>
-<script src="/config.js"></script>
-<script src="/dinasty/databridge.js?v=20260614-kill-ens"></script>
+<script src="/dinasty/databridge.js?v=20260621-market-anchor"></script>
 </body>
 </html>

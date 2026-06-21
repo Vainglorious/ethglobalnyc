@@ -62,7 +62,7 @@ DN.hud = (function () {
     if (!root) return;
     // Collapsed control surface: the primary `Run` button plus the Match
     // dropdown stay always visible. The debug buttons (Get ants / Get
-    // KG / Deploy / Buy KG / Stake demo / Settle) live
+    // KG / Deploy / Buy KG / Stake / Settle) live
     // inside a `▾ Advanced` disclosure so the chrome stays clean.
     root.innerHTML =
       '<div class="backend-copy"><div class="backend-k">Backend</div><div class="backend-s" id="backend-status">Railway linked</div></div>' +
@@ -90,12 +90,35 @@ DN.hud = (function () {
           '<label>Timeout <input class="kg-timeout-input" id="kg-run-timeout" type="number" min="5" max="300" step="5" value="120"></label>' +
         '</div>' +
       '</div>' +
+      '<div class="colony-control-panel" id="colony-control-panel">' +
+        '<div class="kg-plugin-head"><span>Colony</span><span id="colony-summary">connect wallet</span></div>' +
+        '<div class="colony-options">' +
+          '<label>Ants <select class="forecast-select" id="colony-ant-count"><option value="50">50</option><option value="100">100</option><option value="200">200</option></select></label>' +
+          '<label>Preset <select class="forecast-select" id="colony-preset"><option value="market">market</option><option value="scout">scout</option><option value="quant">quant</option></select></label>' +
+          '<label>Risk <select class="forecast-select" id="colony-risk"><option value="balanced">balanced</option><option value="cautious">cautious</option><option value="aggressive">aggressive</option></select></label>' +
+          '<label>Model <select class="forecast-select" id="colony-model"><option value="mixed">mixed</option><option value="parametric">parametric</option><option value="MiniMax-M2.7">MiniMax-M2.7</option><option value="MiniMax-M3">MiniMax-M3</option><option value="deepseek-v3.2">deepseek-v3.2</option><option value="claude-haiku">claude-haiku</option><option value="qwen-3">qwen-3</option></select></label>' +
+        '</div>' +
+        '<div class="colony-actions">' +
+          '<button class="backend-btn" id="colony-create">Create</button>' +
+          '<button class="backend-btn secondary" id="colony-add-ants">Add ants</button>' +
+          '<button class="backend-btn secondary" id="colony-list-ants">List</button>' +
+          '<button class="backend-btn secondary" id="colony-run">Run all</button>' +
+          '<button class="backend-btn secondary" id="colony-remove">Delete colony</button>' +
+        '</div>' +
+        '<div class="colony-ant-editor">' +
+          '<input class="colony-ant-input" id="colony-ant-id" type="text" value="ant_0000" aria-label="Ant ID">' +
+          '<select class="forecast-select" id="colony-ant-status" aria-label="Ant status"><option value="alive">alive</option><option value="dead">dead</option><option value="inactive">inactive</option><option value="retired">retired</option></select>' +
+          '<button class="backend-btn secondary" id="colony-update-ant">Update</button>' +
+        '</div>' +
+        '<div class="colony-preview" id="colony-preview">No colony loaded for connected wallet.</div>' +
+        '<div class="colony-ant-list" id="colony-ant-list"></div>' +
+      '</div>' +
       '<div class="backend-advanced" id="backend-advanced" style="display:none;gap:6px;margin-top:6px;flex-wrap:wrap">' +
         '<button class="backend-btn secondary" id="backend-ants">Get ants</button>' +
         '<button class="backend-btn secondary" id="backend-kg">Get KG</button>' +
         '<button class="backend-btn secondary" id="forecast-deploy">Deploy</button>' +
         '<button class="backend-btn secondary" id="x402-buy">Buy KG</button>' +
-        '<button class="backend-btn secondary" id="forecast-setup">Stake demo</button>' +
+        '<button class="backend-btn secondary" id="forecast-setup">Stake</button>' +
         '<button class="backend-btn secondary" id="forecast-settle">Settle</button>' +
       '</div>';
     const advToggle = $('backend-adv-toggle');
@@ -124,12 +147,30 @@ DN.hud = (function () {
     const kgPluginSummary = $('kg-plugin-summary');
     const kgRunMode = $('kg-run-mode');
     const kgRunTimeout = $('kg-run-timeout');
+    const colonySummary = $('colony-summary');
+    const colonyPreview = $('colony-preview');
+    const colonyAntList = $('colony-ant-list');
+    const colonyAntCount = $('colony-ant-count');
+    const colonyPreset = $('colony-preset');
+    const colonyRisk = $('colony-risk');
+    const colonyModel = $('colony-model');
+    const colonyCreateBtn = $('colony-create');
+    const colonyAddAntsBtn = $('colony-add-ants');
+    const colonyListAntsBtn = $('colony-list-ants');
+    const colonyRunBtn = $('colony-run');
+    const colonyRemoveBtn = $('colony-remove');
+    const colonyAntId = $('colony-ant-id');
+    const colonyAntStatus = $('colony-ant-status');
+    const colonyUpdateAntBtn = $('colony-update-ant');
     const forecastCfg = (window.DN_CONFIG && window.DN_CONFIG.FORECAST) || {};
     const configuredKgRun = (window.DN_CONFIG && window.DN_CONFIG.KG_RUN) || {};
     let kgPluginCatalog = [];
     let forecastContract = forecastCfg.CONTRACT || '';
     let forecastMarketKey = '';
     let forecastStakes = [];
+    let colonyBusy = false;
+    let lastColonyPayload = null;
+    let lastRunResults = null;
     let selectedGame = {
       match_id: 'match:world_cup_2026:013:2026_06_13_brazil_morocco',
       market_key: 'match:world_cup_2026:013:2026_06_13_brazil_morocco',
@@ -190,6 +231,346 @@ DN.hud = (function () {
       const selected = selectedKgModules({ allowEmpty: true });
       if (kgPluginSummary) kgPluginSummary.textContent = selected.length + ' selected';
       if (scoutBtn) scoutBtn.disabled = selected.length === 0;
+    }
+
+    function buildKgRunPayload(modules) {
+      const selected = modules || selectedKgModules({ allowEmpty: true });
+      const kgDefaults = Object.assign(
+        {
+          mode: 'fast',
+          modules: selected,
+          timeout: 120,
+          camel_agents: 4,
+        },
+        (window.DN_CONFIG && window.DN_CONFIG.KG_RUN) || {},
+      );
+      kgDefaults.modules = selected;
+      if (kgRunMode && kgRunMode.value) kgDefaults.mode = kgRunMode.value;
+      if (kgRunTimeout && kgRunTimeout.value) kgDefaults.timeout = Number(kgRunTimeout.value) || kgDefaults.timeout;
+      return Object.assign({}, kgDefaults, {
+        match: selectedGame.name,
+        match_id: selectedGame.match_id || selectedGame.market_key,
+      });
+    }
+
+    function buildLegacyScoutingPayload() {
+      return {
+        match: selectedGame.name,
+        match_id: selectedGame.match_id || selectedGame.market_key,
+        data_mode: 'public',
+        refresh_data: false,
+        include_x: true,
+        include_camel: false,
+        include_deepseek_scout: false,
+        agents: 4,
+        rooms: 1,
+        voice_mode: 'template',
+        agent_wallets: false,
+      };
+    }
+
+    function startSelectedKgRun(contextLabel) {
+      if (!DN.databridge || !(DN.databridge.startKgRun || DN.databridge.startScoutingRun)) {
+        return Promise.reject(new Error('KG API is not available.'));
+      }
+      const modules = selectedKgModules({ allowEmpty: true });
+      if (!modules.length) return Promise.reject(new Error('Select at least one KG plugin before running.'));
+      const kgPayload = buildKgRunPayload(modules);
+      const legacyScoutingPayload = buildLegacyScoutingPayload();
+      const starter = DN.databridge.startKgRun || DN.databridge.startScoutingRun;
+      status.textContent = contextLabel === 'all' ? 'Run all · KG...' : 'KG run...';
+      H.pushThought('KG run started for ' + selectedGame.name + ' with ' + modules.length + ' plugins.', 'Backend', '#3FA89F');
+      if (DN.logTerm) {
+        DN.logTerm.push('KG', (contextLabel === 'all' ? 'Run all KG step' : 'KG-only run') + ' kicked off for ' + selectedGame.name + ' · ' + modules.join(', ') + '.');
+      }
+      if (DN.kgview && DN.kgview.showScoutingProgress) {
+        DN.kgview.showScoutingProgress({
+          match: selectedGame.name,
+          matchId: selectedGame.match_id || selectedGame.market_key,
+          team: selectedGame.home_team,
+          opponent: selectedGame.away_team,
+        });
+      }
+      return starter(DN.databridge.startKgRun ? kgPayload : legacyScoutingPayload)
+        .then((result) => {
+          const manifest = result.manifest || {};
+          const kg = result.kg || {};
+          const entities = manifest.entity_count || kg.entity_count || 0;
+          const links = manifest.relationship_count || kg.relationship_count || 0;
+          const ready = manifest.validation && manifest.validation.kg_load_ready === false ? 'needs review' : 'ready';
+          status.textContent = 'KG ' + ready + ' · ' + entities + ' entities';
+          H.pushThought('KG run finished: ' + entities + ' entities and ' + links + ' relationships.', 'Backend', '#3FA89F');
+          if (DN.logTerm) DN.logTerm.push('KG', 'KG run finished' + (contextLabel === 'all' ? '; starting colony pipeline next.' : '. Opening run results.'));
+          const newId = (DN.databridge && DN.databridge.runId) || null;
+          if (DN.databridge && DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(newId);
+          if (DN.commsViz && DN.commsViz.reset) DN.commsViz.reset();
+          if (H._pollComms) H._pollComms();
+          if (H.refreshRunsPage) H.refreshRunsPage(false);
+          return result;
+        });
+    }
+
+    function currentPubkey() {
+      const w = window.DN && DN.wallet;
+      return w && w.connected && w.pubkey ? w.pubkey : '';
+    }
+
+    function shortPubkey(pubkey) {
+      const value = String(pubkey || '');
+      return value.length <= 12 ? value : value.slice(0, 4) + '…' + value.slice(-4);
+    }
+
+    function hashString(value) {
+      let h = 0x811c9dc5;
+      const text = String(value || '');
+      for (let i = 0; i < text.length; i++) {
+        h ^= text.charCodeAt(i);
+        h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+      }
+      return h >>> 0;
+    }
+
+    function selectedColonyConfig() {
+      return {
+        ant_count: Number(colonyAntCount && colonyAntCount.value || 50),
+        preset: (colonyPreset && colonyPreset.value) || 'market',
+        risk_profile: (colonyRisk && colonyRisk.value) || 'balanced',
+        model_preference: (colonyModel && colonyModel.value) || 'mixed',
+      };
+    }
+
+    function selectedColonyPlacement(pubkey) {
+      const existing = DN.app && DN.app.findMyColony ? DN.app.findMyColony() : null;
+      if (existing) {
+        return {
+          angle: Math.atan2(existing.pos.z, existing.pos.x),
+          dist: Math.hypot(existing.pos.x, existing.pos.z),
+          accent: existing.accent,
+          name: existing.name,
+        };
+      }
+      const h = hashString(pubkey);
+      const angle = ((h & 0xffff) / 0xffff) * Math.PI * 2;
+      const dist = 82 + (((h >>> 16) & 0xff) / 255) * 54;
+      const w = window.DN && DN.wallet;
+      const accent = w && typeof w.accentColor === 'function' ? w.accentColor() : 0xB07E1C;
+      return { angle, dist, accent, name: shortPubkey(pubkey) + "'s Colony" };
+    }
+
+    function renderColonySummary(payload) {
+      lastColonyPayload = payload || null;
+      const pubkey = currentPubkey();
+      if (!pubkey) {
+        if (colonySummary) colonySummary.textContent = 'connect wallet';
+        if (colonyPreview) colonyPreview.textContent = 'Connect your wallet to manage a colony.';
+        if (colonyAntList) colonyAntList.innerHTML = '';
+        return;
+      }
+      if (!payload || !payload.colony) {
+        if (colonySummary) colonySummary.textContent = 'not created';
+        if (colonyPreview) colonyPreview.textContent = 'No colony for ' + shortPubkey(pubkey) + ' yet.';
+        if (colonyAntList) colonyAntList.innerHTML = '';
+        return;
+      }
+      const colony = payload.colony;
+      const summary = payload.ant_summary || {};
+      const statuses = summary.statuses || {};
+      const config = colony.config || {};
+      if (colonySummary) {
+        colonySummary.textContent = (statuses.alive || 0) + '/' + (summary.total || 0) + ' alive';
+      }
+      if (colonyPreview) {
+        const models = summary.models || {};
+        const modelText = Object.keys(models).slice(0, 3).map((key) => key + '=' + models[key]).join(' ');
+        colonyPreview.textContent =
+          (colony.name || shortPubkey(pubkey)) +
+          ' · ' + (config.preset || 'market') +
+          ' · target ' + (config.ant_count || 50) +
+          ' · ' + (modelText || 'no ants');
+      }
+      if (colonyAntCount && config.ant_count) colonyAntCount.value = String(config.ant_count);
+      if (colonyPreset && config.preset) colonyPreset.value = String(config.preset);
+      if (colonyRisk && config.risk_profile) colonyRisk.value = String(config.risk_profile);
+      if (colonyModel && config.model_preference) colonyModel.value = String(config.model_preference);
+    }
+
+    function renderColonyAntList(ants) {
+      if (!colonyAntList) return;
+      const rows = (ants || []).map((ant) => {
+        const datafeeds = (ant.datafeed_interests || []).slice(0, 3).join(', ');
+        const parent = ant.parent_agent_id || '-';
+        return '<button class="colony-ant-row" type="button" data-agent="' + esc(ant.agent_id || '') + '" data-status="' + esc(ant.status || 'alive') + '">' +
+          '<span class="colony-ant-main"><b>' + esc(ant.agent_id || ant.name || 'ant') + '</b><i>' + esc(ant.status || 'alive') + '</i></span>' +
+          '<span>' + esc(ant.model || '-') + ' · ' + esc(ant.persona || '-') + '</span>' +
+          '<span>risk ' + esc(ant.risk_profile || '-') + ' · parent ' + esc(parent) + '</span>' +
+          '<span>' + esc(datafeeds || 'no datafeeds') + '</span>' +
+        '</button>';
+      }).join('');
+      colonyAntList.innerHTML = rows || '<div class="colony-ant-empty">No ants yet.</div>';
+      colonyAntList.querySelectorAll('.colony-ant-row').forEach((row) => {
+        row.addEventListener('click', () => {
+          if (colonyAntId) colonyAntId.value = row.dataset.agent || '';
+          if (colonyAntStatus) colonyAntStatus.value = row.dataset.status || 'alive';
+        });
+      });
+    }
+
+    function setColonyBusy(disabled) {
+      colonyBusy = !!disabled;
+      [colonyCreateBtn, colonyAddAntsBtn, colonyListAntsBtn, colonyRunBtn, colonyRemoveBtn, colonyUpdateAntBtn].forEach((button) => {
+        if (button) button.disabled = colonyBusy;
+      });
+      if (colonyAntId) colonyAntId.disabled = colonyBusy;
+      if (colonyAntStatus) colonyAntStatus.disabled = colonyBusy;
+    }
+
+    function materializeWalletColony(row) {
+      if (!row || !row.pubkey || !(DN.colony && DN.colony.foundColony)) return null;
+      let col = DN.app && DN.app.findMyColony ? DN.app.findMyColony() : null;
+      if (!col) {
+        col = DN.colony.foundColony({
+          angle: Number(row.angle || 0),
+          dist: Number(row.dist || 120),
+          accent: Number(row.accent || 0xB07E1C),
+          name: row.name || shortPubkey(row.pubkey) + "'s Colony",
+          owner: row.pubkey,
+          spawnAnts: false,
+        });
+      }
+      if (col && DN.app && DN.app.selectColony) DN.app.selectColony(col);
+      if (DN.minimap && DN.minimap.refresh) DN.minimap.refresh();
+      return col;
+    }
+
+	    function removeWalletColonyLocal(pubkey) {
+	      if (!(DN.colony && DN.colony.list)) return;
+	      const index = DN.colony.list.findIndex((col) => col.owner === pubkey);
+	      if (index < 0) return;
+	      const col = DN.colony.list[index];
+	      if (DN.ants && DN.ants.removeColony) DN.ants.removeColony(col);
+	      if (col.group && col.group.parent) col.group.parent.remove(col.group);
+	      if (col.pickTarget && col.pickTarget.parent) col.pickTarget.parent.remove(col.pickTarget);
+	      DN.colony.list.splice(index, 1);
+	      if (DN.minimap && DN.minimap.refresh) DN.minimap.refresh();
+	      if (DN.hud && DN.hud.clearInspector) DN.hud.clearInspector();
+	    }
+
+    function visualColonyForRun(pubkey) {
+      let col = DN.app && DN.app.findMyColony ? DN.app.findMyColony() : null;
+      if (!col && lastColonyPayload && lastColonyPayload.colony) {
+        col = materializeWalletColony(lastColonyPayload.colony);
+      }
+      if (!col) return null;
+      if (DN.ants && DN.ants.addColony && !col._antMesh) {
+        DN.ants.addColony(col, null);
+      }
+      return col;
+    }
+
+    function visualRunAnts(col, limit) {
+      if (!col || !(DN.ants && DN.ants.list)) return [];
+      const ants = DN.ants.list.filter((ant) =>
+        ant.col === col &&
+        !ant.hero &&
+        ant.state !== 'dead' &&
+        !ant.permanentDead
+      );
+      return ants.slice(0, Math.min(limit || 28, ants.length));
+    }
+
+    function runAllVisualStart(pubkey) {
+      const col = visualColonyForRun(pubkey);
+      if (!col) return null;
+      const crystal = DN.crystal && DN.crystal.position ? DN.crystal.position() : new THREE.Vector3(0, 0, 0);
+      if (DN.crystal) {
+        if (DN.crystal.setAccent) DN.crystal.setAccent(Number(col.accent || 0x9EE9C4));
+        if (DN.crystal.show) DN.crystal.show();
+        for (let i = 0; i < 18; i++) if (DN.crystal.depositOne) DN.crystal.depositOne();
+      }
+      if (DN.camera && DN.camera.flyTo) DN.camera.flyTo(new THREE.Vector3(0, 0, 0), 190, 120, 2.0);
+      if (DN.logTerm) DN.logTerm.push('PHASE', '── Run all: ants collecting KG crystal ──');
+
+      const ants = visualRunAnts(col, 28);
+      ants.forEach((ant, index) => {
+        ant.cargo = 0;
+        ant._runAllVisual = true;
+        ant._idleWritten = false;
+        DN.ants.scriptWalk(
+          ant,
+          col.entrance.x,
+          col.entrance.z,
+          crystal.x,
+          crystal.z,
+          {
+            speed: 0.12,
+            curl: 0.1,
+            curlSign: index % 2 === 0 ? 1 : -1,
+            tStart: -(index / Math.max(1, ants.length - 1)) * 0.35,
+            onArrive: (arrived) => {
+              if (DN.crystal && DN.crystal.takeOne) DN.crystal.takeOne(0.08);
+              arrived.cargo = 1;
+              DN.ants.scriptWalk(
+                arrived,
+                arrived.x,
+                arrived.z,
+                col.entrance.x,
+                col.entrance.z,
+                {
+                  speed: 0.16,
+                  curl: 0.06,
+                  onArrive: (home) => {
+                    home.cargo = 0;
+                    home._runAllVisual = false;
+                    home.state = 'idle';
+                    home._idleWritten = false;
+                  },
+                }
+              );
+            },
+          }
+        );
+      });
+      return col;
+    }
+
+    function runAllVisualColonyStep(pubkey) {
+      const col = visualColonyForRun(pubkey);
+      if (!col) return null;
+      if (DN.logTerm) DN.logTerm.push('PHASE', '── Run all: ants entering colony rooms ──');
+      setTimeout(() => {
+        if (DN.crystal && DN.crystal.hide) DN.crystal.hide();
+        if (DN.app && DN.app.enterColony) DN.app.enterColony(col);
+        if (DN.underground && DN.underground.startDebate) DN.underground.startDebate();
+      }, 1300);
+      return col;
+    }
+
+    function runAllVisualFinish() {
+      if (DN.logTerm) DN.logTerm.push('PHASE', '── Run all: decision ready ──');
+      if (DN.crystal && DN.crystal.hide) DN.crystal.hide();
+    }
+
+    function refreshUserColony(silent) {
+      const pubkey = currentPubkey();
+      if (!pubkey) {
+        renderColonySummary(null);
+        return Promise.resolve(null);
+      }
+      if (!DN.databridge || !DN.databridge.fetchUserColony) {
+        renderColonySummary(null);
+        return Promise.resolve(null);
+      }
+      return DN.databridge.fetchUserColony(pubkey)
+        .then((payload) => {
+          renderColonySummary(payload);
+          if (payload && payload.colony) materializeWalletColony(payload.colony);
+          return payload;
+        })
+        .catch((err) => {
+          renderColonySummary(null);
+          if (!silent) H.pushThought('Could not load colony: ' + (err.message || err), 'Colony', '#D96E54');
+          return null;
+        });
     }
 
     function loadKgPlugins() {
@@ -418,9 +799,43 @@ DN.hud = (function () {
         '<option value="' + selectedGame.away_team + '">' + selectedGame.away_team + '</option>';
     }
 
-    function shortHash(value) {
-      if (!value || value.length < 12) return value || '';
-      return value.slice(0, 6) + '...' + value.slice(-4);
+	    function shortHash(value) {
+	      if (!value || value.length < 12) return value || '';
+	      return value.slice(0, 6) + '...' + value.slice(-4);
+	    }
+
+    function marketOutcomeLabels(source) {
+      const match = (source && source.match) || {};
+      const first = match.home_team || match.team1 || match.team_a || selectedGame.home_team || 'Team A';
+      const second = match.away_team || match.team2 || match.team_b || selectedGame.away_team || 'Team B';
+      return { home: first, draw: 'Draw', away: second };
+    }
+
+    function marketSideLabel(side, source) {
+      const labels = marketOutcomeLabels(source);
+      return labels[side] || String(side || 'unknown');
+    }
+
+    function marketSideCountsText(values, source, opts) {
+      const suffix = opts && opts.suffix ? opts.suffix : '';
+      return ['home', 'draw', 'away'].map((side) => {
+        const raw = values && values[side] != null ? values[side] : 0;
+        return marketSideLabel(side, source) + '=' + raw + suffix;
+      }).join(' · ');
+    }
+
+    function marketWeightedSupportText(values, source) {
+      return ['home', 'draw', 'away'].map((side) => {
+        const value = values && values[side] != null ? values[side] : 0;
+        return marketSideLabel(side, source) + ' ' + Math.round(value * 100) + '%';
+      }).join(' · ');
+    }
+
+    function marketMoneyText(values, source) {
+      return ['home', 'draw', 'away'].map((side) => {
+        const amount = values && values[side + '_usdc'] != null ? values[side + '_usdc'] : '0';
+        return marketSideLabel(side, source) + ' ' + amount;
+      }).join(' · ');
     }
 
     function forecastTx(result) {
@@ -438,6 +853,31 @@ DN.hud = (function () {
         }
       }
       return '';
+    }
+
+    function logColonyPredictionSummary(runId) {
+      if (!runId || !DN.databridge || !DN.databridge.fetchRunPrediction) return Promise.resolve(null);
+      return DN.databridge.fetchRunPrediction(runId)
+        .then((payload) => {
+          const prediction = payload.prediction || {};
+          const vote = payload.vote_breakdown || {};
+          const sides = vote.raw_forecast_sides || {};
+          const score = prediction.scoreline && prediction.scoreline.label ? ' · score ' + prediction.scoreline.label : '';
+          const decision = prediction.sentence || ('Prediction: ' + (prediction.winner || 'unknown'));
+          if (DN.logTerm) {
+            DN.logTerm.push('DECISION', decision + score);
+            DN.logTerm.push('VOTE', (vote.ants || 0) + ' ants · market order: ' + marketSideCountsText(sides, payload));
+            if (payload.artifacts && payload.artifacts.summary) {
+              DN.logTerm.push('RUN', 'Summary artifact ready: ' + payload.artifacts.summary);
+            }
+          }
+          H.pushThought(decision, 'Decision', '#3FA89F');
+          return payload;
+        })
+        .catch((err) => {
+          if (DN.logTerm) DN.logTerm.push('RUN', 'Could not load final prediction summary: ' + (err.message || err));
+          return null;
+        });
     }
 
     function logX402Trail(result) {
@@ -498,6 +938,12 @@ DN.hud = (function () {
       });
     }
 
+    function runSortTime(record) {
+      const value = record && (record.created_at || record.started_at || record.completed_at || '');
+      const time = Date.parse(value);
+      return Number.isNaN(time) ? 0 : time;
+    }
+
     function matchLabel(record) {
       const match = (record && record.match) || {};
       if (match.name) return match.name;
@@ -515,10 +961,10 @@ DN.hud = (function () {
       const votes = (record && record.vote_breakdown) || {};
       const weighted = votes.weighted_side_support || {};
       if (weighted.home != null || weighted.draw != null || weighted.away != null) {
-        return ['home', 'draw', 'away'].map((side) => side + ' ' + Math.round((weighted[side] || 0) * 100) + '%').join(' · ');
+        return marketWeightedSupportText(weighted, record);
       }
       const raw = votes.raw_forecast_sides || {};
-      return ['home', 'draw', 'away'].map((side) => side + ' ' + (raw[side] || 0)).join(' · ');
+      return marketSideCountsText(raw, record);
     }
 
     function scoutingLabel(record) {
@@ -529,9 +975,144 @@ DN.hud = (function () {
       return 'run artifacts';
     }
 
+    function fmtRunNumber(value, digits) {
+      if (value == null || value === '') return '-';
+      const n = Number(value);
+      if (!Number.isFinite(n)) return String(value);
+      return n.toFixed(digits == null ? 2 : digits);
+    }
+
+    function agentLabel(item, agent) {
+      return (item && (item.ens_name || item.agent_id)) ||
+        (agent && (agent.ens_name || agent.agent_id || agent.name)) ||
+        'ant';
+    }
+
+    function agentPredictionRows(predictionPayload, agentsPayload) {
+      const agentMap = {};
+      ((agentsPayload && agentsPayload.agents) || []).forEach((agent) => {
+        if (agent && agent.agent_id) agentMap[agent.agent_id] = agent;
+      });
+      const predictions = (predictionPayload && predictionPayload.agent_predictions) || [];
+      if (predictions.length) {
+        return predictions.slice().sort((a, b) => String(a.agent_id || '').localeCompare(String(b.agent_id || ''))).map((item) => {
+          const agent = Object.assign({}, item.agent || {}, agentMap[item.agent_id] || {});
+          return { item, agent, forecast: item.forecast || agent.latest_forecast || {} };
+        });
+      }
+      return Object.keys(agentMap).sort().map((agentId) => {
+        const agent = agentMap[agentId] || {};
+        return {
+          item: {
+            agent_id: agentId,
+            ens_name: agent.ens_name,
+            model: agent.model,
+            persona: agent.persona,
+            risk_profile: agent.risk_profile,
+            bet_intent: agent.latest_forecast || {},
+            prediction: (agent.latest_forecast || {}).prediction || {},
+          },
+          agent,
+          forecast: agent.latest_forecast || {},
+        };
+      });
+    }
+
+    function renderRunResultsDetail(predictionPayload, agentsPayload) {
+      if (!predictionPayload) return '';
+      const prediction = predictionPayload.prediction || {};
+      const vote = predictionPayload.vote_breakdown || {};
+      const counts = vote.raw_forecast_sides || {};
+      const rows = agentPredictionRows(predictionPayload, agentsPayload);
+      const support = marketSideCountsText(counts, predictionPayload);
+      const score = prediction.scoreline && prediction.scoreline.label ? prediction.scoreline.label : scoreLabel(predictionPayload);
+      const decision = prediction.sentence || (prediction.winner ? 'Prediction: ' + prediction.winner : 'Prediction pending');
+      const tableRows = rows.map(({ item, agent, forecast }) => {
+        const itemPrediction = item.prediction || forecast.prediction || {};
+        const bet = item.bet_intent || {};
+        const side = bet.side || forecast.side || itemPrediction.side || 'draw';
+        const sideLabel = marketSideLabel(side, predictionPayload);
+        const winner = itemPrediction.winner || bet.outcome || sideLabel;
+        const line = itemPrediction.scoreline && itemPrediction.scoreline.label ? itemPrediction.scoreline.label : '-';
+        const firstProb = forecast.home_probability != null ? fmtRunNumber(Number(forecast.home_probability) * 100, 1) + '%' : '-';
+        const edge = forecast.edge != null ? fmtRunNumber(forecast.edge, 3) : '-';
+        const stake = forecast.stake != null ? fmtRunNumber(forecast.stake, 2) : '-';
+        const bankrollValue = forecast.bankroll != null ? forecast.bankroll : agent.bankroll;
+        const bankroll = bankrollValue != null ? fmtRunNumber(bankrollValue, 1) : '-';
+        const model = item.model || agent.model || '-';
+        const persona = item.persona || agent.persona || '-';
+        const risk = item.risk_profile || agent.risk_profile || '-';
+        return '<tr>' +
+          '<td><b>' + esc(item.agent_id || agent.agent_id || 'ant') + '</b><span>' + esc(agentLabel(item, agent)) + '</span></td>' +
+          '<td><i class="run-side run-side-' + esc(side) + '">' + esc(sideLabel) + '</i></td>' +
+          '<td>' + esc(winner) + '</td>' +
+          '<td>' + esc(line) + '</td>' +
+          '<td>' + esc(firstProb) + '</td>' +
+          '<td>' + esc(edge) + '</td>' +
+          '<td>' + esc(stake) + '</td>' +
+          '<td>' + esc(bankroll) + '</td>' +
+          '<td><b>' + esc(model) + '</b><span>' + esc(persona) + ' · ' + esc(risk) + '</span></td>' +
+        '</tr>';
+      }).join('');
+      return '<div class="run-results-detail" id="run-results-detail">' +
+        '<div class="run-results-head">' +
+          '<div>' +
+            '<div class="runs-k">Run results</div>' +
+            '<div class="run-results-title">' + esc(matchLabel(predictionPayload)) + '</div>' +
+            '<div class="run-results-decision">' + esc(decision) + '</div>' +
+          '</div>' +
+          '<div class="run-results-score">' + esc(score) + '</div>' +
+        '</div>' +
+        '<div class="run-results-summary">' + esc(rows.length) + ' ants · market order: ' + esc(support) + '</div>' +
+        '<div class="run-results-table-wrap">' +
+          '<table class="run-results-table">' +
+            '<thead><tr><th>Ant</th><th>Vote</th><th>Prediction</th><th>Score</th><th>' + esc(marketSideLabel('home', predictionPayload)) + ' prob.</th><th>Edge</th><th>Stake</th><th>Bankroll</th><th>Model</th></tr></thead>' +
+            '<tbody>' + (tableRows || '<tr><td colspan="9">No ant predictions available for this run.</td></tr>') + '</tbody>' +
+          '</table>' +
+        '</div>' +
+      '</div>';
+    }
+
+    function setRunResultsDetail(predictionPayload, agentsPayload) {
+      lastRunResults = { prediction: predictionPayload, agents: agentsPayload };
+      const page = ensureRunsPage();
+      const html = renderRunResultsDetail(predictionPayload, agentsPayload);
+      let detail = $('run-results-detail');
+      if (detail) {
+        detail.outerHTML = html;
+      } else {
+        const summary = page.querySelector('.runs-summary');
+        if (summary) summary.insertAdjacentHTML('afterend', html);
+        else page.insertAdjacentHTML('afterbegin', html);
+      }
+      const list = page.querySelector('.runs-list');
+      if (list) list.scrollTop = 0;
+      page.classList.add('show');
+    }
+
+    function loadRunResults(runId, existingPrediction) {
+      if (!runId || !DN.databridge || !DN.databridge.fetchRunPrediction) return Promise.resolve(null);
+      status.textContent = 'Loading results...';
+      const predictionPromise = existingPrediction ? Promise.resolve(existingPrediction) : DN.databridge.fetchRunPrediction(runId);
+      const agentsPromise = DN.databridge.fetchRunAgents ? DN.databridge.fetchRunAgents(runId).catch(() => null) : Promise.resolve(null);
+      return Promise.all([predictionPromise, agentsPromise])
+        .then(([predictionPayload, agentsPayload]) => {
+          setRunResultsDetail(predictionPayload, agentsPayload);
+          const count = agentPredictionRows(predictionPayload, agentsPayload).length;
+          status.textContent = 'Results · ' + count + ' ants';
+          if (DN.logTerm) DN.logTerm.push('RUN', 'Results table loaded for ' + runId + ' · ' + count + ' ants.');
+          return predictionPayload;
+        })
+        .catch((err) => {
+          status.textContent = 'Results error';
+          if (DN.logTerm) DN.logTerm.push('RUN', 'Could not load results table: ' + (err.message || err));
+          return null;
+        });
+    }
+
     function renderRunsPage(payload, error) {
       const page = ensureRunsPage();
-      const records = (payload && payload.predictions) || [];
+      const records = ((payload && payload.predictions) || []).slice().sort((a, b) => runSortTime(b) - runSortTime(a));
       const rows = records.map((record) => {
         const prediction = record.prediction || {};
         const recommendation = record.recommendation || {};
@@ -547,13 +1128,14 @@ DN.hud = (function () {
         const canKg = !!(record.artifacts && record.artifacts.kg);
         return '<div class="run-row" data-run="' + esc(record.run_id) + '">' +
           '<div class="run-row-main">' +
-            '<div class="run-eyebrow"><span>' + esc(record.kind || 'demo') + '</span><span>' + esc(record.status || 'unknown') + '</span><span>' + esc(formatRunDate(record.completed_at || record.created_at)) + '</span></div>' +
+            '<div class="run-eyebrow"><span>' + esc(record.kind || 'run') + '</span><span>' + esc(record.status || 'unknown') + '</span><span>' + esc(formatRunDate(record.completed_at || record.created_at)) + '</span></div>' +
             '<div class="run-title">' + esc(matchLabel(record)) + '</div>' +
             '<div class="run-prediction">' + esc(winner) + ' · ' + esc(scoreLabel(record)) + ' · ' + esc(confidence) + '</div>' +
             '<div class="run-meta">' + esc(supportLabel(record)) + ' · value ' + esc(edge) + ' · ' + esc(scoutingLabel(record)) + '</div>' +
             '<div class="run-meta">' + esc(entities) + ' KG nodes · ' + esc(links) + ' links</div>' +
           '</div>' +
           '<div class="run-row-actions">' +
+            '<button class="backend-btn secondary run-results">Results</button>' +
             '<button class="backend-btn secondary run-load" ' + (canLoad ? '' : 'disabled') + '>Load</button>' +
             '<button class="backend-btn secondary run-kg" ' + (canKg ? '' : 'disabled') + '>KG</button>' +
           '</div>' +
@@ -569,12 +1151,22 @@ DN.hud = (function () {
         '</div>' +
         (error ? '<div class="runs-error">' + esc(error) + '</div>' : '') +
         '<div class="runs-summary">' + esc(records.length) + ' runs · scouting and forecast artifacts from the backend</div>' +
+        (lastRunResults ? renderRunResultsDetail(lastRunResults.prediction, lastRunResults.agents) : '') +
         '<div class="runs-list">' + (rows || '<div class="runs-empty">No run predictions yet.</div>') + '</div>';
       page.classList.add('show');
       const close = $('runs-close');
       const refresh = $('runs-refresh');
       if (close) close.addEventListener('click', () => page.classList.remove('show'));
       if (refresh) refresh.addEventListener('click', () => H.refreshRunsPage(true));
+      page.querySelectorAll('.run-results').forEach((button) => {
+        button.addEventListener('click', () => {
+          const row = button.closest('.run-row');
+          const runId = row && row.getAttribute('data-run');
+          if (!runId) return;
+          button.disabled = true;
+          loadRunResults(runId).finally(() => { button.disabled = false; });
+        });
+      });
       page.querySelectorAll('.run-load').forEach((button) => {
         button.addEventListener('click', () => {
           const row = button.closest('.run-row');
@@ -689,10 +1281,270 @@ DN.hud = (function () {
       });
     }
 
-    // Auto-fetch ants from the Railway API every 15s, then bind each
-    // record (wallet/ENS/etc.) to a scene ant so clicking a worker shows
-    // its on-chain identity. Errors are kept quiet so the status bar
-    // doesn't flicker between transient network issues.
+    function createColonyFromPanel() {
+      const pubkey = currentPubkey();
+      if (!pubkey) {
+        H.pushThought('Connect your wallet before creating a colony.', 'Wallet', '#D96E54');
+        return Promise.resolve(null);
+      }
+      if (!DN.databridge || !DN.databridge.createUserColony) {
+        H.pushThought('Colony API is not available from the frontend.', 'Colony', '#D96E54');
+        return Promise.resolve(null);
+      }
+      const placement = selectedColonyPlacement(pubkey);
+      const payload = {
+        pubkey,
+        angle: placement.angle,
+        dist: placement.dist,
+        accent: placement.accent,
+        name: placement.name,
+        visibility: 'public',
+        config: selectedColonyConfig(),
+      };
+      setColonyBusy(true);
+      status.textContent = 'Creating colony...';
+      return DN.databridge.createUserColony(payload)
+        .then((result) => {
+          renderColonySummary(result);
+          if (result && result.colony) {
+            materializeWalletColony(result.colony);
+            try {
+              localStorage.setItem('dn:my-colony:' + pubkey, JSON.stringify({
+                angle: result.colony.angle,
+                dist: result.colony.dist,
+                accent: Number(result.colony.accent),
+                name: result.colony.name,
+              }));
+            } catch (err) {}
+          }
+          if (!DN.databridge.ensureUserColonyAnts) {
+            status.textContent = 'Colony ready';
+            H.pushThought('Colony saved: ' + (result && result.colony && result.colony.name || shortPubkey(pubkey)) + '.', 'Colony', '#3FA89F');
+            return result;
+          }
+          status.textContent = 'Creating ants...';
+          return DN.databridge.ensureUserColonyAnts(pubkey, {
+            target_count: Number(colonyAntCount && colonyAntCount.value || payload.config.ant_count || 50),
+            replace: false,
+            seed: 42,
+          }).then((roster) => {
+            const merged = Object.assign({}, result, { ant_summary: roster.ant_summary });
+            renderColonySummary(merged);
+            renderColonyAntList(roster.ants || []);
+            if (roster.ants && DN.ants && DN.ants.bindAgentRecords) DN.ants.bindAgentRecords(roster.ants);
+            const total = roster.ant_summary && roster.ant_summary.total || 0;
+            status.textContent = 'Colony ready · ' + total + ' ants';
+            H.pushThought('Colony saved with ' + total + ' ants: ' + (result && result.colony && result.colony.name || shortPubkey(pubkey)) + '.', 'Colony', '#3FA89F');
+            return merged;
+          });
+        })
+        .catch((err) => {
+          status.textContent = 'Colony error';
+          H.pushThought('Could not create colony: ' + (err.message || err), 'Colony', '#D96E54');
+          return null;
+        })
+        .finally(() => setColonyBusy(false));
+    }
+
+    function ensurePanelColony() {
+      const pubkey = currentPubkey();
+      if (!pubkey) return Promise.reject(new Error('Connect wallet first.'));
+      if (lastColonyPayload && lastColonyPayload.colony) return Promise.resolve(lastColonyPayload);
+      return refreshUserColony(true).then((payload) => {
+        if (payload && payload.colony) return payload;
+        return createColonyFromPanel();
+      });
+    }
+
+    if (colonyCreateBtn) {
+      colonyCreateBtn.addEventListener('click', () => {
+        createColonyFromPanel();
+      });
+    }
+
+    if (colonyAddAntsBtn) {
+      colonyAddAntsBtn.addEventListener('click', () => {
+        if (!DN.databridge || !DN.databridge.ensureUserColonyAnts) return;
+        const pubkey = currentPubkey();
+        if (!pubkey) {
+          H.pushThought('Connect your wallet before adding ants.', 'Wallet', '#D96E54');
+          return;
+        }
+        setColonyBusy(true);
+        status.textContent = 'Adding ants...';
+        ensurePanelColony()
+          .then(() => DN.databridge.ensureUserColonyAnts(pubkey, {
+            target_count: Number(colonyAntCount && colonyAntCount.value || 50),
+            replace: false,
+            seed: 42,
+          }))
+          .then((payload) => {
+            renderColonySummary({ colony: (lastColonyPayload && lastColonyPayload.colony) || {}, ant_summary: payload.ant_summary });
+            if (payload.ants && DN.ants && DN.ants.bindAgentRecords) DN.ants.bindAgentRecords(payload.ants);
+            const statuses = (payload.ant_summary && payload.ant_summary.statuses) || {};
+            status.textContent = (statuses.alive || 0) + ' ants alive';
+            H.pushThought('Colony roster synced: ' + payload.ant_summary.total + ' ants.', 'Colony', '#3FA89F');
+          })
+          .catch((err) => {
+            status.textContent = 'Ant sync error';
+            H.pushThought('Could not add ants: ' + (err.message || err), 'Colony', '#D96E54');
+          })
+          .finally(() => setColonyBusy(false));
+      });
+    }
+
+    if (colonyListAntsBtn) {
+      colonyListAntsBtn.addEventListener('click', () => {
+        if (!DN.databridge || !DN.databridge.fetchUserColonyAnts) return;
+        const pubkey = currentPubkey();
+        if (!pubkey) {
+          H.pushThought('Connect your wallet before listing ants.', 'Wallet', '#D96E54');
+          return;
+        }
+        setColonyBusy(true);
+        status.textContent = 'Loading colony ants...';
+        DN.databridge.fetchUserColonyAnts(pubkey, { status: 'all', limit: 200 })
+          .then((payload) => {
+            const ants = payload.ants || [];
+            renderColonyAntList(ants);
+            if (colonyPreview) colonyPreview.textContent = ants.length ? 'Showing ' + ants.length + ' ants. Click a row to edit status.' : 'No ants yet.';
+            if (DN.ants && DN.ants.bindAgentRecords) DN.ants.bindAgentRecords(ants);
+            status.textContent = ants.length + ' colony ants';
+            H.pushThought('Loaded ' + ants.length + ' ants for this colony.', 'Colony', '#3FA89F');
+          })
+          .catch((err) => {
+            status.textContent = 'Ant list error';
+            H.pushThought('Could not list ants: ' + (err.message || err), 'Colony', '#D96E54');
+          })
+          .finally(() => setColonyBusy(false));
+      });
+    }
+
+    if (colonyUpdateAntBtn) {
+      colonyUpdateAntBtn.addEventListener('click', () => {
+        if (!DN.databridge || !DN.databridge.setUserColonyAntStatus) return;
+        const pubkey = currentPubkey();
+        const agentId = String(colonyAntId && colonyAntId.value || '').trim();
+        const nextStatus = (colonyAntStatus && colonyAntStatus.value) || 'alive';
+        if (!pubkey) {
+          H.pushThought('Connect your wallet before updating an ant.', 'Wallet', '#D96E54');
+          return;
+        }
+        if (!agentId) {
+          H.pushThought('Enter an ant id before updating status.', 'Colony', '#D96E54');
+          return;
+        }
+        setColonyBusy(true);
+        status.textContent = 'Updating ant...';
+        DN.databridge.setUserColonyAntStatus(pubkey, agentId, nextStatus)
+          .then((payload) => {
+            const ant = payload.ants && payload.ants[0];
+            const label = ant ? ant.agent_id + ' is ' + ant.status : agentId + ' updated';
+            if (colonyPreview) colonyPreview.textContent = label;
+            status.textContent = label;
+            H.pushThought('Updated ' + label + '.', 'Colony', '#3FA89F');
+            return refreshUserColony(true);
+          })
+          .catch((err) => {
+            status.textContent = 'Ant update error';
+            H.pushThought('Could not update ant: ' + (err.message || err), 'Colony', '#D96E54');
+          })
+          .finally(() => setColonyBusy(false));
+      });
+    }
+
+    if (colonyRunBtn) {
+      colonyRunBtn.addEventListener('click', () => {
+        if (!DN.databridge || !DN.databridge.startUserColonyRun) return;
+        const pubkey = currentPubkey();
+        if (!pubkey) {
+          H.pushThought('Connect your wallet before running all.', 'Wallet', '#D96E54');
+          return;
+        }
+        setColonyBusy(true);
+        setScoutingBusy(true);
+        status.textContent = 'Run all...';
+        ensurePanelColony()
+          .then(() => {
+            runAllVisualStart(pubkey);
+            return startSelectedKgRun('all');
+          })
+          .then(() => {
+            runAllVisualColonyStep(pubkey);
+            status.textContent = 'Run all · colony...';
+            if (DN.logTerm) DN.logTerm.push('COLONY', 'Run all colony step starting for ' + selectedGame.name + '.');
+            return DN.databridge.startUserColonyRun(pubkey, {
+              match: selectedGame.name,
+              match_id: selectedGame.match_id || selectedGame.market_key,
+              data_mode: 'public',
+              rooms: 5,
+              voice_mode: 'template',
+              seed: 42,
+              debug: true,
+            });
+          })
+          .then((result) => {
+            const runId = (DN.databridge && DN.databridge.runId) || (result && result.id) || '';
+            status.textContent = runId ? 'Run all ' + shortHash(runId) : 'Run all complete';
+            H.pushThought('Run all finished for ' + selectedGame.name + '.', 'Colony', '#3FA89F');
+            return logColonyPredictionSummary(runId).then((summary) => {
+              runAllVisualFinish();
+              return H.refreshRunsPage(false).then(() => loadRunResults(runId, summary));
+            });
+          })
+          .catch((err) => {
+            if (DN.crystal && DN.crystal.hide) DN.crystal.hide();
+            status.textContent = 'Run all error';
+            H.pushThought('Run all failed: ' + (err.message || err), 'Colony', '#D96E54');
+          })
+          .finally(() => {
+            setScoutingBusy(false);
+            setColonyBusy(false);
+          });
+      });
+    }
+
+    if (colonyRemoveBtn) {
+      colonyRemoveBtn.addEventListener('click', () => {
+        if (!DN.databridge || !DN.databridge.deleteUserColony) return;
+        const pubkey = currentPubkey();
+        if (!pubkey) {
+          H.pushThought('Connect your wallet before removing a colony.', 'Wallet', '#D96E54');
+          return;
+        }
+        if (!window.confirm(
+          'Delete the colony linked to ' + shortPubkey(pubkey) + '?\n\n' +
+          'Your wallet will stay connected and untouched. This only removes the colony record and its roster data.'
+        )) return;
+        setColonyBusy(true);
+        status.textContent = 'Deleting colony...';
+        DN.databridge.deleteUserColony(pubkey)
+          .then(() => {
+            removeWalletColonyLocal(pubkey);
+            try { localStorage.removeItem('dn:my-colony:' + pubkey); } catch (err) {}
+            renderColonySummary(null);
+            status.textContent = 'Colony deleted';
+            H.pushThought('Colony deleted. Wallet unchanged.', 'Colony', '#8C7E60');
+          })
+          .catch((err) => {
+            status.textContent = 'Remove error';
+            H.pushThought('Could not remove colony: ' + (err.message || err), 'Colony', '#D96E54');
+          })
+          .finally(() => setColonyBusy(false));
+      });
+    }
+
+    refreshUserColony(true);
+    if (DN.wallet && typeof DN.wallet.onChange === 'function') {
+      DN.wallet.onChange(() => {
+        lastColonyPayload = null;
+        setTimeout(() => refreshUserColony(true), 150);
+      });
+    }
+
+    // Manual debug fetch only. Product colony rosters should come from
+    // /colonies/{wallet}/ants, otherwise a user with no colony still sees
+    // legacy global agents in the UI.
     function pollAgents(showErrors) {
       if (!DN.databridge || !DN.databridge.fetchAgents) return Promise.resolve(null);
       return DN.databridge.fetchAgents()
@@ -710,9 +1562,6 @@ DN.hud = (function () {
           return null;
         });
     }
-    pollAgents(false);
-    setInterval(() => pollAgents(false), 15000);
-
     // Communication events: poll faster (5s) so debate arcs feel live.
     // Hands events to commsViz; logTerm rows are emitted by commsViz so
     // we don't double-log. Errors are surfaced to the log once each.
@@ -821,72 +1670,10 @@ DN.hud = (function () {
     scoutBtn.addEventListener('click', () => {
       if (!DN.databridge || !(DN.databridge.startKgRun || DN.databridge.startScoutingRun)) return;
       setScoutingBusy(true);
-      const modules = selectedKgModules({ allowEmpty: true });
-      if (!modules.length) {
-        setScoutingBusy(false);
-        status.textContent = 'Choose KG plugins';
-        H.pushThought('Select at least one KG plugin before running.', 'Backend', '#D96E54');
-        return;
-      }
-      const kgDefaults = Object.assign(
-        {
-          mode: 'fast',
-          modules,
-          timeout: 120,
-          camel_agents: 4,
-        },
-        (window.DN_CONFIG && window.DN_CONFIG.KG_RUN) || {},
-      );
-      kgDefaults.modules = modules;
-      if (kgRunMode && kgRunMode.value) kgDefaults.mode = kgRunMode.value;
-      if (kgRunTimeout && kgRunTimeout.value) kgDefaults.timeout = Number(kgRunTimeout.value) || kgDefaults.timeout;
-      status.textContent = 'KG run...';
-      H.pushThought('KG run started for ' + selectedGame.name + ' with ' + modules.length + ' plugins.', 'Backend', '#3FA89F');
-      if (DN.logTerm) DN.logTerm.push('KG', 'KG-only run kicked off for ' + selectedGame.name + ' · ' + modules.join(', ') + '.');
-      if (DN.kgview && DN.kgview.showScoutingProgress) {
-        DN.kgview.showScoutingProgress({
-          match: selectedGame.name,
-          matchId: selectedGame.match_id || selectedGame.market_key,
-          team: selectedGame.home_team,
-          opponent: selectedGame.away_team,
-        });
-      }
-      const kgPayload = Object.assign({}, kgDefaults, {
-        match: selectedGame.name,
-        match_id: selectedGame.match_id || selectedGame.market_key,
-      });
-      const legacyScoutingPayload = {
-        match: selectedGame.name,
-        match_id: selectedGame.match_id || selectedGame.market_key,
-        data_mode: 'public',
-        refresh_data: false,
-        include_x: true,
-        include_camel: false,
-        include_deepseek_scout: false,
-        agents: 4,
-        rooms: 1,
-        voice_mode: 'template',
-        agent_wallets: false,
-      };
-      const starter = DN.databridge.startKgRun || DN.databridge.startScoutingRun;
-      starter(DN.databridge.startKgRun ? kgPayload : legacyScoutingPayload)
-        .then((result) => {
-          const manifest = result.manifest || {};
-          const kg = result.kg || {};
-          const entities = manifest.entity_count || kg.entity_count || 0;
-          const links = manifest.relationship_count || kg.relationship_count || 0;
-          const ready = manifest.validation && manifest.validation.kg_load_ready === false ? 'needs review' : 'ready';
-          status.textContent = 'KG ' + ready + ' · ' + entities + ' entities';
-          H.pushThought('KG run finished: ' + entities + ' entities and ' + links + ' relationships.', 'Backend', '#3FA89F');
-          if (DN.logTerm) DN.logTerm.push('KG', 'KG run finished. Opening run results.');
-          const newId = (DN.databridge && DN.databridge.runId) || null;
-          if (DN.databridge && DN.databridge.resetCommsRun) DN.databridge.resetCommsRun(newId);
-          if (DN.commsViz && DN.commsViz.reset) DN.commsViz.reset();
-          if (H._pollComms) H._pollComms();
-          if (H.refreshRunsPage) H.refreshRunsPage(false);
-        })
+      startSelectedKgRun('kg')
         .catch((err) => {
-          status.textContent = 'KG run error';
+          if (/select at least one kg plugin/i.test(err.message || '')) status.textContent = 'Choose KG plugins';
+          else status.textContent = 'KG run error';
           H.pushThought('KG run failed: ' + (err.message || err), 'Backend', '#D96E54');
         })
         .finally(() => {
@@ -990,9 +1777,9 @@ DN.hud = (function () {
 
     forecastSetupBtn.addEventListener('click', () => {
       if (!DN.databridge || !DN.databridge.setupForecastDemo) return;
-      forecastMarketKey = selectedGame.market_key + ':demo-' + Date.now();
+      forecastMarketKey = selectedGame.market_key + ':market-' + Date.now();
       setForecastBusy(true);
-      status.textContent = 'Staking demo...';
+      status.textContent = 'Staking...';
       if (DN.logTerm && configuredForecastContract()) {
         DN.logTerm.push('CONTRACT', 'Using Arc forecast contract ' + configuredForecastContract());
       }
@@ -1013,11 +1800,11 @@ DN.hud = (function () {
           const totals = result.totals || {};
           logForecastChainTrail('STAKE', result);
           status.textContent = 'Staked ' + (totals.total_usdc || '0') + ' USDC';
-          H.pushThought('Arc market funded from real backend forecasts: ' + (totals.home_usdc || '0') + ' home · ' + (totals.draw_usdc || '0') + ' draw · ' + (totals.away_usdc || '0') + ' away.', 'Arc', '#3FA89F');
+	          H.pushThought('Arc market funded from real backend forecasts: ' + marketMoneyText(totals, { match: selectedGame }) + '.', 'Arc', '#3FA89F');
         })
         .catch((err) => {
           status.textContent = 'Stake error';
-          H.pushThought('Stake demo failed: ' + (err.message || err), 'Arc', '#D96E54');
+          H.pushThought('Stake failed: ' + (err.message || err), 'Arc', '#D96E54');
         })
         .finally(() => setForecastBusy(false));
     });
@@ -1025,8 +1812,8 @@ DN.hud = (function () {
     forecastSettleBtn.addEventListener('click', () => {
       if (!DN.databridge || !DN.databridge.settleForecastDemo) return;
       if (!forecastMarketKey) {
-        status.textContent = 'Stake demo first';
-        H.pushThought('Create and stake a demo market before settlement.', 'Arc', '#D96E54');
+        status.textContent = 'Stake first';
+        H.pushThought('Create and stake a market before settlement.', 'Arc', '#D96E54');
         return;
       }
       const winner = forecastWinner ? forecastWinner.value : selectedGame.home_team;
@@ -1209,16 +1996,16 @@ DN.hud = (function () {
     const outcome = a && a.outcome;
     if (!fc && !outcome) return '';
     let html = '';
-    if (fc) {
-      const sideRaw = fc.side || 'draw';
-      const sideLabel = sideRaw === 'home' ? 'Home' : sideRaw === 'away' ? 'Away' : 'Draw';
-      const prob = fc.home_probability != null ? Math.round(fc.home_probability * 100) + '%' : '—';
-      const stake = fc.stake != null ? '$' + Math.round(fc.stake) : '—';
-      html += `<div class="vital-bar" style="margin-top:9px"><div class="vlabel">
-        <span>Forecast</span>
-        <span style="font-family:var(--mono)">${sideLabel} · ${prob} · stake ${stake}</span>
-      </div></div>`;
-    }
+	    if (fc) {
+	      const sideRaw = fc.side || 'draw';
+	      const sideLabel = marketSideLabel(sideRaw, { match: selectedGame });
+	      const firstTeamProb = fc.home_probability != null ? marketSideLabel('home', { match: selectedGame }) + ' ' + Math.round(fc.home_probability * 100) + '%' : '—';
+	      const stake = fc.stake != null ? '$' + Math.round(fc.stake) : '—';
+	      html += `<div class="vital-bar" style="margin-top:9px"><div class="vlabel">
+	        <span>Forecast</span>
+	        <span style="font-family:var(--mono)">${sideLabel} · ${firstTeamProb} · stake ${stake}</span>
+	      </div></div>`;
+	    }
     if (outcome) {
       const tone = outcome === 'correct' ? '#5FB84A' :
                    outcome === 'wrong'   ? '#D96E54' :

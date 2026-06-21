@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .agent import AntAgent
+from .colony_config import apply_colony_config_to_genome, normalize_colony_config
 from .debate import DebateFeed
 from .decision import build_collective_decision
 from .economy import (
@@ -60,6 +61,7 @@ class ColonyHarness:
         wallet_provider: str | None = None,
         dynamic_env_path: str | Path | None = None,
         agents: list[AntAgent] | None = None,
+        colony_config: dict | None = None,
     ) -> None:
         if agents is not None:
             population_size = len(agents)
@@ -74,6 +76,7 @@ class ColonyHarness:
         self.rng = random.Random(seed)
         self.starting_bankroll = starting_bankroll
         self.voice_model = voice_model or TemplateVoiceModel()
+        self.colony_config = normalize_colony_config(colony_config) if colony_config else None
         self.wallet_store = (
             WalletStore(wallet_store_path, provider=wallet_provider, dynamic_env_path=dynamic_env_path)
             if create_agent_wallets or wallet_store_path
@@ -92,6 +95,7 @@ class ColonyHarness:
             if self.wallet_store is not None:
                 wallet_address = self.wallet_store.get_or_create(agent_id).address
             genome = random_genome(self.rng)
+            genome = apply_colony_config_to_genome(genome, self.colony_config, self.rng, index=index)
             agent = AntAgent(
                 agent_id=agent_id,
                 name=f"ant-{index:04d}",
@@ -519,11 +523,11 @@ def _conversation_venues(profiles: list[DebateProfile], *, max_rooms: int) -> li
     if "tactical" in evidence_text or "pressing" in evidence_text or "set-piece" in evidence_text:
         candidates.append(("tactical_matchup", "Do tactical styles or set pieces create a matchup edge?"))
     if "player_form" in evidence_text or "season form" in evidence_text or "goals" in evidence_text:
-        candidates.append(("player_form", "Which key players are in form strongly enough to move price?"))
+        candidates.append(("player_form", "Which key players are in form strongly enough to change the room's read?"))
     candidates.extend(
         [
-            ("market_pricing", "Has the market already priced the injury news?"),
-            ("source_audit", "Which sources are reliable enough to move price?"),
+            ("market_pricing", "Has the market already accounted for the injury news?"),
+            ("source_audit", "Which sources are reliable enough to change the room's read?"),
             ("stats_form", "Do baseline stats overpower noisy news?"),
             ("uncertainty", "Should the room widen uncertainty instead of taking a side?"),
         ]
@@ -882,11 +886,25 @@ def _final_chamber_diagnostics(
         consensus = f"Final chamber keeps {match.home_team} close to market."
         consensus_label = "close_to_market"
     elif edge > 0:
-        consensus = f"Final chamber leans above market on {match.home_team}."
-        consensus_label = "above_market_home"
+        if probability < 0.5:
+            consensus = (
+                f"Final chamber still favors {match.away_team}, "
+                f"but prices {match.home_team} above market."
+            )
+            consensus_label = "away_favored_home_above_market"
+        else:
+            consensus = f"Final chamber favors {match.home_team} above market."
+            consensus_label = "above_market_home"
     else:
-        consensus = f"Final chamber trims {match.home_team} below market."
-        consensus_label = "below_market_home"
+        if probability > 0.5:
+            consensus = (
+                f"Final chamber still favors {match.home_team}, "
+                f"but trims it below market."
+            )
+            consensus_label = "home_favored_below_market"
+        else:
+            consensus = f"Final chamber favors {match.away_team} and trims {match.home_team} below market."
+            consensus_label = "away_favored_home_below_market"
 
     focus_line = _final_focus_line(evidence, match=match) or _final_room_focus_line(rooms)
     dispute = _final_dispute_summary(match, rooms)
@@ -961,9 +979,9 @@ def _final_unresolved_risk_line(match: MatchContext, rooms: list[DebateRoom], ev
     if negative_home and negative_away:
         return f"Unresolved: which risk should dominate, {negative_home} or {negative_away}."
     if spread >= 0.018:
-        return "Unresolved: the rooms agree on the topics, but not on how hard to move price."
+        return "Unresolved: the rooms agree on the topics, but not on how much weight to give them."
     if negative_home:
-        return f"Unresolved: whether {negative_home} is already priced."
+        return f"Unresolved: whether the market already accounts for {negative_home}."
     if negative_away:
         return f"Unresolved: whether {negative_away} is enough to lift {match.home_team}."
     return "Unresolved: source quality still decides how much the room should move."
@@ -1000,11 +1018,11 @@ def _final_dispute_summary(match: MatchContext, rooms: list[DebateRoom]) -> dict
                 return _dispute_summary_dict(disputes, critique_counts, dominant_type, dominant_pair, line)
         line = "Minority report: challengers are arguing counter-evidence more than raw conviction."
         return _dispute_summary_dict(disputes, critique_counts, dominant_type, dominant_pair, line)
-    if dominant_type == "underpriced_home":
-        line = f"Minority report: some rooms think {match.home_team} is still underpriced after the risk adjustment."
+    if dominant_type in {"home_probability_too_low", "underpriced_home"}:
+        line = f"Minority report: some rooms think the debate is still too low on {match.home_team} after the risk adjustment."
         return _dispute_summary_dict(disputes, critique_counts, dominant_type, dominant_pair, line)
-    if dominant_type == "overpriced_home":
-        line = f"Minority report: some rooms think {match.home_team}'s price is still too high after the evidence."
+    if dominant_type in {"home_probability_too_high", "overpriced_home"}:
+        line = f"Minority report: some rooms think the debate is still too optimistic on {match.home_team} after the evidence."
         return _dispute_summary_dict(disputes, critique_counts, dominant_type, dominant_pair, line)
     if dominant_type == "impact_size":
         line = "Minority report: the topic is accepted, but the impact size is still disputed."
@@ -1051,6 +1069,8 @@ def _dispute_priority(critique_type: str) -> int:
         "source_quality": 5,
         "counter_evidence": 4,
         "impact_size": 3,
+        "home_probability_too_high": 2,
+        "home_probability_too_low": 2,
         "overpriced_home": 2,
         "underpriced_home": 2,
     }

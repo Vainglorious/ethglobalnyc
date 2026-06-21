@@ -39,9 +39,13 @@ def print_room_debug(result: RoundResult, *, max_claim_chars: int = 220) -> None
             message = _shorten(claim.message, max_claim_chars)
             dispute = ""
             if claim.dispute:
-                critique = str(claim.dispute.get("critique_type") or "dispute").replace("_", "-")
+                critique = str(
+                    claim.dispute.get("critique_label")
+                    or claim.dispute.get("critique_type")
+                    or "dispute"
+                ).replace("_", "-")
                 target = str(claim.dispute.get("target_speaker_name") or "previous")
-                dispute = f" -> {critique} on {target}"
+                dispute = f" -> reply to {target}: {critique}"
             print(
                 f"  - {claim.speaker_name} [{claim.debate_role}/{claim.access_tier}] "
                 f"{_lean_label(claim.stated_home_probability)}: {message}{dispute}"

@@ -2,7 +2,7 @@
 window.DN = window.DN || {};
 
 DN.ants = (function () {
-  const A = { perCol: 40, list: [], heroes: [], byMesh: {}, GROUPS: 5 };
+  const A = { perCol: 40, list: [], heroes: [], byMesh: {}, GROUPS: 5, ambientDeaths: false };
   let scene, noise;
   const P = DN.palette;
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _s = new THREE.Vector3(), _p = new THREE.Vector3();
@@ -333,6 +333,18 @@ DN.ants = (function () {
     spawnColonyAnts(col, A.meshes.length, parent);
   };
 
+  A.removeColony = function (col) {
+    if (!col) return;
+    A.list = A.list.filter(a => a.col !== col);
+    A.heroes = A.heroes.filter(a => a.col !== col);
+    if (col._antMesh) {
+      if (scene) scene.remove(col._antMesh);
+      delete A.byMesh[col._antMesh.uuid];
+      A.meshes = A.meshes.filter(mesh => mesh !== col._antMesh);
+      col._antMesh = null;
+    }
+  };
+
   A.init = function (sceneRef, colonies) {
     scene = sceneRef;
     noise = new DNNoise(404);
@@ -545,8 +557,9 @@ DN.ants = (function () {
         }
         continue;
       }
-      // ant has a chance to die per frame — heroes and migrators are immortal
-      if (!a.hero && a.state !== 'migrating' && Math.random() < dt * 0.0002 * timeScale) {
+      // Product colonies should only mark death from backend state or an explicit user action.
+      // Keep the old ambient survival mechanic behind a disabled flag for visual experiments.
+      if (A.ambientDeaths && !a.hero && a.state !== 'migrating' && Math.random() < dt * 0.0002 * timeScale) {
         a.state = 'dead';
         a.deadTimer = 2.0;
         // Rate-limited log emission — at most one DEATH row per ~2s globally.

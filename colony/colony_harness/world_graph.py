@@ -132,7 +132,11 @@ def build_world_graph(
                         entity_id=predictor_id,
                         entity_type="predictor",
                         name=forecast.agent_id,
-                        attributes={"bankroll": forecast.bankroll, "genome_id": forecast.genome_id},
+                        attributes={
+                            "bankroll": forecast.bankroll,
+                            "genome_id": forecast.genome_id,
+                            "model": forecast.model,
+                        },
                     ),
                     WorldEntity(
                         entity_id=prediction_id,
@@ -180,11 +184,16 @@ def build_world_graph(
             room = claim.room_id or "global"
             claim_id = f"debate_claim:{match.round_id}:{phase}:{room}:{claim.speaker_id}"
             genome_id = f"genome:{claim.genome_id}" if claim.genome_id else ""
+            is_synthesis = claim.speaker_id == "colony_synthesis"
+            speaker_entity_id = (
+                f"synthesis:{claim.speaker_id}" if is_synthesis else f"predictor:{claim.speaker_id}"
+            )
+            speaker_entity_type = "synthesis" if is_synthesis else "predictor"
             entities.extend(
                 [
                     WorldEntity(
-                        entity_id=f"predictor:{claim.speaker_id}",
-                        entity_type="predictor",
+                        entity_id=speaker_entity_id,
+                        entity_type=speaker_entity_type,
                         name=claim.speaker_name or claim.speaker_id,
                         attributes={
                             "speaker_id": claim.speaker_id,
@@ -205,7 +214,7 @@ def build_world_graph(
             relationships.extend(
                 [
                     WorldRelationship(
-                        source_id=f"predictor:{claim.speaker_id}",
+                        source_id=speaker_entity_id,
                         relation_type="published_claim",
                         target_id=claim_id,
                         weight=claim.confidence,
