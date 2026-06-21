@@ -1,0 +1,21 @@
+import { chromium } from 'playwright'
+const b = await chromium.launch({ args:['--use-gl=angle','--ignore-gpu-blocklist','--enable-webgl'] })
+const p = await b.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1.5 })
+const errs=[]; p.on('pageerror',e=>errs.push(e.message))
+await p.goto('http://localhost:3000/', { waitUntil: 'networkidle' }).catch(()=>{})
+await p.waitForTimeout(4500)
+await p.evaluate(() => { const i=document.getElementById('intro'); if(i) i.style.display='none'; const o=document.getElementById('onboarding'); if(o) o.style.display='none'; })
+await p.waitForTimeout(300)
+await p.screenshot({ path: '/tmp/wc-closed.png' })
+// open overlay
+await p.click('#wc-cta')
+await p.waitForTimeout(500)
+const open = await p.evaluate(()=>document.body.classList.contains('wc-open'))
+console.log('opened:', open)
+await p.screenshot({ path: '/tmp/wc-open.png' })
+// back
+await p.click('#wc-back')
+await p.waitForTimeout(400)
+console.log('closed again:', !(await p.evaluate(()=>document.body.classList.contains('wc-open'))))
+console.log('pageerrors:', errs.slice(0,5).join(' | ')||'none')
+await b.close()

@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WorldColony — Living AI Ant Civilization</title>
+<link rel="icon" href="/favicon.ico" sizes="any" />
+<link rel="icon" type="image/svg+xml" href="/worldcup/soccerball.svg" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Press+Start+2P&family=Pixelify+Sans:wght@400;500;600;700&family=Silkscreen:wght@400;700&display=swap" rel="stylesheet" />
@@ -105,6 +107,51 @@
 
 <!-- phantom wallet — body-level so it stays above every overlay (intro, loading, etc.) -->
 <div id="wallet" class="panel"></div>
+
+<!-- ============ WORLD CUP TEMP — remove this whole block after the tournament ============ -->
+<!-- body-level (sibling of #hud/#intro) so z-index sits in front of EVERYTHING -->
+
+<!-- entry button (top-left). Opens the full-screen overlay. -->
+<a id="wc-cta" href="#worldcup" role="button" aria-label="Open World Cup Predictions">
+  <span class="wc-ball" aria-hidden="true">
+    <img src="/worldcup/soccerball.svg" alt="" width="30" height="30" />
+  </span>
+  <span class="wc-txt">
+    <span class="wc-kicker">Ant Colony · Live</span>
+    <span class="wc-title">World Cup Predictions</span>
+  </span>
+  <span class="wc-arrow" aria-hidden="true">&rarr;</span>
+</a>
+
+<!-- full-screen layer that covers the whole app while open -->
+<div id="wc-overlay" aria-hidden="true">
+  <!-- back button — sits in the SAME spot as #wc-cta, above the overlay -->
+  <button id="wc-back" type="button" aria-label="Back to the colony">
+    <span class="wc-ball wc-ball-back" aria-hidden="true">&larr;</span>
+    <span class="wc-txt">
+      <span class="wc-kicker">World Cup Predictions</span>
+      <span class="wc-title">Back to the Colony</span>
+    </span>
+  </button>
+
+  <!-- content goes here (built next) -->
+  <div id="wc-content"></div>
+</div>
+
+<script>
+  (function () {
+    var body = document.body;
+    var cta = document.getElementById('wc-cta');
+    var back = document.getElementById('wc-back');
+    var overlay = document.getElementById('wc-overlay');
+    function open(e) { if (e) e.preventDefault(); body.classList.add('wc-open'); overlay.setAttribute('aria-hidden', 'false'); }
+    function close(e) { if (e) e.preventDefault(); body.classList.remove('wc-open'); overlay.setAttribute('aria-hidden', 'true'); }
+    if (cta) cta.addEventListener('click', open);
+    if (back) back.addEventListener('click', close);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && body.classList.contains('wc-open')) close(e); });
+  })();
+</script>
+<!-- ============ /WORLD CUP TEMP ============ -->
 
 <!-- dive fade -->
 <div id="fade"></div>
