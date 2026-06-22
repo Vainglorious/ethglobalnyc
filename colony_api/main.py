@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 import uuid
@@ -41,6 +42,9 @@ SCOUTING_SOURCE_CATALOG = REPO_ROOT / "colony" / "config" / "scouting_source_cat
 COLONY_ENV = REPO_ROOT / "colony" / ".env"
 WORLD_CUP_KG = REPO_ROOT / "colony" / "data" / "world_cup_kg.json"
 WORLD_CUP_KG_SUMMARY = REPO_ROOT / "colony" / "data" / "world_cup_kg.summary.md"
+PREMATCH_SCRAPE_ROOT = Path(
+    os.environ.get("COLONY_PREMATCH_SCRAPE_ROOT", str(REPO_ROOT / "colony" / "runs" / "prematch_scrape"))
+).resolve()
 DEFAULT_PUBLIC_WALLET_STORE = "colony/data/agent-wallets.dynamic.200.public.json"
 DEFAULT_LOCAL_WALLET_STORE = "colony/secrets/agent-wallets.local.json"
 DEFAULT_FORECAST_MARKET_KEY = "worldcup:2026:brazil-morocco:frontend-demo"
@@ -2361,10 +2365,108 @@ def _x402_services() -> list[dict]:
     ]
 
 
+def _api_slug(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", "_", normalized.lower()).strip("_")
+
+
+def _match_pair_slug(home: str, away: str) -> str:
+    return f"{_api_slug(home)}_vs_{_api_slug(away)}"
+
+
+def _relative_repo_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def _prematch_source_match_slug(source_path: Path, payload: dict, documents_payload: dict | None) -> str:
+    match = (documents_payload or {}).get("match") or {}
+    home = str(match.get("home_team") or "").strip()
+    away = str(match.get("away_team") or "").strip()
+    if home and away:
+        return _match_pair_slug(home, away)
+
+    for finding in payload.get("findings") or []:
+        finding_id = str(finding.get("finding_id") or "")
+        matched = re.search(r":([a-z0-9_]+_vs_[a-z0-9_]+)$", finding_id)
+        if matched:
+            return matched.group(1)
+
+    parent_slug = _api_slug(source_path.parents[1].name)
+    matched = re.search(r"([a-z0-9_]+_vs_[a-z0-9_]+)", parent_slug)
+    return matched.group(1) if matched else parent_slug
+
+
+def _prematch_claim_count(payload: dict) -> int:
+    total = 0
+    for finding in payload.get("findings") or []:
+        total += len(finding.get("evidence_claims") or finding.get("claims") or [])
+    return total
+
+
+def _prematch_test_data_index() -> dict[str, dict]:
+    if not PREMATCH_SCRAPE_ROOT.exists():
+        return {}
+    index: dict[str, dict] = {}
+    for source_path in sorted(PREMATCH_SCRAPE_ROOT.glob("**/kg/prematch_kg_source.json")):
+        try:
+            payload = json.loads(source_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        scrape_dir = source_path.parents[1]
+        documents_path = scrape_dir / "normalized" / "prematch_documents.json"
+        documents_payload: dict | None = None
+        if documents_path.exists():
+            try:
+                loaded = json.loads(documents_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    documents_payload = loaded
+            except (OSError, json.JSONDecodeError):
+                documents_payload = None
+        summary = (documents_payload or {}).get("summary") or {}
+        match = (documents_payload or {}).get("match") or {}
+        claim_count = _prematch_claim_count(payload)
+        usable_documents = int(summary.get("usable") or 0)
+        candidate = {
+            "kind": "prematch_scrape",
+            "source": _relative_repo_path(source_path),
+            "run_dir": _relative_repo_path(scrape_dir),
+            "created_at_utc": (documents_payload or {}).get("created_at_utc"),
+            "kickoff_utc": match.get("kickoff_utc"),
+            "prediction_cutoff_utc": match.get("prediction_cutoff_utc"),
+            "finding_count": len(payload.get("findings") or []),
+            "evidence_claim_count": claim_count,
+            "usable_document_count": usable_documents,
+            "document_count": int(summary.get("total") or 0),
+            "source_count": int(summary.get("source_count") or 0),
+            "usable_by_source_type": summary.get("usable_by_source_type") or {},
+            "usable_by_signal_type": summary.get("usable_by_signal_type") or {},
+        }
+        if claim_count <= 0 and usable_documents <= 0:
+            continue
+        slug = _prematch_source_match_slug(source_path, payload, documents_payload)
+        previous = index.get(slug)
+        if not previous:
+            index[slug] = candidate
+            continue
+        previous["_artifact_count"] = int(previous.get("_artifact_count") or 1) + 1
+        candidate["_artifact_count"] = previous["_artifact_count"]
+        previous_score = (int(previous.get("usable_document_count") or 0), int(previous.get("evidence_claim_count") or 0))
+        candidate_score = (usable_documents, claim_count)
+        if candidate_score >= previous_score:
+            index[slug] = candidate
+    for value in index.values():
+        value["artifact_count"] = int(value.pop("_artifact_count", 1))
+    return index
+
+
 def _forecast_games_from_kg(limit: int = 104) -> list[dict]:
     if not WORLD_CUP_KG.exists():
         return []
     graph = json.loads(WORLD_CUP_KG.read_text(encoding="utf-8"))
+    previous_test_data = _prematch_test_data_index()
     games: list[dict] = []
     for entity in graph.get("entities") or []:
         if entity.get("entity_type") != "match":
@@ -2379,6 +2481,7 @@ def _forecast_games_from_kg(limit: int = 104) -> list[dict]:
             continue
         group = str(attrs.get("group") or "").strip()
         market_type = "three_way" if group else "binary"
+        test_data = previous_test_data.get(_match_pair_slug(home, away))
         games.append(
             {
                 "match_id": entity.get("entity_id"),
@@ -2394,6 +2497,8 @@ def _forecast_games_from_kg(limit: int = 104) -> list[dict]:
                 "group": group,
                 "venue": attrs.get("ground"),
                 "score": score,
+                "has_previous_test_data": bool(test_data),
+                "previous_test_data": test_data,
             }
         )
     games.sort(key=lambda item: (str(item.get("date") or ""), str(item.get("time") or ""), str(item.get("name") or "")))
@@ -2684,7 +2789,9 @@ def get_forecast_games(limit: int = 104) -> dict:
     games = _forecast_games_from_kg(limit=max(1, min(limit, 104)))
     return {
         "count": len(games),
+        "previous_test_count": sum(1 for game in games if game.get("has_previous_test_data")),
         "source": str(WORLD_CUP_KG.relative_to(REPO_ROOT)),
+        "previous_test_source": _relative_repo_path(PREMATCH_SCRAPE_ROOT),
         "games": games,
     }
 

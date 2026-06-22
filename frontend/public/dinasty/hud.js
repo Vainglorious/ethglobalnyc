@@ -205,8 +205,26 @@ DN.hud = (function () {
       return Boolean(game && game.group && game.date);
     }
 
+    function selectedGameScope() {
+      return forecastGameScope ? forecastGameScope.value : 'upcoming';
+    }
+
+    function isPreviousGameScope() {
+      return selectedGameScope() === 'previous';
+    }
+
+    function hasPreviousTestData(game) {
+      return Boolean(game && game.has_previous_test_data && game.previous_test_data);
+    }
+
     function isPreviousTestGame(game) {
-      return isGroupStageGame(game) && game.date < todayIsoDate();
+      return isGroupStageGame(game) && game.date < todayIsoDate() && hasPreviousTestData(game);
+    }
+
+    function updateColonyRunButtonLabel() {
+      if (!colonyRunBtn) return;
+      colonyRunBtn.textContent = isPreviousGameScope() ? 'Run saved' : 'Run all';
+      if (!colonyBusy) colonyRunBtn.disabled = isPreviousGameScope() && !hasPreviousTestData(selectedGame);
     }
 
     function sortGamesForScope(games, scope) {
@@ -220,7 +238,12 @@ DN.hud = (function () {
     function forecastGameLabel(game, scope) {
       const parts = [game.date, game.time, game.name].filter(Boolean);
       if (game.score) parts.push('score ' + game.score);
-      else if (scope === 'previous') parts.push('previous');
+      else if (scope === 'previous') {
+        const testData = game.previous_test_data || {};
+        const docs = Number(testData.usable_document_count || 0);
+        const claims = Number(testData.evidence_claim_count || 0);
+        parts.push(docs || claims ? 'test ' + docs + ' docs / ' + claims + ' claims' : 'test data');
+      }
       return parts.join(' - ');
     }
 
@@ -228,6 +251,7 @@ DN.hud = (function () {
       const filtered = scope === 'previous'
         ? games.filter(isPreviousTestGame)
         : games.filter(isUpcomingGroupStage);
+      if (scope === 'previous') return sortGamesForScope(filtered, scope);
       return sortGamesForScope(filtered.length ? filtered : games, scope);
     }
 
@@ -235,7 +259,15 @@ DN.hud = (function () {
       if (!forecastGame) return;
       const games = (DN.databridge && DN.databridge.forecastGames) || [];
       const visibleGames = gamesForScope(games, scope || 'upcoming');
-      if (!visibleGames.length && !preferred) return;
+      if (!visibleGames.length) {
+        forecastGame.innerHTML = '<option value="">' + (scope === 'previous' ? 'No saved test data' : 'No games available') + '</option>';
+        forecastGame.disabled = true;
+        if (scope === 'previous') selectedGame = Object.assign({}, selectedGame, { has_previous_test_data: false, previous_test_data: null });
+        updateWinnerOptions();
+        updateColonyRunButtonLabel();
+        return;
+      }
+      forecastGame.disabled = false;
       forecastGame.innerHTML = visibleGames.slice(0, 104).map((game) =>
         '<option value="' + esc(gameKey(game)) + '">' + esc(forecastGameLabel(game, scope || 'upcoming')) + '</option>'
       ).join('');
@@ -250,6 +282,7 @@ DN.hud = (function () {
       selectedGame = chosen;
       forecastGame.value = gameKey(selectedGame);
       updateWinnerOptions();
+      updateColonyRunButtonLabel();
     }
 
     function fallbackKgModules() {
@@ -494,6 +527,7 @@ DN.hud = (function () {
       });
       if (colonyAntId) colonyAntId.disabled = colonyBusy;
       if (colonyAntStatus) colonyAntStatus.disabled = colonyBusy;
+      if (!colonyBusy) updateColonyRunButtonLabel();
     }
 
     function materializeWalletColony(row) {
@@ -550,7 +584,8 @@ DN.hud = (function () {
       return ants.slice(0, Math.min(limit || 28, ants.length));
     }
 
-    function runAllVisualStart(pubkey) {
+    function runAllVisualStart(pubkey, opts) {
+      const previousTest = Boolean(opts && opts.previousTest);
       const col = visualColonyForRun(pubkey);
       if (!col) return null;
       const crystal = DN.crystal && DN.crystal.position ? DN.crystal.position() : new THREE.Vector3(0, 0, 0);
@@ -560,7 +595,9 @@ DN.hud = (function () {
         for (let i = 0; i < 18; i++) if (DN.crystal.depositOne) DN.crystal.depositOne();
       }
       if (DN.camera && DN.camera.flyTo) DN.camera.flyTo(new THREE.Vector3(0, 0, 0), 190, 120, 2.0);
-      if (DN.logTerm) DN.logTerm.push('PHASE', '── Run all: ants collecting KG crystal ──');
+      if (DN.logTerm) {
+        DN.logTerm.push('PHASE', previousTest ? '── Previous test: ants loading saved KG ──' : '── Run all: ants collecting KG crystal ──');
+      }
 
       const ants = visualRunAnts(col, 28);
       ants.forEach((ant, index) => {
@@ -1331,6 +1368,7 @@ DN.hud = (function () {
       if (forecastGameScope) {
         forecastGameScope.addEventListener('change', () => {
           renderForecastGames(forecastGameScope.value, selectedGame);
+          updateColonyRunButtonLabel();
           const suffix = forecastGameScope.value === 'previous' ? ' · previous test' : '';
           status.textContent = (selectedGame.name || 'Selected game') + suffix;
         });
@@ -1350,6 +1388,7 @@ DN.hud = (function () {
         forecastMarketKey = '';
         forecastStakes = [];
         updateWinnerOptions();
+        updateColonyRunButtonLabel();
         status.textContent = selectedGame.name;
       });
     }
@@ -1534,22 +1573,37 @@ DN.hud = (function () {
           H.pushThought('Connect your wallet before running all.', 'Wallet', '#D96E54');
           return;
         }
+        const previousTest = isPreviousGameScope();
+        if (previousTest && !hasPreviousTestData(selectedGame)) {
+          H.pushThought('No saved pre-match test data is available for this match.', 'Backend', '#D96E54');
+          status.textContent = 'No saved test data';
+          return;
+        }
         setColonyBusy(true);
         setScoutingBusy(true);
-        status.textContent = 'Run all...';
+        status.textContent = previousTest ? 'Run saved...' : 'Run all...';
         ensurePanelColony()
           .then(() => {
-            runAllVisualStart(pubkey);
+            runAllVisualStart(pubkey, { previousTest });
+            if (previousTest) {
+              status.textContent = 'Run saved · colony...';
+              H.pushThought('Using the saved pre-match KG for ' + selectedGame.name + '.', 'Backend', '#3FA89F');
+              if (DN.logTerm) DN.logTerm.push('KG', 'Previous test selected; skipping automatic KG refresh for ' + selectedGame.name + '.');
+              return null;
+            }
             return startSelectedKgRun('all');
           })
           .then(() => {
             runAllVisualColonyStep(pubkey);
-            status.textContent = 'Run all · colony...';
-            if (DN.logTerm) DN.logTerm.push('COLONY', 'Run all colony step starting for ' + selectedGame.name + '.');
+            status.textContent = previousTest ? 'Run saved · colony...' : 'Run all · colony...';
+            if (DN.logTerm) {
+              DN.logTerm.push('COLONY', (previousTest ? 'Saved-KG colony step' : 'Run all colony step') + ' starting for ' + selectedGame.name + '.');
+            }
             return DN.databridge.startUserColonyRun(pubkey, {
               match: selectedGame.name,
               match_id: selectedGame.match_id || selectedGame.market_key,
               data_mode: 'public',
+              refresh_data: false,
               rooms: 5,
               voice_mode: 'template',
               seed: 42,
@@ -1558,8 +1612,8 @@ DN.hud = (function () {
           })
           .then((result) => {
             const runId = (DN.databridge && DN.databridge.runId) || (result && result.id) || '';
-            status.textContent = runId ? 'Run all ' + shortHash(runId) : 'Run all complete';
-            H.pushThought('Run all finished for ' + selectedGame.name + '.', 'Colony', '#3FA89F');
+            status.textContent = runId ? (previousTest ? 'Run saved ' : 'Run all ') + shortHash(runId) : (previousTest ? 'Run saved complete' : 'Run all complete');
+            H.pushThought((previousTest ? 'Saved-KG run finished for ' : 'Run all finished for ') + selectedGame.name + '.', 'Colony', '#3FA89F');
             return logColonyPredictionSummary(runId).then((summary) => {
               runAllVisualFinish();
               return H.refreshRunsPage(false).then(() => loadRunResults(runId, summary));
@@ -1567,8 +1621,8 @@ DN.hud = (function () {
           })
           .catch((err) => {
             if (DN.crystal && DN.crystal.hide) DN.crystal.hide();
-            status.textContent = 'Run all error';
-            H.pushThought('Run all failed: ' + (err.message || err), 'Colony', '#D96E54');
+            status.textContent = previousTest ? 'Run saved error' : 'Run all error';
+            H.pushThought((previousTest ? 'Run saved failed: ' : 'Run all failed: ') + (err.message || err), 'Colony', '#D96E54');
           })
           .finally(() => {
             setScoutingBusy(false);
