@@ -174,6 +174,8 @@ DN.hud = (function () {
     let forecastMarketKey = '';
     let forecastStakes = [];
     let colonyBusy = false;
+    let forecastGamesHavePreviousTestData = false;
+    let previousTestGamesPromise = null;
     let lastColonyPayload = null;
     let lastRunResults = null;
     let selectedGame = {
@@ -283,6 +285,29 @@ DN.hud = (function () {
       forecastGame.value = gameKey(selectedGame);
       updateWinnerOptions();
       updateColonyRunButtonLabel();
+    }
+
+    function loadPreviousTestGames() {
+      if (forecastGamesHavePreviousTestData) return Promise.resolve({ games: (DN.databridge && DN.databridge.forecastGames) || [] });
+      if (previousTestGamesPromise) return previousTestGamesPromise;
+      if (!DN.databridge || !DN.databridge.fetchForecastGames) {
+        return Promise.reject(new Error('Forecast games API is not available.'));
+      }
+      if (forecastGame) {
+        forecastGame.disabled = true;
+        forecastGame.innerHTML = '<option value="">Loading saved test data...</option>';
+      }
+      if (colonyRunBtn) colonyRunBtn.disabled = true;
+      status.textContent = 'Loading saved tests...';
+      previousTestGamesPromise = DN.databridge.fetchForecastGames({ includePreviousTestData: true })
+        .then((payload) => {
+          forecastGamesHavePreviousTestData = Boolean(payload && payload.include_previous_test_data);
+          return payload;
+        })
+        .finally(() => {
+          previousTestGamesPromise = null;
+        });
+      return previousTestGamesPromise;
     }
 
     function fallbackKgModules() {
@@ -1359,6 +1384,7 @@ DN.hud = (function () {
     if (DN.databridge && DN.databridge.fetchForecastGames && forecastGame) {
       DN.databridge.fetchForecastGames()
         .then((payload) => {
+          forecastGamesHavePreviousTestData = Boolean(payload && payload.include_previous_test_data);
           const games = payload.games || [];
           const preferred = games.find((game) => /Brazil vs Morocco/i.test(game.name || '')) || games[0];
           if (!preferred) return;
@@ -1367,9 +1393,28 @@ DN.hud = (function () {
         .catch(() => {});
       if (forecastGameScope) {
         forecastGameScope.addEventListener('change', () => {
-          renderForecastGames(forecastGameScope.value, selectedGame);
+          const scope = forecastGameScope.value;
+          if (scope === 'previous' && !forecastGamesHavePreviousTestData) {
+            loadPreviousTestGames()
+              .then(() => {
+                renderForecastGames(selectedGameScope(), selectedGame);
+                const suffix = selectedGameScope() === 'previous' ? ' · previous test' : '';
+                status.textContent = (selectedGame.name || 'Selected game') + suffix;
+              })
+              .catch((err) => {
+                status.textContent = 'Saved tests unavailable';
+                if (forecastGame) {
+                  forecastGame.innerHTML = '<option value="">No saved test data</option>';
+                  forecastGame.disabled = true;
+                }
+                updateColonyRunButtonLabel();
+                H.pushThought('Could not load saved test data: ' + (err.message || err), 'Backend', '#D96E54');
+              });
+            return;
+          }
+          renderForecastGames(scope, selectedGame);
           updateColonyRunButtonLabel();
-          const suffix = forecastGameScope.value === 'previous' ? ' · previous test' : '';
+          const suffix = scope === 'previous' ? ' · previous test' : '';
           status.textContent = (selectedGame.name || 'Selected game') + suffix;
         });
       }

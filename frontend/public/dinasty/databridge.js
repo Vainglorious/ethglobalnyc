@@ -181,8 +181,12 @@ DN.databridge = (function () {
     return apiJson('/forecast/config');
   };
 
-  B.fetchForecastGames = function () {
-    return apiJson('/forecast/games')
+  B.fetchForecastGames = function (opts) {
+    opts = opts || {};
+    const params = new URLSearchParams();
+    if (opts.include_previous_test_data || opts.includePreviousTestData) params.set('include_previous_test_data', 'true');
+    const query = params.toString();
+    return apiJson('/forecast/games' + (query ? '?' + query : ''))
       .then((payload) => {
         B.forecastGames = payload.games || [];
         return payload;

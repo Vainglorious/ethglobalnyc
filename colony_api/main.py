@@ -2462,11 +2462,11 @@ def _prematch_test_data_index() -> dict[str, dict]:
     return index
 
 
-def _forecast_games_from_kg(limit: int = 104) -> list[dict]:
+def _forecast_games_from_kg(limit: int = 104, *, include_previous_test_data: bool = True) -> list[dict]:
     if not WORLD_CUP_KG.exists():
         return []
     graph = json.loads(WORLD_CUP_KG.read_text(encoding="utf-8"))
-    previous_test_data = _prematch_test_data_index()
+    previous_test_data = _prematch_test_data_index() if include_previous_test_data else {}
     games: list[dict] = []
     for entity in graph.get("entities") or []:
         if entity.get("entity_type") != "match":
@@ -2785,13 +2785,17 @@ def get_forecast_config() -> dict:
 
 
 @app.get("/forecast/games")
-def get_forecast_games(limit: int = 104) -> dict:
-    games = _forecast_games_from_kg(limit=max(1, min(limit, 104)))
+def get_forecast_games(limit: int = 104, include_previous_test_data: bool = False) -> dict:
+    games = _forecast_games_from_kg(
+        limit=max(1, min(limit, 104)),
+        include_previous_test_data=include_previous_test_data,
+    )
     return {
         "count": len(games),
         "previous_test_count": sum(1 for game in games if game.get("has_previous_test_data")),
         "source": str(WORLD_CUP_KG.relative_to(REPO_ROOT)),
-        "previous_test_source": _relative_repo_path(PREMATCH_SCRAPE_ROOT),
+        "previous_test_source": _relative_repo_path(PREMATCH_SCRAPE_ROOT) if include_previous_test_data else None,
+        "include_previous_test_data": include_previous_test_data,
         "games": games,
     }
 

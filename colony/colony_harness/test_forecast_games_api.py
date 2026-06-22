@@ -90,8 +90,12 @@ class ForecastGamesApiTest(unittest.TestCase):
             )
 
             with patch.object(api, "WORLD_CUP_KG", kg_path), patch.object(api, "PREMATCH_SCRAPE_ROOT", root / "prematch_scrape"):
-                games = api._forecast_games_from_kg()
+                light_games = api._forecast_games_from_kg(include_previous_test_data=False)
+                games = api._forecast_games_from_kg(include_previous_test_data=True)
 
+        light_by_name = {game["name"]: game for game in light_games}
+        self.assertFalse(light_by_name["France vs Iraq"]["has_previous_test_data"])
+        self.assertIsNone(light_by_name["France vs Iraq"]["previous_test_data"])
         by_name = {game["name"]: game for game in games}
         self.assertTrue(by_name["France vs Iraq"]["has_previous_test_data"])
         self.assertEqual(by_name["France vs Iraq"]["previous_test_data"]["usable_document_count"], 2)
