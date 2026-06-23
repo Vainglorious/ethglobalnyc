@@ -259,6 +259,25 @@
       "status": "filled",
       "block": 88799601,
       "tx_hash": "0x647a030f53e5b5d37baec41a770e0cfc25fdfe8e8c131d4d0a20ddaadf863ca6"
+    },
+    {
+      "id": 12,
+      "ts_utc": "2026-06-21T20:58:20Z",
+      "action": "buy",
+      "placed_by": "adil",
+      "method": "manual",
+      "execution_layer": "polygun",
+      "side": "yes",
+      "polygun_market_id": 1897171,
+      "outcome_token_id": "65206879169809471684171181962606426355936771076631263853333189016369249957120",
+      "shares": 2.197801,
+      "avg_price": 0.91,
+      "pusd_to_maker": 1.999998,
+      "pusd_fee": 0.02539,
+      "pusd_total": 2.025388,
+      "status": "filled",
+      "block": 88913670,
+      "tx_hash": "0x85548bea17620b094277aec084a1fcea945c77bc33c2f0d691195451ad76e202"
     }
   ]
 }
