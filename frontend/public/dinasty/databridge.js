@@ -388,6 +388,19 @@ DN.databridge = (function () {
       });
   };
 
+  B.fetchBenchmarkRuns = function (opts) {
+    const params = new URLSearchParams();
+    opts = opts || {};
+    if (opts.limit) params.set('limit', opts.limit);
+    if (opts.snapshot_id || opts.snapshotId) params.set('snapshot_id', opts.snapshot_id || opts.snapshotId);
+    if (opts.pubkey) params.set('pubkey', opts.pubkey);
+    return apiJson('/benchmark/runs' + (params.toString() ? '?' + params.toString() : ''))
+      .then((payload) => {
+        B.benchmarkRuns = payload.runs || [];
+        return payload;
+      });
+  };
+
   B.fetchRunPrediction = function (runId) {
     if (!runId) return Promise.reject(new Error('run id required'));
     return apiJson('/runs/' + encodeURIComponent(runId) + '/prediction');

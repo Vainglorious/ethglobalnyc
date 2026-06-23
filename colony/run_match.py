@@ -8,6 +8,7 @@ import json
 import os
 from dataclasses import replace
 from pathlib import Path
+from urllib.parse import quote
 
 from colony_harness import ColonyHarness
 from colony_harness.artifacts import create_run_dir, write_compact_run_artifacts
@@ -22,6 +23,7 @@ from colony_harness.scouts import (
     mock_match_context_from_tournament_match,
     openfootball_match_context_from_tournament_match,
 )
+from colony_harness.supabase_client import SupabaseRequestError, load_supabase_settings, request_json
 from colony_harness.tournament_graph import build_tournament_graph, load_openfootball_schedule
 from colony_harness.voice import TemplateVoiceModel, llm_voice_model_from_env
 from colony_harness.world import DEFAULT_WORLD_VERIFICATION_STORE, apply_world_verifications
@@ -37,6 +39,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kg", default=str(DEFAULT_KG), help="Path to the built World Cup KG JSON.")
     parser.add_argument("--match-id", default=None, help="Exact KG match entity id.")
     parser.add_argument("--match", default="Brazil vs Morocco", help='Match name, e.g. "Brazil vs Morocco".')
+    parser.add_argument(
+        "--prematch-snapshot-id",
+        default=None,
+        help="Load timestamped prematch KG claims from Supabase instead of live/scout findings.",
+    )
     parser.add_argument(
         "--data-mode",
         choices=["synthetic", "public", "openfootball"],
@@ -121,6 +128,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--runs-dir", default="colony/runs", help="Directory for automatic compact run logs.")
     parser.add_argument("--no-run-log", action="store_true", help="Disable automatic compact run logs.")
+    parser.add_argument(
+        "--no-memory-writes",
+        action="store_true",
+        help="Run memory recall/read paths but do not persist post-run ant memories.",
+    )
     parser.add_argument("--debug", action="store_true", help="Write an additional human-readable debug.md report.")
     parser.add_argument(
         "--market-home-probability",
@@ -260,6 +272,164 @@ def _market_override_home_anchor(args: argparse.Namespace, side_probabilities: d
     return _clamp_probability(home / denominator)
 
 
+def _prematch_source_type(row: dict) -> str:
+    source_kind = str(row.get("source_kind") or "").casefold()
+    claim_type = str(row.get("claim_type") or "").casefold()
+    signal_type = str((row.get("metrics") or {}).get("signal_type") or "").casefold() if isinstance(row.get("metrics"), dict) else ""
+    if source_kind == "market" or claim_type in {"market", "market_anchor", "odds"}:
+        return "market"
+    if claim_type in {"lineup", "squad_roster", "injury_availability", "injury_return", "availability"}:
+        return "lineup"
+    if source_kind == "social" or claim_type == "social_signal" or "social" in signal_type:
+        return "social"
+    if source_kind == "news":
+        return "news"
+    if claim_type in {
+        "recent_form",
+        "match_history",
+        "player_form",
+        "player_ratings",
+        "team_profile",
+        "attacking_profile",
+        "defensive_profile",
+        "coach_form",
+        "tactical",
+    }:
+        return "stats"
+    return "retrieval"
+
+
+def _optional_probability(value) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return _clamp_probability(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _claim_home_probability(row: dict) -> float | None:
+    metrics = row.get("metrics") if isinstance(row.get("metrics"), dict) else {}
+    for key in (
+        "home_probability",
+        "binary_home_probability",
+        "market_home_probability",
+        "polymarket_home_probability",
+    ):
+        probability = _optional_probability(metrics.get(key))
+        if probability is not None:
+            return probability
+    return None
+
+
+def _normal_claim(row: dict, *, snapshot_id: str) -> dict:
+    metrics = row.get("metrics") if isinstance(row.get("metrics"), dict) else {}
+    raw_claim = row.get("raw_claim") if isinstance(row.get("raw_claim"), dict) else {}
+    claim = {
+        "claim_id": row.get("claim_id") or raw_claim.get("claim_id") or "",
+        "snapshot_id": snapshot_id,
+        "team": row.get("team") or "",
+        "player": row.get("player") or "",
+        "subject": row.get("subject") or "",
+        "claim_type": row.get("claim_type") or "prematch_claim",
+        "claim": row.get("claim") or "",
+        "impact": row.get("impact") or "",
+        "confidence": row.get("confidence") if row.get("confidence") is not None else 0.5,
+        "source_kind": row.get("source_kind") or "",
+        "source_domain": row.get("source_domain") or "",
+        "source_title": row.get("source_title") or "",
+        "source_url": row.get("source_url") or "",
+        "source_published": row.get("source_published") or "",
+        "source_published_date": row.get("source_published_date") or "",
+        "available_at_utc": row.get("available_at_utc") or "",
+        "source_quality": row.get("source_quality") or "",
+        "extraction_method": row.get("extraction_method") or "supabase_prematch_snapshot",
+        "metrics": {
+            **metrics,
+            "snapshot_id": snapshot_id,
+            "prematch_source": "supabase",
+        },
+    }
+    home_probability = _claim_home_probability(row)
+    if home_probability is not None:
+        claim["home_probability"] = home_probability
+    return claim
+
+
+def _prematch_findings_from_claim_rows(*, snapshot_id: str, rows: list[dict], match) -> list[Finding]:
+    grouped: dict[str, list[dict]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or not str(row.get("claim") or "").strip():
+            continue
+        grouped.setdefault(_prematch_source_type(row), []).append(_normal_claim(row, snapshot_id=snapshot_id))
+
+    findings: list[Finding] = []
+    for source_type, claims in sorted(grouped.items()):
+        probabilities = [claim["home_probability"] for claim in claims if claim.get("home_probability") is not None]
+        home_probability = round(sum(probabilities) / len(probabilities), 4) if probabilities else None
+        confidence_values = []
+        for claim in claims:
+            try:
+                confidence_values.append(float(claim.get("confidence") or 0.5))
+            except (TypeError, ValueError):
+                confidence_values.append(0.5)
+        confidence = round(sum(confidence_values) / len(confidence_values), 4) if confidence_values else 0.5
+        citations = []
+        seen_urls = set()
+        for claim in claims:
+            url = str(claim.get("source_url") or "").strip()
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                citations.append(url)
+        summary = (
+            f"Supabase prematch snapshot {snapshot_id} injected {len(claims)} "
+            f"{source_type} claims for {match.home_team} vs {match.away_team}."
+        )
+        findings.append(
+            Finding(
+                finding_id=f"{match.round_id}:prematch_snapshot:{source_type}",
+                scout_name="supabase_prematch_snapshot",
+                access_level="public",
+                source_type=source_type,
+                finding_name=f"prematch_snapshot_{source_type}",
+                home_probability=home_probability,
+                home_delta=None if home_probability is None else round(home_probability - match.market_home_probability, 4),
+                confidence=confidence,
+                cost=0.0,
+                citations=citations[:16],
+                summary=summary,
+                evidence_claims=claims,
+            )
+        )
+    return findings
+
+
+def _load_prematch_snapshot_findings(args: argparse.Namespace, match) -> list[Finding]:
+    snapshot_id = str(args.prematch_snapshot_id or "").strip()
+    if not snapshot_id:
+        return []
+    try:
+        settings = load_supabase_settings(args.env)
+        rows = request_json(
+            settings,
+            "prematch_kg_claims?"
+            "select=claim_id,team,player,subject,claim_type,claim,impact,confidence,source_kind,"
+            "source_domain,source_title,source_url,source_published,source_published_date,available_at_utc,"
+            "source_quality,extraction_method,metrics,raw_claim"
+            f"&snapshot_id=eq.{quote(snapshot_id, safe='')}&order=claim_id.asc&limit=1000",
+        )
+    except SupabaseRequestError as exc:
+        raise SystemExit(f"Could not load prematch snapshot claims: {exc}") from exc
+    findings = _prematch_findings_from_claim_rows(
+        snapshot_id=snapshot_id,
+        rows=rows if isinstance(rows, list) else [],
+        match=match,
+    )
+    if not findings:
+        raise SystemExit(f"Prematch snapshot has no usable claims: {snapshot_id}")
+    return findings
+
+
 def _apply_market_override(match, args: argparse.Namespace):
     side_probabilities = _parse_market_side_probabilities(args.market_side_probabilities_json)
     anchor = _market_override_home_anchor(args, side_probabilities)
@@ -354,6 +524,9 @@ def main() -> None:
         rescout_targets = []
         match = mock_match_context_from_tournament_match(match_entity)
 
+    prematch_findings = _load_prematch_snapshot_findings(args, match)
+    if prematch_findings:
+        match = replace(match, findings=prematch_findings)
     match = _apply_market_override(match, args)
     voice_model = llm_voice_model_from_env() if args.voice_mode == "llm" else TemplateVoiceModel()
     room_budget = _resolve_room_budget(rooms=args.rooms, speakers=args.speakers, default=6)
@@ -371,6 +544,7 @@ def main() -> None:
         dynamic_env_path=args.dynamic_env,
         agents=loaded_agents,
         colony_config=colony_config,
+        memory_write_enabled=not args.no_memory_writes,
     )
     _apply_world_agents(args, harness)
     ens_parent = _resolve_ens_parent(args)
@@ -410,6 +584,11 @@ def main() -> None:
         )
 
     print(f"Data mode: {args.data_mode}")
+    if args.prematch_snapshot_id:
+        claim_count = sum(len(finding.evidence_claims) for finding in match.findings)
+        print(f"Prematch snapshot: {args.prematch_snapshot_id} · claims={claim_count} source=supabase")
+    if args.no_memory_writes:
+        print("Memory writes: disabled for this run")
     if args.data_mode == "openfootball":
         print(f"OpenFootball scout: cache={args.openfootball_cache} refresh={'yes' if args.refresh_data else 'no'}")
     else:

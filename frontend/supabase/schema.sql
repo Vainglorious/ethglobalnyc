@@ -154,6 +154,8 @@ create table if not exists public.colony_runs (
   config_snapshot jsonb not null default '{}'::jsonb,
   code_version    text,
   artifacts       jsonb not null default '{}'::jsonb,
+  started_at      timestamptz,
+  completed_at    timestamptz,
   created_at      timestamptz not null default now(),
   updated_at      timestamptz not null default now(),
 
@@ -170,6 +172,16 @@ create index if not exists colony_runs_pubkey_created_at_idx
 
 create index if not exists colony_runs_run_id_idx
   on public.colony_runs (run_id);
+
+create unique index if not exists colony_runs_run_id_unique_idx
+  on public.colony_runs (run_id)
+  where run_id is not null;
+
+alter table public.colony_runs
+  add column if not exists started_at timestamptz;
+
+alter table public.colony_runs
+  add column if not exists completed_at timestamptz;
 
 create or replace function public.colony_runs_touch_updated_at()
 returns trigger language plpgsql as $$

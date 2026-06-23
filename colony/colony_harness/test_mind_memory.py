@@ -103,6 +103,41 @@ class MindMemoryTests(unittest.TestCase):
         self.assertTrue(result.forecasts[0].mind_summary)
         self.assertIn("memory_backend", result.summary)
 
+    def test_round_can_disable_memory_writes_for_benchmark(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_backend = os.environ.get("COLONY_MEMORY_BACKEND")
+            old_path = os.environ.get("COLONY_MEMORY_PATH")
+            memory_path = Path(tmpdir) / "memory.jsonl"
+            os.environ["COLONY_MEMORY_BACKEND"] = "json"
+            os.environ["COLONY_MEMORY_PATH"] = str(memory_path)
+            try:
+                harness = ColonyHarness(
+                    population_size=8,
+                    speaker_slots=4,
+                    seed=8,
+                    memory_write_enabled=False,
+                )
+                match = MatchContext(
+                    round_id="round_readonly_memory",
+                    home_team="France",
+                    away_team="Iraq",
+                    market_home_probability=0.52,
+                    stats_home_signal=0.54,
+                    odds_home_signal=0.51,
+                    news_home_signal=0.53,
+                )
+
+                result = harness.run_round(match)
+            finally:
+                _restore_env("COLONY_MEMORY_BACKEND", old_backend)
+                _restore_env("COLONY_MEMORY_PATH", old_path)
+
+        self.assertEqual(len(result.memory_recall), 8)
+        self.assertEqual(result.memory_writes, [])
+        self.assertEqual(result.summary["memory_writes"], 0)
+        self.assertFalse(result.summary["memory_write_enabled"])
+        self.assertFalse(memory_path.exists())
+
 
 def _restore_env(key: str, value: str | None) -> None:
     if value is None:

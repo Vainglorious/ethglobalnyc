@@ -148,6 +148,7 @@ DN.hud = (function () {
     const forecastGameScope = $('forecast-game-scope');
     const forecastGame = $('forecast-game');
     const status = $('backend-status');
+    const kgPluginPanel = $('kg-plugin-panel');
     const kgPluginList = $('kg-plugin-list');
     const kgPluginSummary = $('kg-plugin-summary');
     const kgRunMode = $('kg-run-mode');
@@ -167,6 +168,8 @@ DN.hud = (function () {
     const colonyAntId = $('colony-ant-id');
     const colonyAntStatus = $('colony-ant-status');
     const colonyUpdateAntBtn = $('colony-update-ant');
+    const colonyOptions = root.querySelector('.colony-options');
+    const colonyAntEditor = root.querySelector('.colony-ant-editor');
     const forecastCfg = (window.DN_CONFIG && window.DN_CONFIG.FORECAST) || {};
     const configuredKgRun = (window.DN_CONFIG && window.DN_CONFIG.KG_RUN) || {};
     let kgPluginCatalog = [];
@@ -219,14 +222,49 @@ DN.hud = (function () {
       return Boolean(game && game.has_previous_test_data && game.previous_test_data);
     }
 
+    function hasBenchmarkSnapshotData(game) {
+      const data = (game && game.previous_test_data) || {};
+      return Boolean(hasPreviousTestData(game) && data.snapshot_id);
+    }
+
     function isPreviousTestGame(game) {
-      return isGroupStageGame(game) && game.date < todayIsoDate() && hasPreviousTestData(game);
+      return isGroupStageGame(game) && game.date < todayIsoDate() && hasBenchmarkSnapshotData(game);
     }
 
     function updateColonyRunButtonLabel() {
       if (!colonyRunBtn) return;
-      colonyRunBtn.textContent = isPreviousGameScope() ? 'Run saved' : 'Run all';
-      if (!colonyBusy) colonyRunBtn.disabled = isPreviousGameScope() && !hasPreviousTestData(selectedGame);
+      colonyRunBtn.textContent = isPreviousGameScope() ? 'Run with colony' : 'Run all';
+      if (!colonyBusy) colonyRunBtn.disabled = isPreviousGameScope() && !hasBenchmarkSnapshotData(selectedGame);
+    }
+
+    function updatePreviousModeChrome() {
+      const previous = isPreviousGameScope();
+      const display = (el, show) => { if (el) el.style.display = show ? '' : 'none'; };
+      display(forecastWinner, !previous);
+      display(scoutBtn, !previous);
+      display(btn, !previous);
+      display(fastBtn, !previous);
+      display(kgPluginPanel, !previous);
+      display(advToggle, !previous);
+      if (advTray) {
+        advTray.style.display = previous ? 'none' : advTray.style.display;
+        if (previous && advToggle) advToggle.textContent = '▾';
+      }
+      if (runsBtn) runsBtn.textContent = previous ? 'Results' : 'Runs';
+      display(colonyOptions, !previous);
+      display(colonyAddAntsBtn, !previous);
+      display(colonyListAntsBtn, !previous);
+      display(colonyRemoveBtn, !previous);
+      display(colonyAntEditor, !previous);
+      display(colonyAntList, !previous);
+      const hasColony = Boolean(lastColonyPayload && lastColonyPayload.colony);
+      display(colonyCreateBtn, !previous || !hasColony);
+      updateColonyRunButtonLabel();
+    }
+
+    function selectedPrematchSnapshotId() {
+      const data = (selectedGame && selectedGame.previous_test_data) || {};
+      return String(data.snapshot_id || '');
     }
 
     function sortGamesForScope(games, scope) {
@@ -267,7 +305,7 @@ DN.hud = (function () {
         if (scope === 'previous') selectedGame = Object.assign({}, selectedGame, { has_previous_test_data: false, previous_test_data: null });
         if (scope === 'previous') status.textContent = 'No saved test data';
         updateWinnerOptions();
-        updateColonyRunButtonLabel();
+        updatePreviousModeChrome();
         return;
       }
       forecastGame.disabled = false;
@@ -285,7 +323,7 @@ DN.hud = (function () {
       selectedGame = chosen;
       forecastGame.value = gameKey(selectedGame);
       updateWinnerOptions();
-      updateColonyRunButtonLabel();
+      updatePreviousModeChrome();
     }
 
     function loadPreviousTestGames() {
@@ -495,12 +533,14 @@ DN.hud = (function () {
         if (colonySummary) colonySummary.textContent = 'connect wallet';
         if (colonyPreview) colonyPreview.textContent = 'Connect your wallet to manage a colony.';
         if (colonyAntList) colonyAntList.innerHTML = '';
+        updatePreviousModeChrome();
         return;
       }
       if (!payload || !payload.colony) {
         if (colonySummary) colonySummary.textContent = 'not created';
         if (colonyPreview) colonyPreview.textContent = 'No colony for ' + shortPubkey(pubkey) + ' yet.';
         if (colonyAntList) colonyAntList.innerHTML = '';
+        updatePreviousModeChrome();
         return;
       }
       const colony = payload.colony;
@@ -523,6 +563,7 @@ DN.hud = (function () {
       if (colonyPreset && config.preset) colonyPreset.value = String(config.preset);
       if (colonyRisk && config.risk_profile) colonyRisk.value = String(config.risk_profile);
       if (colonyModel && config.model_preference) colonyModel.value = String(config.model_preference);
+      updatePreviousModeChrome();
     }
 
     function renderColonyAntList(ants) {
@@ -1245,6 +1286,127 @@ DN.hud = (function () {
         });
     }
 
+    function benchmarkPredictionLabel(record) {
+      const prediction = (record && record.prediction) || {};
+      const recommendation = (record && record.recommendation) || {};
+      return prediction.winner || recommendation.winner || recommendation.side || 'pending';
+    }
+
+    function benchmarkConfidenceLabel(record) {
+      const value = record && (record.confidence || (record.prediction || {}).confidence);
+      if (value == null || value === '') return 'pending';
+      if (typeof value === 'number') return Math.round(value * 100) + '%';
+      return String(value);
+    }
+
+    function benchmarkProbabilityLabel(record) {
+      const value = record && record.probability;
+      if (value == null || value === '') return '-';
+      const n = Number(value);
+      return Number.isFinite(n) ? Math.round(n * 100) + '%' : String(value);
+    }
+
+    function benchmarkSettlementLabel(record) {
+      if (!record || (!record.actual_result && !record.hit_miss)) return 'unsettled';
+      return [record.actual_result || '', record.hit_miss || ''].filter(Boolean).join(' · ');
+    }
+
+    function renderBenchmarkRunsPage(payload, error) {
+      const page = ensureRunsPage();
+      const myPubkey = currentPubkey();
+      const records = ((payload && payload.runs) || []).slice().sort((a, b) => runSortTime(b) - runSortTime(a));
+      const snapshotId = (payload && payload.snapshot_id) || selectedPrematchSnapshotId();
+      const detailRunId = lastRunResults && lastRunResults.prediction && lastRunResults.prediction.run_id;
+      const detailHtml = detailRunId && records.some((record) => record.run_id === detailRunId)
+        ? renderRunResultsDetail(lastRunResults.prediction, lastRunResults.agents)
+        : '';
+      const rows = records.map((record) => {
+        const pubkey = String(record.pubkey || '');
+        const mine = myPubkey && pubkey === myPubkey;
+        const prediction = benchmarkPredictionLabel(record);
+        const probability = benchmarkProbabilityLabel(record);
+        const confidence = benchmarkConfidenceLabel(record);
+        const docs = Number(record.document_count || 0);
+        const claims = Number(record.claim_count || 0);
+        const agents = record.agent_count == null ? '-' : record.agent_count;
+        const settlement = benchmarkSettlementLabel(record);
+        const statusClass = 'status-' + String(record.status || 'unknown').replace(/[^a-z0-9_-]/gi, '').toLowerCase();
+        return '<tr class="' + (mine ? 'mine ' : '') + esc(statusClass) + '" data-run="' + esc(record.run_id || '') + '">' +
+          '<td><b>' + esc(formatRunDate(record.completed_at || record.started_at || record.created_at)) + '</b><span>' + esc(record.status || 'unknown') + '</span></td>' +
+          '<td><b>' + esc(matchLabel(record)) + '</b><span>' + esc(record.prematch_snapshot_id || snapshotId || 'snapshot') + '</span></td>' +
+          '<td><button class="benchmark-wallet-copy" data-wallet="' + esc(pubkey) + '" title="' + esc(pubkey) + '">' + esc(shortPubkey(pubkey)) + '</button>' + (mine ? '<span class="benchmark-mine">mine</span>' : '') + '</td>' +
+          '<td><b>' + esc(prediction) + '</b><span>' + esc(scoreLabel(record)) + '</span></td>' +
+          '<td><b>' + esc(probability) + '</b><span>' + esc(confidence) + '</span></td>' +
+          '<td>' + esc(agents) + '</td>' +
+          '<td><b>' + esc(docs) + '</b><span>' + esc(claims) + ' claims</span></td>' +
+          '<td>' + esc(settlement) + '</td>' +
+          '<td><button class="backend-btn secondary benchmark-run-results" ' + (record.run_id ? '' : 'disabled') + '>Results</button></td>' +
+        '</tr>';
+      }).join('');
+      page.innerHTML =
+        '<div class="runs-head">' +
+          '<div><div class="runs-k">Benchmark</div><div class="runs-title">Previous test colony runs</div></div>' +
+          '<div class="runs-actions">' +
+            '<button class="backend-btn secondary" id="runs-refresh">Refresh</button>' +
+            '<button class="backend-btn secondary" id="runs-close">Close</button>' +
+          '</div>' +
+        '</div>' +
+        (error ? '<div class="runs-error">' + esc(error) + '</div>' : '') +
+        '<div class="runs-summary">' + esc(records.length) + ' runs' + (snapshotId ? ' · ' + esc(snapshotId) : '') + '</div>' +
+        detailHtml +
+        '<div class="benchmark-table-wrap">' +
+          '<table class="benchmark-table">' +
+            '<thead><tr><th>Time</th><th>Match</th><th>Colony</th><th>Prediction</th><th>Prob.</th><th>Agents</th><th>Data</th><th>Actual</th><th></th></tr></thead>' +
+            '<tbody>' + (rows || '<tr><td colspan="9">No benchmark runs yet for this saved match.</td></tr>') + '</tbody>' +
+          '</table>' +
+        '</div>';
+      page.classList.add('show');
+      const close = $('runs-close');
+      const refresh = $('runs-refresh');
+      if (close) close.addEventListener('click', () => page.classList.remove('show'));
+      if (refresh) refresh.addEventListener('click', () => H.refreshBenchmarkRunsPage(true));
+      page.querySelectorAll('.benchmark-wallet-copy').forEach((button) => {
+        button.addEventListener('click', () => {
+          const wallet = button.getAttribute('data-wallet') || '';
+          if (wallet && navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(wallet).catch(() => {});
+        });
+      });
+      page.querySelectorAll('.benchmark-run-results').forEach((button) => {
+        button.addEventListener('click', () => {
+          const row = button.closest('tr');
+          const runId = row && row.getAttribute('data-run');
+          if (!runId) return;
+          button.disabled = true;
+          loadRunResults(runId).finally(() => { button.disabled = false; });
+        });
+      });
+    }
+
+    H.refreshBenchmarkRunsPage = function (showErrors) {
+      if (!DN.databridge || !DN.databridge.fetchBenchmarkRuns) {
+        renderBenchmarkRunsPage(null, 'Benchmark runs are not available from this backend.');
+        return Promise.resolve(null);
+      }
+      const page = ensureRunsPage();
+      page.innerHTML = '<div class="runs-loading">Loading benchmark results...</div>';
+      page.classList.add('show');
+      const opts = { limit: 80 };
+      const snapshotId = selectedPrematchSnapshotId();
+      if (snapshotId) opts.snapshot_id = snapshotId;
+      return DN.databridge.fetchBenchmarkRuns(opts)
+        .then((payload) => {
+          renderBenchmarkRunsPage(payload);
+          status.textContent = 'Benchmark results loaded';
+          return payload;
+        })
+        .catch((err) => {
+          const message = err.message || String(err);
+          renderBenchmarkRunsPage(null, message);
+          if (showErrors) H.pushThought('Could not load benchmark runs: ' + message, 'Backend', '#D96E54');
+          return null;
+        });
+    };
+
     function renderRunsPage(payload, error) {
       const page = ensureRunsPage();
       const records = ((payload && payload.predictions) || []).slice().sort((a, b) => runSortTime(b) - runSortTime(a));
@@ -1400,7 +1562,7 @@ DN.hud = (function () {
               .then(() => {
                 renderForecastGames(selectedGameScope(), selectedGame);
                 const suffix = selectedGameScope() === 'previous' ? ' · previous test' : '';
-                status.textContent = hasPreviousTestData(selectedGame) ? (selectedGame.name || 'Selected game') + suffix : 'No saved test data';
+                status.textContent = hasBenchmarkSnapshotData(selectedGame) ? (selectedGame.name || 'Selected game') + suffix : 'No saved test data';
               })
               .catch((err) => {
                 status.textContent = 'Saved tests unavailable';
@@ -1408,13 +1570,13 @@ DN.hud = (function () {
                   forecastGame.innerHTML = '<option value="">No saved test data</option>';
                   forecastGame.disabled = true;
                 }
-                updateColonyRunButtonLabel();
+                updatePreviousModeChrome();
                 H.pushThought('Could not load saved test data: ' + (err.message || err), 'Backend', '#D96E54');
               });
             return;
           }
           renderForecastGames(scope, selectedGame);
-          updateColonyRunButtonLabel();
+          updatePreviousModeChrome();
           const suffix = scope === 'previous' ? ' · previous test' : '';
           status.textContent = (selectedGame.name || 'Selected game') + suffix;
         });
@@ -1434,7 +1596,7 @@ DN.hud = (function () {
         forecastMarketKey = '';
         forecastStakes = [];
         updateWinnerOptions();
-        updateColonyRunButtonLabel();
+        updatePreviousModeChrome();
         status.textContent = selectedGame.name;
       });
     }
@@ -1620,19 +1782,25 @@ DN.hud = (function () {
           return;
         }
         const previousTest = isPreviousGameScope();
-        if (previousTest && !hasPreviousTestData(selectedGame)) {
+        if (previousTest && !hasBenchmarkSnapshotData(selectedGame)) {
           H.pushThought('No saved pre-match test data is available for this match.', 'Backend', '#D96E54');
           status.textContent = 'No saved test data';
           return;
         }
+        const prematchSnapshotId = previousTest ? selectedPrematchSnapshotId() : '';
+        if (previousTest && !prematchSnapshotId) {
+          H.pushThought('This saved match has no Supabase snapshot id yet.', 'Backend', '#D96E54');
+          status.textContent = 'Missing snapshot id';
+          return;
+        }
         setColonyBusy(true);
         setScoutingBusy(true);
-        status.textContent = previousTest ? 'Run saved...' : 'Run all...';
+        status.textContent = previousTest ? 'Run with colony...' : 'Run all...';
         ensurePanelColony()
           .then(() => {
             runAllVisualStart(pubkey, { previousTest });
             if (previousTest) {
-              status.textContent = 'Run saved · colony...';
+              status.textContent = 'Run with colony...';
               H.pushThought('Using the saved pre-match KG for ' + selectedGame.name + '.', 'Backend', '#3FA89F');
               if (DN.logTerm) DN.logTerm.push('KG', 'Previous test selected; skipping automatic KG refresh for ' + selectedGame.name + '.');
               return null;
@@ -1641,34 +1809,38 @@ DN.hud = (function () {
           })
           .then(() => {
             runAllVisualColonyStep(pubkey);
-            status.textContent = previousTest ? 'Run saved · colony...' : 'Run all · colony...';
+            status.textContent = previousTest ? 'Run with colony...' : 'Run all · colony...';
             if (DN.logTerm) {
-              DN.logTerm.push('COLONY', (previousTest ? 'Saved-KG colony step' : 'Run all colony step') + ' starting for ' + selectedGame.name + '.');
+              DN.logTerm.push('COLONY', (previousTest ? 'Benchmark colony step' : 'Run all colony step') + ' starting for ' + selectedGame.name + '.');
             }
             return DN.databridge.startUserColonyRun(pubkey, {
               match: selectedGame.name,
               match_id: selectedGame.match_id || selectedGame.market_key,
-              data_mode: 'public',
+              data_mode: previousTest ? 'synthetic' : 'public',
+              run_mode: previousTest ? 'previous_test' : 'live',
+              prematch_snapshot_id: prematchSnapshotId || undefined,
               refresh_data: false,
               rooms: 5,
               voice_mode: 'template',
               seed: 42,
               debug: true,
+              show_completed_graph: !previousTest,
             });
           })
           .then((result) => {
             const runId = (DN.databridge && DN.databridge.runId) || (result && result.id) || '';
-            status.textContent = runId ? (previousTest ? 'Run saved ' : 'Run all ') + shortHash(runId) : (previousTest ? 'Run saved complete' : 'Run all complete');
-            H.pushThought((previousTest ? 'Saved-KG run finished for ' : 'Run all finished for ') + selectedGame.name + '.', 'Colony', '#3FA89F');
+            status.textContent = runId ? (previousTest ? 'Benchmark ' : 'Run all ') + shortHash(runId) : (previousTest ? 'Benchmark complete' : 'Run all complete');
+            H.pushThought((previousTest ? 'Benchmark run finished for ' : 'Run all finished for ') + selectedGame.name + '.', 'Colony', '#3FA89F');
             return logColonyPredictionSummary(runId).then((summary) => {
               runAllVisualFinish();
-              return H.refreshRunsPage(false).then(() => loadRunResults(runId, summary));
+              const refresh = previousTest ? H.refreshBenchmarkRunsPage(false) : H.refreshRunsPage(false);
+              return refresh.then(() => loadRunResults(runId, summary));
             });
           })
           .catch((err) => {
             if (DN.crystal && DN.crystal.hide) DN.crystal.hide();
-            status.textContent = previousTest ? 'Run saved error' : 'Run all error';
-            H.pushThought((previousTest ? 'Run saved failed: ' : 'Run all failed: ') + (err.message || err), 'Colony', '#D96E54');
+            status.textContent = previousTest ? 'Benchmark error' : 'Run all error';
+            H.pushThought((previousTest ? 'Benchmark run failed: ' : 'Run all failed: ') + (err.message || err), 'Colony', '#D96E54');
           })
           .finally(() => {
             setScoutingBusy(false);
@@ -1836,7 +2008,8 @@ DN.hud = (function () {
           page.classList.remove('show');
           return;
         }
-        H.refreshRunsPage(true);
+        if (isPreviousGameScope()) H.refreshBenchmarkRunsPage(true);
+        else H.refreshRunsPage(true);
       });
     }
 

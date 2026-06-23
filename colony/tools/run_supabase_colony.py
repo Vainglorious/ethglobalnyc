@@ -35,6 +35,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--match", default="Brazil vs Morocco", help='Match name, e.g. "Brazil vs Morocco".')
     parser.add_argument("--match-id", default=None, help="Exact KG match entity id.")
     parser.add_argument(
+        "--prematch-snapshot-id",
+        default=None,
+        help="Forward a Supabase prematch snapshot id to run_match.py.",
+    )
+    parser.add_argument(
         "--data-mode",
         choices=["synthetic", "public", "openfootball"],
         default="synthetic",
@@ -74,6 +79,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--market-source", default="", help="Human-readable source label for market override.")
     parser.add_argument("--no-run-log", action="store_true", help="Disable run artifact creation.")
+    parser.add_argument(
+        "--no-memory-writes",
+        action="store_true",
+        help="Forward read-only memory mode to run_match.py.",
+    )
     parser.add_argument("--debug", action="store_true", help="Write debug artifacts and room logs.")
     parser.add_argument("--dry-run", action="store_true", help="Print the command without executing it.")
     return parser.parse_args()
@@ -174,6 +184,8 @@ def _run_match_command(
     ]
     if args.match_id:
         command.extend(["--match-id", args.match_id])
+    if args.prematch_snapshot_id:
+        command.extend(["--prematch-snapshot-id", args.prematch_snapshot_id])
     if args.rooms is not None:
         command.extend(["--rooms", str(args.rooms)])
     if args.refresh_data:
@@ -208,6 +220,8 @@ def _run_match_command(
         command.extend(["--population-state", population_state_path])
     if args.no_run_log:
         command.append("--no-run-log")
+    if args.no_memory_writes:
+        command.append("--no-memory-writes")
     if args.debug:
         command.append("--debug")
     return command

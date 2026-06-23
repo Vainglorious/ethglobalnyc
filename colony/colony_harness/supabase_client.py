@@ -26,7 +26,7 @@ class SupabaseRequestError(RuntimeError):
 
 def load_supabase_settings(env_path: str | Path) -> SupabaseSettings:
     load_env_file(env_path)
-    url = os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
+    url = _supabase_url()
     key = (
         os.environ.get("SUPABASE_PUBLISHABLE_KEY")
         or os.environ.get("SUPABASE_ANON_KEY")
@@ -37,6 +37,26 @@ def load_supabase_settings(env_path: str | Path) -> SupabaseSettings:
     if not key:
         raise SupabaseRequestError("Missing SUPABASE_PUBLISHABLE_KEY in colony/.env")
     return SupabaseSettings(url=url.rstrip("/"), key=key)
+
+
+def load_supabase_service_settings(env_path: str | Path) -> SupabaseSettings:
+    load_env_file(env_path)
+    url = _supabase_url()
+    key = (
+        os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        or os.environ.get("SUPABASE_SERVICE_ROLE")
+        or os.environ.get("SUPABASE_SECRET_KEY")
+        or os.environ.get("SUPABASE_SERVICE_KEY")
+    )
+    if not url:
+        raise SupabaseRequestError("Missing SUPABASE_URL in colony/.env")
+    if not key:
+        raise SupabaseRequestError("Missing SUPABASE_SERVICE_ROLE_KEY in colony/.env")
+    return SupabaseSettings(url=url.rstrip("/"), key=key)
+
+
+def _supabase_url() -> str | None:
+    return os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
 
 
 def fetch_colony(settings: SupabaseSettings, pubkey: str, *, select: str = "*") -> dict[str, Any] | None:

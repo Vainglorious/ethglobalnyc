@@ -19,6 +19,7 @@ import threading
 import time
 import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime, timezone
@@ -84,6 +85,7 @@ from colony_harness.supabase_client import (  # noqa: E402
     delete_colony_ants,
     fetch_colony,
     fetch_colony_ants,
+    load_supabase_service_settings,
     load_supabase_settings,
     request_json,
     update_ant_status,
@@ -196,6 +198,8 @@ class UserColonyRunRequest(BaseModel):
     match: str = "Brazil vs Morocco"
     match_id: str | None = None
     data_mode: Literal["synthetic", "public", "openfootball"] = "public"
+    run_mode: Literal["live", "previous_test"] = "live"
+    prematch_snapshot_id: str | None = None
     rooms: int = Field(default=5, ge=1, le=50)
     agents: int | None = Field(default=None, ge=1, le=200)
     seed: int = Field(default=42, ge=0)
@@ -350,6 +354,13 @@ def _append_run_event(run_id: str, event: dict) -> None:
 def _supabase_settings_or_503():
     try:
         return load_supabase_settings(COLONY_ENV)
+    except SupabaseRequestError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def _supabase_service_settings_or_503():
+    try:
+        return load_supabase_service_settings(COLONY_ENV)
     except SupabaseRequestError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -687,6 +698,10 @@ def _prediction_record(
         "started_at": metadata.get("started_at"),
         "completed_at": metadata.get("completed_at"),
         "data_mode": metadata.get("data_mode"),
+        "run_mode": metadata.get("run_mode") or "live",
+        "pubkey": metadata.get("pubkey"),
+        "prematch_snapshot_id": metadata.get("prematch_snapshot_id"),
+        "prematch_snapshot": _prematch_snapshot_summary(metadata.get("prematch_snapshot")),
         "match": match,
         "prediction": (decision or {}).get("prediction"),
         "recommendation": (decision or {}).get("recommendation"),
@@ -1711,7 +1726,7 @@ def _build_colony_run_command(
         "--match",
         request.match,
         "--data-mode",
-        request.data_mode,
+        _run_data_mode(request),
         "--voice-mode",
         request.voice_mode,
         "--seed",
@@ -1723,19 +1738,23 @@ def _build_colony_run_command(
     ]
     if request.match_id:
         command.extend(["--match-id", request.match_id])
+    if request.run_mode == "previous_test" and request.prematch_snapshot_id:
+        command.extend(["--prematch-snapshot-id", str(request.prematch_snapshot_id).strip()])
+        command.append("--no-memory-writes")
     if request.agents is not None:
         command.extend(["--agents", str(request.agents)])
-    if request.refresh_data:
+    allow_live_scout_flags = request.run_mode != "previous_test"
+    if allow_live_scout_flags and request.refresh_data:
         command.append("--refresh-data")
-    if request.include_camel:
+    if allow_live_scout_flags and request.include_camel:
         command.append("--include-camel")
-    if request.include_x:
+    if allow_live_scout_flags and request.include_x:
         command.append("--include-x")
-    if request.include_telegram:
+    if allow_live_scout_flags and request.include_telegram:
         command.append("--include-telegram")
-    if request.include_polygun:
+    if allow_live_scout_flags and request.include_polygun:
         command.append("--include-polygun")
-    if request.include_deepseek_scout:
+    if allow_live_scout_flags and request.include_deepseek_scout:
         command.append("--include-deepseek-scout")
     if market_override:
         command.extend(["--market-home-probability", str(market_override["home_anchor"])])
@@ -1864,6 +1883,7 @@ def _execute_run(run_id: str, command: list[str]) -> None:
     metadata["status"] = "running"
     metadata["started_at"] = _utc_now()
     _write_metadata(run_id, metadata)
+    _sync_persisted_colony_run(metadata)
     if metadata.get("kind") in {"scouting", "colony"}:
         _append_run_event(
             run_id,
@@ -1933,6 +1953,7 @@ def _execute_run(run_id: str, command: list[str]) -> None:
         if metadata.get("kind") in {"scouting", "kg", "colony"} and returncode == 0:
             _emit_kg_stream_events(run_id, latest)
     _write_metadata(run_id, metadata)
+    _sync_persisted_colony_run(metadata)
 
 
 def _forecast_contract_address(value: str | None = None) -> str:
@@ -2458,6 +2479,328 @@ def _prematch_supabase_index() -> dict[str, dict]:
     return index
 
 
+def _supabase_quote(value: str) -> str:
+    return urllib.parse.quote(str(value), safe="")
+
+
+def _fetch_prematch_snapshot(snapshot_id: str) -> dict | None:
+    cleaned = str(snapshot_id or "").strip()
+    if not cleaned:
+        return None
+    settings = _supabase_settings_or_503()
+    rows = _run_supabase_call(
+        lambda: request_json(
+            settings,
+            "prematch_snapshots?"
+            "select=snapshot_id,match_id,match_slug,competition,home_team,away_team,kickoff_utc,"
+            "prediction_cutoff_utc,created_at_utc,status,document_count,claim_count,raw_source_count,"
+            "source_dir,documents_path,kg_source_path,raw_storage_prefix,summary,metadata"
+            f"&snapshot_id=eq.{_supabase_quote(cleaned)}&limit=1",
+        )
+    )
+    return rows[0] if isinstance(rows, list) and rows else None
+
+
+def _snapshot_pair(snapshot: dict) -> tuple[str, str] | None:
+    home = str(snapshot.get("home_team") or "").strip()
+    away = str(snapshot.get("away_team") or "").strip()
+    if home and away:
+        return home, away
+    slug = str(snapshot.get("match_slug") or "")
+    parts = slug.split("_vs_", 1)
+    if len(parts) == 2 and parts[0] and parts[1]:
+        return parts[0], parts[1]
+    return None
+
+
+def _validate_previous_test_snapshot(request: UserColonyRunRequest) -> dict | None:
+    if request.run_mode != "previous_test":
+        if request.prematch_snapshot_id:
+            raise HTTPException(status_code=400, detail="prematch_snapshot_id requires run_mode=previous_test")
+        return None
+
+    snapshot_id = str(request.prematch_snapshot_id or "").strip()
+    if not snapshot_id:
+        raise HTTPException(status_code=400, detail="prematch_snapshot_id is required for previous_test runs")
+
+    snapshot = _fetch_prematch_snapshot(snapshot_id)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail=f"Prematch snapshot not found: {snapshot_id}")
+    if str(snapshot.get("status") or "") != "ready":
+        raise HTTPException(status_code=400, detail=f"Prematch snapshot is not ready: {snapshot_id}")
+
+    snapshot_match_id = str(snapshot.get("match_id") or "").strip()
+    if request.match_id and snapshot_match_id and request.match_id != snapshot_match_id:
+        raise HTTPException(status_code=400, detail="Prematch snapshot does not match the requested match_id")
+
+    requested_pair = _split_match_teams(request.match)
+    snapshot_pair = _snapshot_pair(snapshot)
+    if requested_pair and snapshot_pair:
+        requested_home, requested_away = requested_pair
+        snapshot_home, snapshot_away = snapshot_pair
+        if (_match_text_key(requested_home), _match_text_key(requested_away)) != (
+            _match_text_key(snapshot_home),
+            _match_text_key(snapshot_away),
+        ):
+            raise HTTPException(status_code=400, detail="Prematch snapshot does not match the requested teams")
+
+    return snapshot
+
+
+def _prematch_snapshot_summary(snapshot: dict | None) -> dict:
+    if not isinstance(snapshot, dict):
+        return {}
+    summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
+    return {
+        "snapshot_id": snapshot.get("snapshot_id"),
+        "match_id": snapshot.get("match_id") or "",
+        "match_slug": snapshot.get("match_slug") or "",
+        "competition": snapshot.get("competition") or "worldcup_2026",
+        "home_team": snapshot.get("home_team") or "",
+        "away_team": snapshot.get("away_team") or "",
+        "kickoff_utc": snapshot.get("kickoff_utc"),
+        "prediction_cutoff_utc": snapshot.get("prediction_cutoff_utc"),
+        "document_count": int(snapshot.get("document_count") or summary.get("total") or 0),
+        "claim_count": int(snapshot.get("claim_count") or 0),
+        "raw_source_count": int(snapshot.get("raw_source_count") or summary.get("source_count") or 0),
+        "source": "supabase",
+    }
+
+
+def _run_data_mode(request: UserColonyRunRequest) -> str:
+    return "synthetic" if request.run_mode == "previous_test" else request.data_mode
+
+
+def _colony_run_config_snapshot(
+    *,
+    pubkey: str,
+    request: UserColonyRunRequest,
+    colony: dict,
+    prematch_snapshot: dict | None,
+) -> dict:
+    config = colony.get("config") if isinstance(colony.get("config"), dict) else {}
+    return {
+        "schema_version": "benchmark-colony-run-v1",
+        "run_mode": request.run_mode,
+        "pubkey": pubkey,
+        "match": request.match,
+        "match_id": request.match_id or "",
+        "data_mode": _run_data_mode(request),
+        "requested_data_mode": request.data_mode,
+        "rooms": request.rooms,
+        "agents": request.agents,
+        "seed": request.seed,
+        "voice_mode": request.voice_mode,
+        "memory_write_enabled": request.run_mode != "previous_test",
+        "prematch_snapshot_id": (prematch_snapshot or {}).get("snapshot_id") or request.prematch_snapshot_id or "",
+        "prematch_snapshot": _prematch_snapshot_summary(prematch_snapshot),
+        "colony": {
+            "name": colony.get("name") or "",
+            "config": config,
+        },
+    }
+
+
+def _initial_colony_run_artifacts(
+    *,
+    run_id: str,
+    request: UserColonyRunRequest,
+    prematch_snapshot: dict | None,
+) -> dict:
+    snapshot_summary = _prematch_snapshot_summary(prematch_snapshot)
+    return {
+        "schema_version": "benchmark-colony-artifacts-v1",
+        "source": "supabase" if prematch_snapshot else "local",
+        "run_id": run_id,
+        "run_mode": request.run_mode,
+        "memory_write_enabled": request.run_mode != "previous_test",
+        "match": {
+            "name": request.match,
+            "match_id": request.match_id or snapshot_summary.get("match_id") or "",
+            "home_team": snapshot_summary.get("home_team") or (_split_match_teams(request.match) or ("", ""))[0],
+            "away_team": snapshot_summary.get("away_team") or (_split_match_teams(request.match) or ("", ""))[1],
+        },
+        "prematch_snapshot_id": snapshot_summary.get("snapshot_id") or "",
+        "snapshot": snapshot_summary,
+        "document_count": snapshot_summary.get("document_count") or 0,
+        "claim_count": snapshot_summary.get("claim_count") or 0,
+    }
+
+
+def _maybe_insert_colony_run(
+    *,
+    run_id: str,
+    pubkey: str,
+    request: UserColonyRunRequest,
+    colony: dict,
+    prematch_snapshot: dict | None,
+) -> None:
+    if request.run_mode != "previous_test":
+        return
+    settings = _supabase_service_settings_or_503()
+    row = {
+        "pubkey": pubkey,
+        "run_id": run_id,
+        "status": "queued",
+        "config_snapshot": _colony_run_config_snapshot(
+            pubkey=pubkey,
+            request=request,
+            colony=colony,
+            prematch_snapshot=prematch_snapshot,
+        ),
+        "artifacts": _initial_colony_run_artifacts(
+            run_id=run_id,
+            request=request,
+            prematch_snapshot=prematch_snapshot,
+        ),
+    }
+    _run_supabase_call(lambda: request_json(settings, "colony_runs", method="POST", body=row, prefer="return=minimal"))
+
+
+def _benchmark_agent_count(record: dict | None) -> int | None:
+    if not isinstance(record, dict):
+        return None
+    vote_breakdown = record.get("vote_breakdown") if isinstance(record.get("vote_breakdown"), dict) else {}
+    for key in ("counts", "vote_counts", "side_counts"):
+        counts = vote_breakdown.get(key)
+        if isinstance(counts, dict):
+            total = sum(int(value or 0) for value in counts.values() if isinstance(value, (int, float)))
+            if total > 0:
+                return total
+    total = 0
+    for value in vote_breakdown.values():
+        if isinstance(value, (int, float)):
+            total += int(value)
+    return total or None
+
+
+def _final_colony_run_artifacts(metadata: dict) -> dict:
+    record = _prediction_record(metadata, include_incomplete=True, include_agents=False) or {}
+    initial = metadata.get("prematch_snapshot") if isinstance(metadata.get("prematch_snapshot"), dict) else {}
+    snapshot_summary = _prematch_snapshot_summary(initial)
+    prediction = record.get("prediction") if isinstance(record.get("prediction"), dict) else {}
+    recommendation = record.get("recommendation") if isinstance(record.get("recommendation"), dict) else {}
+    metrics = record.get("metrics") if isinstance(record.get("metrics"), dict) else {}
+    artifacts = {
+        "schema_version": "benchmark-colony-artifacts-v1",
+        "source": "supabase" if metadata.get("run_mode") == "previous_test" else "local",
+        "run_id": metadata.get("id"),
+        "run_mode": metadata.get("run_mode") or "live",
+        "memory_write_enabled": metadata.get("memory_write_enabled", True),
+        "status": metadata.get("status"),
+        "created_at": metadata.get("created_at"),
+        "started_at": metadata.get("started_at"),
+        "completed_at": metadata.get("completed_at"),
+        "returncode": metadata.get("returncode"),
+        "match": record.get("match") or {
+            "name": metadata.get("match"),
+            "match_id": metadata.get("match_id"),
+        },
+        "prematch_snapshot_id": metadata.get("prematch_snapshot_id") or snapshot_summary.get("snapshot_id") or "",
+        "snapshot": snapshot_summary,
+        "document_count": snapshot_summary.get("document_count") or 0,
+        "claim_count": snapshot_summary.get("claim_count") or 0,
+        "prediction": prediction,
+        "recommendation": recommendation,
+        "metrics": metrics,
+        "vote_breakdown": record.get("vote_breakdown") or {},
+        "agent_count": _benchmark_agent_count(record),
+        "artifacts": record.get("artifacts") or {},
+    }
+    settlement = metadata.get("settlement")
+    if isinstance(settlement, dict):
+        artifacts["settlement"] = settlement
+        artifacts["actual_result"] = settlement.get("actual_result") or settlement.get("result")
+        artifacts["hit_miss"] = settlement.get("hit_miss") or settlement.get("outcome")
+    return artifacts
+
+
+def _patch_colony_run_by_run_id(run_id: str, payload: dict) -> None:
+    settings = load_supabase_service_settings(COLONY_ENV)
+    path = f"colony_runs?run_id=eq.{_supabase_quote(run_id)}"
+    try:
+        request_json(settings, path, method="PATCH", body=payload, prefer="return=minimal")
+    except SupabaseRequestError as exc:
+        message = str(exc)
+        if "started_at" not in payload and "completed_at" not in payload:
+            raise
+        if "started_at" not in message and "completed_at" not in message and "Could not find" not in message:
+            raise
+        fallback = {key: value for key, value in payload.items() if key not in {"started_at", "completed_at"}}
+        request_json(settings, path, method="PATCH", body=fallback, prefer="return=minimal")
+
+
+def _sync_persisted_colony_run(metadata: dict) -> None:
+    if not metadata.get("persist_colony_run"):
+        return
+    run_id = str(metadata.get("id") or "")
+    if not run_id:
+        return
+    artifacts = _final_colony_run_artifacts(metadata)
+    payload = {
+        "status": metadata.get("status") or "running",
+        "artifacts": artifacts,
+    }
+    if metadata.get("started_at"):
+        payload["started_at"] = metadata.get("started_at")
+    if metadata.get("completed_at"):
+        payload["completed_at"] = metadata.get("completed_at")
+    try:
+        _patch_colony_run_by_run_id(run_id, payload)
+    except SupabaseRequestError as exc:
+        _append_run_event(
+            run_id,
+            {
+                "event_type": "benchmark_sync_warning",
+                "message": str(exc),
+            },
+        )
+
+
+def _public_benchmark_run(row: dict) -> dict | None:
+    if not isinstance(row, dict):
+        return None
+    config = row.get("config_snapshot") if isinstance(row.get("config_snapshot"), dict) else {}
+    artifacts = row.get("artifacts") if isinstance(row.get("artifacts"), dict) else {}
+    run_mode = artifacts.get("run_mode") or config.get("run_mode")
+    if run_mode != "previous_test":
+        return None
+    snapshot = artifacts.get("snapshot") if isinstance(artifacts.get("snapshot"), dict) else {}
+    if not snapshot and isinstance(config.get("prematch_snapshot"), dict):
+        snapshot = config.get("prematch_snapshot") or {}
+    prediction = artifacts.get("prediction") if isinstance(artifacts.get("prediction"), dict) else {}
+    recommendation = artifacts.get("recommendation") if isinstance(artifacts.get("recommendation"), dict) else {}
+    metrics = artifacts.get("metrics") if isinstance(artifacts.get("metrics"), dict) else {}
+    return {
+        "run_id": row.get("run_id") or artifacts.get("run_id"),
+        "pubkey": row.get("pubkey") or config.get("pubkey") or "",
+        "status": row.get("status") or artifacts.get("status") or "unknown",
+        "created_at": row.get("created_at") or artifacts.get("created_at"),
+        "started_at": row.get("started_at") or artifacts.get("started_at"),
+        "completed_at": row.get("completed_at") or artifacts.get("completed_at"),
+        "run_mode": "previous_test",
+        "memory_write_enabled": artifacts.get("memory_write_enabled"),
+        "match": artifacts.get("match") or {
+            "name": config.get("match"),
+            "match_id": config.get("match_id"),
+        },
+        "prematch_snapshot_id": artifacts.get("prematch_snapshot_id") or config.get("prematch_snapshot_id") or "",
+        "snapshot": snapshot,
+        "document_count": artifacts.get("document_count") or snapshot.get("document_count") or 0,
+        "claim_count": artifacts.get("claim_count") or snapshot.get("claim_count") or 0,
+        "prediction": prediction,
+        "recommendation": recommendation,
+        "confidence": prediction.get("confidence") or recommendation.get("confidence_label") or metrics.get("confidence"),
+        "probability": metrics.get("weighted_home_probability") or metrics.get("calibrated_home_probability"),
+        "metrics": metrics,
+        "vote_breakdown": artifacts.get("vote_breakdown") or {},
+        "agent_count": artifacts.get("agent_count"),
+        "actual_result": artifacts.get("actual_result"),
+        "hit_miss": artifacts.get("hit_miss"),
+        "settlement": artifacts.get("settlement") if isinstance(artifacts.get("settlement"), dict) else None,
+    }
+
+
 def _prematch_manifest_index() -> dict[str, dict]:
     if not PREMATCH_TEST_MANIFEST.exists():
         return {}
@@ -2798,13 +3141,21 @@ def start_user_colony_run(pubkey: str, request: UserColonyRunRequest, background
     colony = _run_supabase_call(lambda: fetch_colony(settings, cleaned, select="pubkey,name,config"))
     if colony is None:
         raise HTTPException(status_code=404, detail=f"Colony not found: {cleaned}")
+    prematch_snapshot = _validate_previous_test_snapshot(request)
 
     RUNS_ROOT.mkdir(parents=True, exist_ok=True)
     run_id = f"colony_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     run_dir = _run_dir(run_id)
     run_dir.mkdir(parents=True, exist_ok=False)
-    market_override = _latest_market_override_for_match(request.match, request.match_id)
+    market_override = None if request.run_mode == "previous_test" else _latest_market_override_for_match(request.match, request.match_id)
     command = _build_colony_run_command(cleaned, request, run_dir, market_override=market_override)
+    _maybe_insert_colony_run(
+        run_id=run_id,
+        pubkey=cleaned,
+        request=request,
+        colony=colony,
+        prematch_snapshot=prematch_snapshot,
+    )
     metadata = {
         "id": run_id,
         "kind": "colony",
@@ -2821,7 +3172,13 @@ def start_user_colony_run(pubkey: str, request: UserColonyRunRequest, background
         "colony_name": colony.get("name"),
         "match": request.match,
         "match_id": request.match_id,
-        "data_mode": request.data_mode,
+        "data_mode": _run_data_mode(request),
+        "requested_data_mode": request.data_mode,
+        "run_mode": request.run_mode,
+        "prematch_snapshot_id": (prematch_snapshot or {}).get("snapshot_id") or request.prematch_snapshot_id,
+        "prematch_snapshot": prematch_snapshot,
+        "memory_write_enabled": request.run_mode != "previous_test",
+        "persist_colony_run": request.run_mode == "previous_test",
         "market_override": market_override,
     }
     _write_metadata(run_id, metadata)
@@ -2843,7 +3200,9 @@ def start_user_colony_run(pubkey: str, request: UserColonyRunRequest, background
             "pubkey": cleaned,
             "match": request.match,
             "match_id": request.match_id,
-            "data_mode": request.data_mode,
+            "data_mode": _run_data_mode(request),
+            "run_mode": request.run_mode,
+            "prematch_snapshot_id": (prematch_snapshot or {}).get("snapshot_id") or request.prematch_snapshot_id,
         },
     )
     background_tasks.add_task(_execute_run, run_id, command)
@@ -3660,6 +4019,51 @@ def list_predictions(limit: int = 50, include_incomplete: bool = True) -> dict:
         "count": len(records),
         "runs_root": str(RUNS_ROOT),
         "predictions": records,
+    }
+
+
+@app.get("/benchmark/runs")
+def list_benchmark_runs(limit: int = 50, snapshot_id: str | None = None, pubkey: str | None = None) -> dict:
+    if limit < 1 or limit > 250:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 250")
+    settings = _supabase_service_settings_or_503()
+    query_limit = min(500, max(limit * 4, limit))
+    base_path = (
+        "colony_runs?"
+        "select=pubkey,run_id,status,config_snapshot,artifacts,created_at,updated_at"
+        "&order=created_at.desc"
+        f"&limit={query_limit}"
+    )
+    path = base_path.replace("updated_at", "updated_at,started_at,completed_at")
+    cleaned_pubkey = ""
+    if pubkey:
+        cleaned_pubkey = _clean_pubkey(pubkey)
+        path += f"&pubkey=eq.{_supabase_quote(cleaned_pubkey)}"
+        base_path += f"&pubkey=eq.{_supabase_quote(cleaned_pubkey)}"
+    try:
+        rows = request_json(settings, path)
+    except SupabaseRequestError as exc:
+        message = str(exc)
+        if "started_at" not in message and "completed_at" not in message and "Could not find" not in message:
+            raise HTTPException(status_code=502, detail=message) from exc
+        rows = _run_supabase_call(lambda: request_json(settings, base_path))
+    records: list[dict] = []
+    wanted_snapshot = str(snapshot_id or "").strip()
+    for row in rows if isinstance(rows, list) else []:
+        record = _public_benchmark_run(row)
+        if record is None:
+            continue
+        if wanted_snapshot and record.get("prematch_snapshot_id") != wanted_snapshot:
+            continue
+        records.append(record)
+        if len(records) >= limit:
+            break
+    return {
+        "count": len(records),
+        "limit": limit,
+        "snapshot_id": wanted_snapshot or None,
+        "pubkey": cleaned_pubkey or None,
+        "runs": records,
     }
 
 

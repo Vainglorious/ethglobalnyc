@@ -235,6 +235,107 @@ class ForecastGamesApiTest(unittest.TestCase):
         self.assertEqual(data["usable_document_count"], 168)
         self.assertEqual(data["fallback_sources"], ["legacy-manifest"])
 
+    def test_previous_run_requires_prematch_snapshot_id(self) -> None:
+        request = api.UserColonyRunRequest(match="France vs Iraq", run_mode="previous_test")
+
+        with self.assertRaises(api.HTTPException) as raised:
+            api._validate_previous_test_snapshot(request)
+
+        self.assertEqual(raised.exception.status_code, 400)
+        self.assertIn("prematch_snapshot_id", str(raised.exception.detail))
+
+    def test_previous_run_rejects_missing_snapshot(self) -> None:
+        request = api.UserColonyRunRequest(
+            match="France vs Iraq",
+            run_mode="previous_test",
+            prematch_snapshot_id="missing_snapshot",
+        )
+
+        with patch.object(api, "_fetch_prematch_snapshot", return_value=None):
+            with self.assertRaises(api.HTTPException) as raised:
+                api._validate_previous_test_snapshot(request)
+
+        self.assertEqual(raised.exception.status_code, 404)
+
+    def test_previous_run_rejects_snapshot_for_other_match(self) -> None:
+        request = api.UserColonyRunRequest(
+            match="France vs Iraq",
+            run_mode="previous_test",
+            prematch_snapshot_id="portugal_uzbekistan",
+        )
+        snapshot = {
+            "snapshot_id": "portugal_uzbekistan",
+            "status": "ready",
+            "home_team": "Portugal",
+            "away_team": "Uzbekistan",
+        }
+
+        with patch.object(api, "_fetch_prematch_snapshot", return_value=snapshot):
+            with self.assertRaises(api.HTTPException) as raised:
+                api._validate_previous_test_snapshot(request)
+
+        self.assertEqual(raised.exception.status_code, 400)
+        self.assertIn("teams", str(raised.exception.detail))
+
+    def test_public_benchmark_run_is_sanitized(self) -> None:
+        row = {
+            "pubkey": "ABCDEF1234567890",
+            "run_id": "colony_1",
+            "status": "succeeded",
+            "created_at": "2026-06-23T00:00:00Z",
+            "config_snapshot": {
+                "run_mode": "previous_test",
+                "prematch_snapshot_id": "snapshot_1",
+                "colony": {"config": {"private_weight": 1}},
+            },
+            "artifacts": {
+                "run_mode": "previous_test",
+                "prematch_snapshot_id": "snapshot_1",
+                "match": {"name": "France vs Iraq"},
+                "snapshot": {"document_count": 168, "claim_count": 168},
+                "prediction": {"winner": "France", "confidence": "medium"},
+                "agent_count": 50,
+            },
+        }
+
+        public = api._public_benchmark_run(row)
+
+        self.assertEqual(public["run_id"], "colony_1")
+        self.assertEqual(public["pubkey"], "ABCDEF1234567890")
+        self.assertEqual(public["prematch_snapshot_id"], "snapshot_1")
+        self.assertEqual(public["document_count"], 168)
+        self.assertNotIn("config_snapshot", public)
+        self.assertNotIn("colony", public)
+
+    def test_previous_command_uses_snapshot_without_live_scout_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            request = api.UserColonyRunRequest(
+                match="France vs Iraq",
+                run_mode="previous_test",
+                prematch_snapshot_id="snapshot_france_iraq",
+                data_mode="public",
+                refresh_data=True,
+                include_x=True,
+                include_camel=True,
+                include_telegram=True,
+                include_polygun=True,
+                include_deepseek_scout=True,
+            )
+
+            command = api._build_colony_run_command("wallet_1", request, Path(tmp))
+
+        self.assertIn("--prematch-snapshot-id", command)
+        self.assertIn("snapshot_france_iraq", command)
+        self.assertIn("--no-memory-writes", command)
+        data_mode_index = command.index("--data-mode") + 1
+        self.assertEqual(command[data_mode_index], "synthetic")
+        self.assertNotIn("--refresh-data", command)
+        self.assertNotIn("--include-x", command)
+        self.assertNotIn("--include-camel", command)
+        self.assertNotIn("--include-telegram", command)
+        self.assertNotIn("--include-polygun", command)
+        self.assertNotIn("--include-deepseek-scout", command)
+
 
 if __name__ == "__main__":
     unittest.main()

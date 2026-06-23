@@ -72,6 +72,7 @@ class ColonyHarness:
         agents: list[AntAgent] | None = None,
         colony_config: dict | None = None,
         memory_influence: bool = False,
+        memory_write_enabled: bool = True,
     ) -> None:
         if agents is not None:
             population_size = len(agents)
@@ -87,6 +88,7 @@ class ColonyHarness:
         self.starting_bankroll = starting_bankroll
         self.voice_model = voice_model or TemplateVoiceModel()
         self.memory_influence = memory_influence
+        self.memory_write_enabled = memory_write_enabled
         self.colony_config = normalize_colony_config(colony_config) if colony_config else None
         self.wallet_store = (
             WalletStore(wallet_store_path, provider=wallet_provider, dynamic_env_path=dynamic_env_path)
@@ -255,10 +257,14 @@ class ColonyHarness:
             ledger=ledger,
         )
         class_transitions = self._refresh_agent_classes(agent_minds_before)
-        memory_writes = self._write_agent_memories(
-            match=match,
-            forecasts=forecasts,
-            result_side=market_spec.result_side,
+        memory_writes = (
+            self._write_agent_memories(
+                match=match,
+                forecasts=forecasts,
+                result_side=market_spec.result_side,
+            )
+            if self.memory_write_enabled
+            else []
         )
         summary = {
             "population": self.population_size,
@@ -301,6 +307,7 @@ class ColonyHarness:
             "contributor_pool": settlement_summary.get("contributor_pool", 0.0),
             "memory_backend": self.memory_store.healthcheck().get("backend"),
             "memory_influence": self.memory_influence,
+            "memory_write_enabled": self.memory_write_enabled,
             "memory_recalls": len(memory_recall),
             "memory_writes": len(memory_writes),
             "archetypes": dict(Counter(str(agent.mind.get("archetype") or "unknown") for agent in self.agents)),

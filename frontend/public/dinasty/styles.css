@@ -464,6 +464,61 @@ body.wc-open #wc-cta { display: none; }     /* swap entry button → back button
   color: var(--ink-soft);
   font-size: 9px;
 }
+.benchmark-table-wrap {
+  flex: 1 1 auto;
+  min-height: 210px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 250, 233, 0.72);
+}
+.benchmark-table {
+  width: 100%;
+  min-width: 900px;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+.benchmark-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 8px;
+  background: rgba(234, 224, 198, 0.96);
+  color: var(--ink-faint);
+  font: 800 9px var(--mono);
+  text-align: left;
+  text-transform: uppercase;
+}
+.benchmark-table td {
+  padding: 8px;
+  border-top: 1px solid rgba(150, 126, 72, 0.18);
+  color: var(--ink);
+  line-height: 1.25;
+  vertical-align: top;
+}
+.benchmark-table td span {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink-soft);
+  font-size: 9px;
+}
+.benchmark-table tr.mine td {
+  background: rgba(63, 168, 159, 0.1);
+}
+.benchmark-wallet-copy {
+  border: 1px solid var(--hair);
+  border-radius: 4px;
+  background: rgba(228, 218, 193, 0.36);
+  color: var(--ink);
+  font: 800 10px var(--mono);
+  padding: 4px 6px;
+  cursor: pointer;
+}
+.benchmark-mine {
+  color: var(--teal) !important;
+  font-weight: 800;
+  text-transform: uppercase;
+}
 .run-side {
   display: inline-flex;
   align-items: center;
