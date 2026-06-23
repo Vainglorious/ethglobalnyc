@@ -87,6 +87,75 @@ class PrematchSnapshotRunnerTest(unittest.TestCase):
         self.assertEqual(findings[0].home_probability, 0.61)
         self.assertEqual(findings[0].home_delta, 0.09)
 
+    def test_market_signal_is_mapped_to_odds_with_impact_probability(self) -> None:
+        match = SimpleNamespace(
+            round_id="worldcup_2026_france_iraq",
+            home_team="France",
+            away_team="Iraq",
+            market_home_probability=0.5,
+        )
+        rows = [
+            {
+                "claim_id": "odds_1",
+                "claim_type": "market_signal",
+                "claim": "Can Iraq beat France? Nah, just a 4% chance.",
+                "impact": "context_home",
+                "confidence": 0.8,
+                "source_kind": "social",
+                "source_url": "https://example.test/odds",
+                "metrics": {"signal_type": "prediction_or_market", "home_minus_away": 0.0},
+            }
+        ]
+
+        findings = run_match._prematch_findings_from_claim_rows(
+            snapshot_id="snapshot_france_iraq",
+            rows=rows,
+            match=match,
+        )
+
+        self.assertEqual(findings[0].source_type, "odds")
+        self.assertGreater(findings[0].home_probability, 0.5)
+        self.assertGreater(findings[0].home_delta, 0.0)
+
+    def test_snapshot_impact_claims_create_source_signal(self) -> None:
+        match = SimpleNamespace(
+            round_id="worldcup_2026_france_iraq",
+            home_team="France",
+            away_team="Iraq",
+            market_home_probability=0.5,
+        )
+        rows = [
+            {
+                "claim_id": "news_1",
+                "claim_type": "prematch_media_signal",
+                "claim": "France Aim to Dominate Group I.",
+                "impact": "context_home",
+                "confidence": 0.6,
+                "source_kind": "news",
+                "source_url": "https://example.test/news",
+                "metrics": {"signal_type": "media_preview"},
+            },
+            {
+                "claim_id": "news_2",
+                "claim_type": "prematch_media_signal",
+                "claim": "Iraq injury concern before France.",
+                "impact": "context_away",
+                "confidence": 0.6,
+                "source_kind": "news",
+                "source_url": "https://example.test/news2",
+                "metrics": {"signal_type": "media_preview"},
+            },
+        ]
+
+        findings = run_match._prematch_findings_from_claim_rows(
+            snapshot_id="snapshot_france_iraq",
+            rows=rows,
+            match=match,
+        )
+
+        self.assertEqual(findings[0].source_type, "news")
+        self.assertAlmostEqual(findings[0].home_probability, 0.5, places=4)
+
 
 if __name__ == "__main__":
     unittest.main()

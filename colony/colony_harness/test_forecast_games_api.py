@@ -294,7 +294,13 @@ class ForecastGamesApiTest(unittest.TestCase):
                 "match": {"name": "France vs Iraq"},
                 "snapshot": {"document_count": 168, "claim_count": 168},
                 "prediction": {"winner": "France", "confidence": "medium"},
-                "agent_count": 50,
+                "vote_breakdown": {
+                    "ants": 50,
+                    "total_weight": 51.6193,
+                    "average_weight": 1.0324,
+                    "weighted_side_support": {"away": 0.3413, "draw": 0.3858, "home": 0.2728},
+                },
+                "agent_count": 102,
             },
         }
 
@@ -304,6 +310,7 @@ class ForecastGamesApiTest(unittest.TestCase):
         self.assertEqual(public["pubkey"], "ABCDEF1234567890")
         self.assertEqual(public["prematch_snapshot_id"], "snapshot_1")
         self.assertEqual(public["document_count"], 168)
+        self.assertEqual(public["agent_count"], 50)
         self.assertNotIn("config_snapshot", public)
         self.assertNotIn("colony", public)
 
@@ -323,6 +330,34 @@ class ForecastGamesApiTest(unittest.TestCase):
         self.assertEqual(payload["runs"], [])
         self.assertEqual(payload["count"], 0)
         self.assertIn("colony_runs table is missing", payload["warning"])
+
+    def test_public_benchmark_run_recalibrates_close_draw_confidence(self) -> None:
+        row = {
+            "pubkey": "ABCDEF1234567890",
+            "run_id": "colony_close_draw",
+            "status": "succeeded",
+            "created_at": "2026-06-23T00:00:00Z",
+            "config_snapshot": {
+                "run_mode": "previous_test",
+                "prematch_snapshot_id": "snapshot_1",
+            },
+            "artifacts": {
+                "run_mode": "previous_test",
+                "prematch_snapshot_id": "snapshot_1",
+                "prediction": {"side": "draw", "winner": "draw", "confidence": "medium"},
+                "metrics": {"market_edge": 0.0345, "confidence": 0.5297},
+                "vote_breakdown": {
+                    "ants": 50,
+                    "support_margin": 0.0445,
+                    "weighted_side_support": {"away": 0.3413, "draw": 0.3858, "home": 0.2728},
+                },
+            },
+        }
+
+        public = api._public_benchmark_run(row)
+
+        self.assertEqual(public["agent_count"], 50)
+        self.assertEqual(public["confidence"], "low")
 
     def test_previous_command_uses_snapshot_without_live_scout_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -345,7 +380,7 @@ class ForecastGamesApiTest(unittest.TestCase):
         self.assertIn("snapshot_france_iraq", command)
         self.assertIn("--no-memory-writes", command)
         data_mode_index = command.index("--data-mode") + 1
-        self.assertEqual(command[data_mode_index], "synthetic")
+        self.assertEqual(command[data_mode_index], "openfootball")
         self.assertNotIn("--refresh-data", command)
         self.assertNotIn("--include-x", command)
         self.assertNotIn("--include-camel", command)

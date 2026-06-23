@@ -93,6 +93,8 @@ def main() -> None:
     args = parse_args()
     if args.agents is not None and args.agents < 1:
         raise SystemExit("--agents must be positive")
+    if args.prematch_snapshot_id and args.data_mode == "synthetic":
+        args.data_mode = "openfootball"
     try:
         settings = load_supabase_settings(args.env)
         row = fetch_colony(settings, args.pubkey, select="pubkey,name,config")

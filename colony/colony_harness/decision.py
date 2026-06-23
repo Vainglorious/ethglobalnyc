@@ -251,7 +251,7 @@ def _prediction_value_signal(*, prediction_side: str, weighted_edge: float, supp
     if prediction_side == "away":
         return -weighted_edge
     if prediction_side == "draw":
-        return max(abs(weighted_edge), support_margin * 0.08)
+        return support_margin * 0.08
     return weighted_edge
 
 

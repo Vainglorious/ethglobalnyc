@@ -276,6 +276,8 @@ def _prematch_source_type(row: dict) -> str:
     source_kind = str(row.get("source_kind") or "").casefold()
     claim_type = str(row.get("claim_type") or "").casefold()
     signal_type = str((row.get("metrics") or {}).get("signal_type") or "").casefold() if isinstance(row.get("metrics"), dict) else ""
+    if claim_type == "market_signal" or signal_type == "prediction_or_market":
+        return "odds"
     if source_kind == "market" or claim_type in {"market", "market_anchor", "odds"}:
         return "market"
     if claim_type in {"lineup", "squad_roster", "injury_availability", "injury_return", "availability"}:
@@ -322,6 +324,53 @@ def _claim_home_probability(row: dict) -> float | None:
     return None
 
 
+def _claim_impact_home_probability(row: dict, *, source_type: str) -> float | None:
+    metrics = row.get("metrics") if isinstance(row.get("metrics"), dict) else {}
+    impact = str(row.get("impact") or "").casefold()
+    home_minus_away = _optional_float(metrics.get("home_minus_away"))
+    if home_minus_away is None:
+        home_sentiment = _optional_float(metrics.get("home_sentiment_score"))
+        away_sentiment = _optional_float(metrics.get("away_sentiment_score"))
+        if home_sentiment is not None and away_sentiment is not None:
+            home_minus_away = home_sentiment - away_sentiment
+
+    directional = 0.0
+    if impact in {"context_home", "supports_home", "home_positive", "home"}:
+        directional += 1.0
+    elif impact in {"context_away", "supports_away", "away_positive", "away"}:
+        directional -= 1.0
+    elif impact in {"strong_home", "major_home"}:
+        directional += 1.6
+    elif impact in {"strong_away", "major_away"}:
+        directional -= 1.6
+
+    if home_minus_away is not None:
+        directional += max(-1.0, min(1.0, home_minus_away))
+
+    if directional == 0.0:
+        return None
+
+    scale = {
+        "market": 0.1,
+        "odds": 0.085,
+        "stats": 0.07,
+        "lineup": 0.065,
+        "news": 0.06,
+        "social": 0.05,
+        "retrieval": 0.045,
+    }.get(source_type, 0.05)
+    return _clamp_probability(0.5 + directional * scale)
+
+
+def _optional_float(value) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _normal_claim(row: dict, *, snapshot_id: str) -> dict:
     metrics = row.get("metrics") if isinstance(row.get("metrics"), dict) else {}
     raw_claim = row.get("raw_claim") if isinstance(row.get("raw_claim"), dict) else {}
@@ -350,7 +399,10 @@ def _normal_claim(row: dict, *, snapshot_id: str) -> dict:
             "prematch_source": "supabase",
         },
     }
+    source_type = _prematch_source_type(row)
     home_probability = _claim_home_probability(row)
+    if home_probability is None:
+        home_probability = _claim_impact_home_probability(row, source_type=source_type)
     if home_probability is not None:
         claim["home_probability"] = home_probability
     return claim
@@ -504,7 +556,10 @@ def main() -> None:
     colony_config = load_colony_config(args.colony_config)
     graph = _load_openfootball_graph(args) if args.data_mode == "openfootball" else _load_graph(Path(args.kg))
     match_entity = _select_match(graph, match_id=args.match_id, match_name=args.match)
-    if args.data_mode == "public":
+    if args.prematch_snapshot_id:
+        rescout_targets = []
+        match = openfootball_match_context_from_tournament_match(match_entity)
+    elif args.data_mode == "public":
         rescout_targets = _rescout_targets_from_args(args)
         match = public_match_context_from_tournament_match(
             match_entity,

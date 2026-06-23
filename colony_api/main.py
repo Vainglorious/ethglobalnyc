@@ -2577,7 +2577,7 @@ def _prematch_snapshot_summary(snapshot: dict | None) -> dict:
 
 
 def _run_data_mode(request: UserColonyRunRequest) -> str:
-    return "synthetic" if request.run_mode == "previous_test" else request.data_mode
+    return "openfootball" if request.run_mode == "previous_test" else request.data_mode
 
 
 def _colony_run_config_snapshot(
@@ -2670,17 +2670,69 @@ def _benchmark_agent_count(record: dict | None) -> int | None:
     if not isinstance(record, dict):
         return None
     vote_breakdown = record.get("vote_breakdown") if isinstance(record.get("vote_breakdown"), dict) else {}
+    ants = vote_breakdown.get("ants")
+    if isinstance(ants, (int, float)) and ants > 0:
+        return int(ants)
+    agent_predictions = record.get("agent_predictions")
+    if isinstance(agent_predictions, list) and agent_predictions:
+        return len(agent_predictions)
     for key in ("counts", "vote_counts", "side_counts"):
         counts = vote_breakdown.get(key)
         if isinstance(counts, dict):
             total = sum(int(value or 0) for value in counts.values() if isinstance(value, (int, float)))
             if total > 0:
                 return total
-    total = 0
-    for value in vote_breakdown.values():
-        if isinstance(value, (int, float)):
-            total += int(value)
-    return total or None
+    return None
+
+
+def _benchmark_support_margin(vote_breakdown: dict) -> float:
+    value = vote_breakdown.get("support_margin")
+    if isinstance(value, (int, float)):
+        return max(0.0, float(value))
+    support = vote_breakdown.get("weighted_side_support")
+    if not isinstance(support, dict):
+        return 0.0
+    values = sorted(
+        (float(item) for item in support.values() if isinstance(item, (int, float))),
+        reverse=True,
+    )
+    if not values:
+        return 0.0
+    if len(values) == 1:
+        return max(0.0, values[0])
+    return max(0.0, values[0] - values[1])
+
+
+def _benchmark_confidence_label(artifacts: dict) -> str:
+    prediction = artifacts.get("prediction") if isinstance(artifacts.get("prediction"), dict) else {}
+    recommendation = artifacts.get("recommendation") if isinstance(artifacts.get("recommendation"), dict) else {}
+    metrics = artifacts.get("metrics") if isinstance(artifacts.get("metrics"), dict) else {}
+    vote_breakdown = artifacts.get("vote_breakdown") if isinstance(artifacts.get("vote_breakdown"), dict) else {}
+    side = str(prediction.get("side") or recommendation.get("side") or "").lower()
+    support_margin = _benchmark_support_margin(vote_breakdown)
+    participation = _benchmark_agent_count(artifacts) or 0
+    market_edge = metrics.get("market_edge")
+    try:
+        weighted_edge = float(market_edge)
+    except (TypeError, ValueError):
+        weighted_edge = 0.0
+    if side == "draw":
+        value_signal = support_margin * 0.08
+    elif side == "away":
+        value_signal = -weighted_edge
+    elif side == "home":
+        value_signal = weighted_edge
+    else:
+        return str(prediction.get("confidence") or recommendation.get("confidence_label") or metrics.get("confidence") or "")
+    edge_score = min(abs(value_signal) / 0.08, 1.0)
+    margin_score = min(support_margin / 0.25, 1.0)
+    participation_score = min(max(participation, 0) / 100.0, 1.0)
+    confidence = min(0.25 + edge_score * 0.45 + margin_score * 0.2 + participation_score * 0.1, 0.95)
+    if confidence >= 0.72:
+        return "high"
+    if confidence >= 0.48:
+        return "medium"
+    return "low"
 
 
 def _final_colony_run_artifacts(metadata: dict) -> dict:
@@ -2799,11 +2851,11 @@ def _public_benchmark_run(row: dict) -> dict | None:
         "claim_count": artifacts.get("claim_count") or snapshot.get("claim_count") or 0,
         "prediction": prediction,
         "recommendation": recommendation,
-        "confidence": prediction.get("confidence") or recommendation.get("confidence_label") or metrics.get("confidence"),
+        "confidence": _benchmark_confidence_label(artifacts) or prediction.get("confidence") or recommendation.get("confidence_label") or metrics.get("confidence"),
         "probability": metrics.get("weighted_home_probability") or metrics.get("calibrated_home_probability"),
         "metrics": metrics,
         "vote_breakdown": artifacts.get("vote_breakdown") or {},
-        "agent_count": artifacts.get("agent_count"),
+        "agent_count": _benchmark_agent_count(artifacts) or artifacts.get("agent_count"),
         "actual_result": artifacts.get("actual_result"),
         "hit_miss": artifacts.get("hit_miss"),
         "settlement": artifacts.get("settlement") if isinstance(artifacts.get("settlement"), dict) else None,

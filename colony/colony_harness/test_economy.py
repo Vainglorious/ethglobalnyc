@@ -262,6 +262,30 @@ class EconomyTests(unittest.TestCase):
             decision.prediction["scoreline"]["home"],
         )
 
+    def test_close_draw_support_does_not_become_medium_confidence_from_binary_edge(self) -> None:
+        match = MatchContext(
+            round_id="round_close_draw",
+            home_team="France",
+            away_team="Iraq",
+            market_home_probability=0.465,
+            stats_home_signal=0.5,
+            odds_home_signal=0.5,
+            news_home_signal=0.5,
+        )
+        agents = [_agent(f"ant_{index:04d}") for index in range(50)]
+        sides = ["draw"] * 24 + ["away"] * 16 + ["home"] * 10
+        probabilities = {"draw": 0.5, "away": 0.49, "home": 0.51}
+        forecasts = [
+            _forecast(agent, match, probability=probabilities[side], side=side)
+            for agent, side in zip(agents, sides)
+        ]
+
+        decision = build_collective_decision(match=match, agents=agents, forecasts=forecasts)
+
+        self.assertEqual(decision.recommendation["side"], "draw")
+        self.assertLess(decision.internal_metrics["confidence"], 0.48)
+        self.assertEqual(decision.recommendation["confidence_label"], "low")
+
     def test_settlement_distributes_losing_pool_80_10_10(self) -> None:
         winner = _agent("ant_0000", bankroll=0.0)
         contributor = _agent("ant_0001", bankroll=0.0)

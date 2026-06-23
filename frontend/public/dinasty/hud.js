@@ -1867,7 +1867,7 @@ DN.hud = (function () {
             return DN.databridge.startUserColonyRun(pubkey, {
               match: selectedGame.name,
               match_id: selectedGame.match_id || selectedGame.market_key,
-              data_mode: previousTest ? 'synthetic' : 'public',
+              data_mode: previousTest ? 'openfootball' : 'public',
               run_mode: previousTest ? 'previous_test' : 'live',
               prematch_snapshot_id: prematchSnapshotId || undefined,
               refresh_data: false,
