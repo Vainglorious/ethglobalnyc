@@ -1,0 +1,199 @@
+{
+  "schema_version": "prematch-test-data-manifest-v1",
+  "generated_from": "colony/runs/prematch_scrape",
+  "entries": [
+    {
+      "match_slug": "france_vs_iraq",
+      "home_team": "France",
+      "away_team": "Iraq",
+      "kind": "prematch_scrape_manifest",
+      "source": "colony/runs/prematch_scrape/france_iraq_pre_kickoff_20260622/kg/prematch_kg_source.json",
+      "run_dir": "colony/runs/prematch_scrape/france_iraq_pre_kickoff_20260622",
+      "created_at_utc": "2026-06-22T20:48:10+00:00",
+      "kickoff_utc": "2026-06-22T21:00:00Z",
+      "prediction_cutoff_utc": "2026-06-22T21:00:00Z",
+      "finding_count": 1,
+      "evidence_claim_count": 168,
+      "usable_document_count": 168,
+      "document_count": 351,
+      "source_count": 188,
+      "usable_by_source_type": {
+        "news": 107,
+        "social": 61
+      },
+      "usable_by_signal_type": {
+        "fan_sentiment": 14,
+        "injury_availability": 6,
+        "lineup": 40,
+        "media_preview": 39,
+        "prediction_or_market": 46,
+        "social_context": 23
+      }
+    },
+    {
+      "match_slug": "mexico_vs_south_africa",
+      "home_team": "Mexico",
+      "away_team": "South Africa",
+      "kind": "prematch_scrape_manifest",
+      "source": "colony/runs/prematch_scrape/mexico_south_africa/kg/prematch_kg_source.json",
+      "run_dir": "colony/runs/prematch_scrape/mexico_south_africa",
+      "created_at_utc": "2026-06-22T20:25:12+00:00",
+      "kickoff_utc": "2026-06-11T19:00:00Z",
+      "prediction_cutoff_utc": "2026-06-11T13:00:00Z",
+      "finding_count": 1,
+      "evidence_claim_count": 52,
+      "usable_document_count": 52,
+      "document_count": 343,
+      "source_count": 211,
+      "usable_by_source_type": {
+        "news": 28,
+        "social": 24
+      },
+      "usable_by_signal_type": {
+        "injury_availability": 1,
+        "lineup": 11,
+        "media_preview": 12,
+        "prediction_or_market": 16,
+        "social_context": 12
+      }
+    },
+    {
+      "match_slug": "england_vs_ghana",
+      "home_team": "England",
+      "away_team": "Ghana",
+      "kind": "prematch_scrape_manifest",
+      "source": "colony/runs/prematch_scrape/upcoming_20260622_batch01/2026-06-23_england_vs_ghana/kg/prematch_kg_source.json",
+      "run_dir": "colony/runs/prematch_scrape/upcoming_20260622_batch01/2026-06-23_england_vs_ghana",
+      "created_at_utc": "2026-06-22T20:40:42+00:00",
+      "kickoff_utc": "2026-06-23T20:00:00Z",
+      "prediction_cutoff_utc": "2026-06-23T14:00:00Z",
+      "finding_count": 1,
+      "evidence_claim_count": 153,
+      "usable_document_count": 153,
+      "document_count": 345,
+      "source_count": 209,
+      "usable_by_source_type": {
+        "news": 100,
+        "social": 53
+      },
+      "usable_by_signal_type": {
+        "fan_sentiment": 5,
+        "injury_availability": 10,
+        "lineup": 28,
+        "media_preview": 33,
+        "prediction_or_market": 54,
+        "social_context": 23
+      }
+    },
+    {
+      "match_slug": "panama_vs_croatia",
+      "home_team": "Panama",
+      "away_team": "Croatia",
+      "kind": "prematch_scrape_manifest",
+      "source": "colony/runs/prematch_scrape/upcoming_20260622_batch01/2026-06-23_panama_vs_croatia/kg/prematch_kg_source.json",
+      "run_dir": "colony/runs/prematch_scrape/upcoming_20260622_batch01/2026-06-23_panama_vs_croatia",
+      "created_at_utc": "2026-06-22T20:42:03+00:00",
+      "kickoff_utc": "2026-06-23T23:00:00Z",
+      "prediction_cutoff_utc": "2026-06-23T17:00:00Z",
+      "finding_count": 1,
+      "evidence_claim_count": 125,
+      "usable_document_count": 125,
+      "document_count": 292,
+      "source_count": 189,
+      "usable_by_source_type": {
+        "news": 76,
+        "social": 49
+      },
+      "usable_by_signal_type": {
+        "fan_sentiment": 4,
+        "injury_availability": 4,
+        "lineup": 17,
+        "media_preview": 26,
+        "prediction_or_market": 45,
+        "social_context": 29
+      }
+    },
+    {
+      "match_slug": "portugal_vs_uzbekistan",
+      "home_team": "Portugal",
+      "away_team": "Uzbekistan",
+      "kind": "prematch_scrape_manifest",
+      "source": "colony/runs/prematch_scrape/upcoming_20260622_batch01/2026-06-23_portugal_vs_uzbekistan/kg/prematch_kg_source.json",
+      "run_dir": "colony/runs/prematch_scrape/upcoming_20260622_batch01/2026-06-23_portugal_vs_uzbekistan",
+      "created_at_utc": "2026-06-22T20:39:34+00:00",
+      "kickoff_utc": "2026-06-23T17:00:00Z",
+      "prediction_cutoff_utc": "2026-06-23T11:00:00Z",
+      "finding_count": 1,
+      "evidence_claim_count": 166,
+      "usable_document_count": 166,
+      "document_count": 355,
+      "source_count": 249,
+      "usable_by_source_type": {
+        "news": 116,
+        "social": 50
+      },
+      "usable_by_signal_type": {
+        "fan_sentiment": 5,
+        "injury_availability": 2,
+        "lineup": 31,
+        "media_preview": 41,
+        "prediction_or_market": 63,
+        "social_context": 24
+      }
+    },
+    {
+      "match_slug": "bosnia_herzegovina_vs_qatar",
+      "home_team": "Bosnia & Herzegovina",
+      "away_team": "Qatar",
+      "kind": "prematch_scrape_manifest",
+      "source": "colony/runs/prematch_scrape/upcoming_20260622_batch01/2026-06-24_bosnia_herzegovina_vs_qatar/kg/prematch_kg_source.json",
+      "run_dir": "colony/runs/prematch_scrape/upcoming_20260622_batch01/2026-06-24_bosnia_herzegovina_vs_qatar",
+      "created_at_utc": "2026-06-22T20:44:26+00:00",
+      "kickoff_utc": "2026-06-24T19:00:00Z",
+      "prediction_cutoff_utc": "2026-06-24T13:00:00Z",
+      "finding_count": 1,
+      "evidence_claim_count": 42,
+      "usable_document_count": 42,
+      "document_count": 239,
+      "source_count": 145,
+      "usable_by_source_type": {
+        "news": 20,
+        "social": 22
+      },
+      "usable_by_signal_type": {
+        "fan_sentiment": 3,
+        "injury_availability": 1,
+        "lineup": 4,
+        "media_preview": 6,
+        "prediction_or_market": 10,
+        "social_context": 18
+      }
+    },
+    {
+      "match_slug": "colombia_vs_dr_congo",
+      "home_team": "Colombia",
+      "away_team": "DR Congo",
+      "kind": "prematch_scrape_manifest",
+      "source": "colony/runs/prematch_scrape/upcoming_20260622_batch01/2026-06-24_colombia_vs_dr_congo/kg/prematch_kg_source.json",
+      "run_dir": "colony/runs/prematch_scrape/upcoming_20260622_batch01/2026-06-24_colombia_vs_dr_congo",
+      "created_at_utc": "2026-06-22T20:43:17+00:00",
+      "kickoff_utc": "2026-06-24T02:00:00Z",
+      "prediction_cutoff_utc": "2026-06-23T20:00:00Z",
+      "finding_count": 1,
+      "evidence_claim_count": 69,
+      "usable_document_count": 69,
+      "document_count": 295,
+      "source_count": 203,
+      "usable_by_source_type": {
+        "news": 42,
+        "social": 27
+      },
+      "usable_by_signal_type": {
+        "lineup": 10,
+        "media_preview": 11,
+        "prediction_or_market": 29,
+        "social_context": 19
+      }
+    }
+  ]
+}

@@ -89,7 +89,11 @@ class ForecastGamesApiTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with patch.object(api, "WORLD_CUP_KG", kg_path), patch.object(api, "PREMATCH_SCRAPE_ROOT", root / "prematch_scrape"):
+            with (
+                patch.object(api, "WORLD_CUP_KG", kg_path),
+                patch.object(api, "PREMATCH_SCRAPE_ROOT", root / "prematch_scrape"),
+                patch.object(api, "PREMATCH_TEST_MANIFEST", root / "missing_manifest.json"),
+            ):
                 light_games = api._forecast_games_from_kg(include_previous_test_data=False)
                 games = api._forecast_games_from_kg(include_previous_test_data=True)
 
@@ -102,6 +106,64 @@ class ForecastGamesApiTest(unittest.TestCase):
         self.assertEqual(by_name["France vs Iraq"]["previous_test_data"]["evidence_claim_count"], 2)
         self.assertFalse(by_name["Norway vs Senegal"]["has_previous_test_data"])
         self.assertIsNone(by_name["Norway vs Senegal"]["previous_test_data"])
+
+    def test_can_use_tracked_manifest_when_raw_prematch_runs_are_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            kg_path = root / "world_cup_kg.json"
+            kg_path.write_text(
+                json.dumps(
+                    {
+                        "entities": [
+                            {
+                                "entity_id": "match:world_cup_2026:051:2026_06_22_france_iraq",
+                                "entity_type": "match",
+                                "name": "France vs Iraq",
+                                "attributes": {
+                                    "team1": "France",
+                                    "team2": "Iraq",
+                                    "date": "2026-06-22",
+                                    "time": "17:00 UTC-4",
+                                    "round": "Matchday 12",
+                                    "group": "Group I",
+                                    "ground": "Philadelphia",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manifest_path = root / "prematch_test_data_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "prematch-test-data-manifest-v1",
+                        "entries": [
+                            {
+                                "match_slug": "france_vs_iraq",
+                                "home_team": "France",
+                                "away_team": "Iraq",
+                                "kind": "prematch_scrape_manifest",
+                                "usable_document_count": 168,
+                                "evidence_claim_count": 168,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                patch.object(api, "WORLD_CUP_KG", kg_path),
+                patch.object(api, "PREMATCH_SCRAPE_ROOT", root / "missing_runs"),
+                patch.object(api, "PREMATCH_TEST_MANIFEST", manifest_path),
+            ):
+                games = api._forecast_games_from_kg(include_previous_test_data=True)
+
+        self.assertTrue(games[0]["has_previous_test_data"])
+        self.assertEqual(games[0]["previous_test_data"]["usable_document_count"], 168)
+        self.assertEqual(games[0]["previous_test_data"]["kind"], "prematch_scrape_manifest")
 
 
 if __name__ == "__main__":

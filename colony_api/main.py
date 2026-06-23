@@ -42,6 +42,9 @@ SCOUTING_SOURCE_CATALOG = REPO_ROOT / "colony" / "config" / "scouting_source_cat
 COLONY_ENV = REPO_ROOT / "colony" / ".env"
 WORLD_CUP_KG = REPO_ROOT / "colony" / "data" / "world_cup_kg.json"
 WORLD_CUP_KG_SUMMARY = REPO_ROOT / "colony" / "data" / "world_cup_kg.summary.md"
+PREMATCH_TEST_MANIFEST = Path(
+    os.environ.get("COLONY_PREMATCH_TEST_MANIFEST", str(REPO_ROOT / "colony" / "data" / "prematch_test_data_manifest.json"))
+).resolve()
 PREMATCH_SCRAPE_ROOT = Path(
     os.environ.get("COLONY_PREMATCH_SCRAPE_ROOT", str(REPO_ROOT / "colony" / "runs" / "prematch_scrape"))
 ).resolve()
@@ -2406,10 +2409,35 @@ def _prematch_claim_count(payload: dict) -> int:
     return total
 
 
-def _prematch_test_data_index() -> dict[str, dict]:
-    if not PREMATCH_SCRAPE_ROOT.exists():
+def _prematch_manifest_index() -> dict[str, dict]:
+    if not PREMATCH_TEST_MANIFEST.exists():
+        return {}
+    try:
+        payload = json.loads(PREMATCH_TEST_MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
         return {}
     index: dict[str, dict] = {}
+    for entry in payload.get("entries") or []:
+        if not isinstance(entry, dict):
+            continue
+        slug = str(entry.get("match_slug") or "").strip() or _match_pair_slug(
+            str(entry.get("home_team") or ""),
+            str(entry.get("away_team") or ""),
+        )
+        if not slug:
+            continue
+        normalized = dict(entry)
+        normalized.pop("match_slug", None)
+        normalized["source"] = str(normalized.get("source") or _relative_repo_path(PREMATCH_TEST_MANIFEST))
+        normalized["manifest"] = _relative_repo_path(PREMATCH_TEST_MANIFEST)
+        index[slug] = normalized
+    return index
+
+
+def _prematch_test_data_index() -> dict[str, dict]:
+    index = _prematch_manifest_index()
+    if not PREMATCH_SCRAPE_ROOT.exists():
+        return index
     for source_path in sorted(PREMATCH_SCRAPE_ROOT.glob("**/kg/prematch_kg_source.json")):
         try:
             payload = json.loads(source_path.read_text(encoding="utf-8"))

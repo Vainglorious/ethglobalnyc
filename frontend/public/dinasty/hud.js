@@ -265,6 +265,7 @@ DN.hud = (function () {
         forecastGame.innerHTML = '<option value="">' + (scope === 'previous' ? 'No saved test data' : 'No games available') + '</option>';
         forecastGame.disabled = true;
         if (scope === 'previous') selectedGame = Object.assign({}, selectedGame, { has_previous_test_data: false, previous_test_data: null });
+        if (scope === 'previous') status.textContent = 'No saved test data';
         updateWinnerOptions();
         updateColonyRunButtonLabel();
         return;
@@ -1399,7 +1400,7 @@ DN.hud = (function () {
               .then(() => {
                 renderForecastGames(selectedGameScope(), selectedGame);
                 const suffix = selectedGameScope() === 'previous' ? ' · previous test' : '';
-                status.textContent = (selectedGame.name || 'Selected game') + suffix;
+                status.textContent = hasPreviousTestData(selectedGame) ? (selectedGame.name || 'Selected game') + suffix : 'No saved test data';
               })
               .catch((err) => {
                 status.textContent = 'Saved tests unavailable';
