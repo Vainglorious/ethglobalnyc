@@ -193,27 +193,59 @@
       return teams.indexOf(normTeam(b.pick)) >= 0;
     });
   }
-  /* the KG only has scores for early matches, so derive past/upcoming from the date.
-     "Today" for the demo timeline is 2026-06-20 (mid-tournament). */
-  var REF_DATE = '2026-06-20';
-  function isUpcoming(g) { return (g.date || '9999') >= REF_DATE; }
-  function isPast(g) { return (g.date || '0000') < REF_DATE; }
+  /* Live clock: derive past/upcoming from the viewer's real time vs each match's kickoff.
+     Kickoff is built from the KG's date + "HH:MM UTC±N" string, so it's an absolute instant
+     regardless of the viewer's timezone. Games with no parseable time fall back to a date
+     compare against the viewer's local date. (Later: prefer a server `as_of` from
+     /worldcup/feed over the client clock — see notes/handover/colony-api-worldcup-feed.md.) */
+  function nowMs() { return Date.now(); }
+  function localToday() {
+    var n = new Date();
+    function p(x) { return (x < 10 ? '0' : '') + x; }
+    return n.getFullYear() + '-' + p(n.getMonth() + 1) + '-' + p(n.getDate());
+  }
+  /* parse g.date ("2026-06-23") + g.time ("19:00 UTC-4") -> epoch ms, or null if no time.
+     "UTC-4" means the local clock is 4h behind UTC, so the UTC instant is (local - offset). */
+  function kickoffMs(g) {
+    if (!g || !g.date) return null;
+    var dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(g.date);
+    if (!dm) return null;
+    var tm = /(\d{1,2}):(\d{2})\s*UTC([+-]\d{1,2})/.exec(g.time || '');
+    if (!tm) return null;
+    return Date.UTC(+dm[1], +dm[2] - 1, +dm[3], (+tm[1]) - (+tm[3]), +tm[2]);
+  }
+  /* sortable instant for ordering "next match"; date-only games sort at local noon */
+  function whenMs(g) {
+    var k = kickoffMs(g);
+    if (k != null) return k;
+    var dm = g && g.date && /^(\d{4})-(\d{2})-(\d{2})$/.exec(g.date);
+    if (dm) return Date.UTC(+dm[1], +dm[2] - 1, +dm[3], 12, 0);
+    return Infinity;
+  }
+  function isPast(g) {
+    var k = kickoffMs(g);
+    if (k != null) return k < nowMs();        // timed match: compare to the real clock
+    if (!g || !g.date) return false;          // undated TBD fixture -> treat as upcoming
+    return g.date < localToday();             // dated but no time -> date compare
+  }
+  function isUpcoming(g) { return !isPast(g); }
 
   /* ---------------------------------------------------------------- render: matches */
   function matchesSection() {
     if (!S.loaded) return '<section class="wc-section" id="wc-matches"><h2>Match Schedule &amp; Colony Picks</h2>' +
-      '<div class="wc-lead">The upcoming fixture and the colony’s call on each match.</div>' +
-      '<div class="wc-loading">Loading fixtures…</div></section>';
+      '<div class="wc-lead">The upcoming matches and the colony’s call on each.</div>' +
+      '<div class="wc-loading">Loading matches…</div></section>';
 
     var games = (S.games && S.games.games) || [];
     var idx = buildIndex();
-    var upcoming = games.filter(isUpcoming);
+    // sort by true kickoff instant so "next" is correct regardless of viewer timezone
+    var upcoming = games.filter(isUpcoming).slice().sort(function (a, b) { return whenMs(a) - whenMs(b); });
     var next = upcoming[0];
     // games the colony actually weighed in on (real or simulated)
     var picked = games.filter(function (g) { return betsFor(idx, g).length > 0; });
 
     var html = '<section class="wc-section" id="wc-matches"><h2>Match Schedule &amp; Colony Picks</h2>' +
-      '<div class="wc-lead">Fixtures come from the same World Cup knowledge graph the ants forecast ' +
+      '<div class="wc-lead">Matches come from the same World Cup knowledge graph the ants forecast ' +
       'against. A badge shows whether the colony has a position on each match.</div>';
 
     if (next) html += nextCard(next, betsFor(idx, next));
@@ -224,7 +256,7 @@
     }
 
     var rail = upcoming.slice(0, 12);
-    html += '<h3 style="font-family:var(--display);font-size:12px;color:#FFE7A8;margin:26px 0 4px">Upcoming fixtures</h3>' +
+    html += '<h3 style="font-family:var(--display);font-size:12px;color:#FFE7A8;margin:26px 0 4px">Upcoming matches</h3>' +
       '<div class="wc-fixtures">' + rail.map(function (g) { return fixCard(g, betsFor(idx, g)); }).join('') + '</div>';
 
     return html + '</section>';
