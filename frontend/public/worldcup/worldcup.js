@@ -194,16 +194,16 @@
     });
   }
   /* the KG only has scores for early matches, so derive past/upcoming from the date.
-     "Today" for the demo timeline is 2026-06-20 (mid-tournament). */
-  var REF_DATE = '2026-06-20';
+     "Today" for the demo timeline is 2026-06-23 (mid-tournament). */
+  var REF_DATE = '2026-06-23';
   function isUpcoming(g) { return (g.date || '9999') >= REF_DATE; }
   function isPast(g) { return (g.date || '0000') < REF_DATE; }
 
   /* ---------------------------------------------------------------- render: matches */
   function matchesSection() {
     if (!S.loaded) return '<section class="wc-section" id="wc-matches"><h2>Match Schedule &amp; Colony Picks</h2>' +
-      '<div class="wc-lead">The upcoming fixture and the colony’s call on each match.</div>' +
-      '<div class="wc-loading">Loading fixtures…</div></section>';
+      '<div class="wc-lead">The upcoming matches and the colony’s call on each.</div>' +
+      '<div class="wc-loading">Loading matches…</div></section>';
 
     var games = (S.games && S.games.games) || [];
     var idx = buildIndex();
@@ -213,7 +213,7 @@
     var picked = games.filter(function (g) { return betsFor(idx, g).length > 0; });
 
     var html = '<section class="wc-section" id="wc-matches"><h2>Match Schedule &amp; Colony Picks</h2>' +
-      '<div class="wc-lead">Fixtures come from the same World Cup knowledge graph the ants forecast ' +
+      '<div class="wc-lead">Matches come from the same World Cup knowledge graph the ants forecast ' +
       'against. A badge shows whether the colony has a position on each match.</div>';
 
     if (next) html += nextCard(next, betsFor(idx, next));
@@ -224,7 +224,7 @@
     }
 
     var rail = upcoming.slice(0, 12);
-    html += '<h3 style="font-family:var(--display);font-size:12px;color:#FFE7A8;margin:26px 0 4px">Upcoming fixtures</h3>' +
+    html += '<h3 style="font-family:var(--display);font-size:12px;color:#FFE7A8;margin:26px 0 4px">Upcoming matches</h3>' +
       '<div class="wc-fixtures">' + rail.map(function (g) { return fixCard(g, betsFor(idx, g)); }).join('') + '</div>';
 
     return html + '</section>';
