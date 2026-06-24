@@ -9,6 +9,8 @@ here.
 from __future__ import annotations
 
 import json
+import os
+import time
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal
 
@@ -98,6 +100,45 @@ STAKE_TO_RISK_INTENT = {
     "medium": "medium",
     "high": "aggressive",
 }
+MIN_CAMEL_TIMEOUT_SECONDS = 30
+CONVICTION_ALIASES = {
+    "minimal": "very_low",
+    "none": "very_low",
+    "uncertain": "low",
+    "weak": "low",
+    "cautious": "low",
+    "moderate": "medium",
+    "solid": "medium",
+    "reasonable": "medium",
+    "confident": "high",
+    "strong": "high",
+    "very_high": "high",
+}
+RISK_READ_ALIASES = {
+    "bad": "too_risky",
+    "high_risk": "too_risky",
+    "risky": "too_risky",
+    "too_high": "too_risky",
+    "too_risky": "too_risky",
+    "fair": "acceptable",
+    "ok": "acceptable",
+    "okay": "acceptable",
+    "reasonable": "acceptable",
+    "solid": "acceptable",
+    "good": "attractive",
+    "great": "attractive",
+    "value": "attractive",
+    "valuable": "attractive",
+}
+SOCIAL_MOVE_ALIASES = {
+    "ask": "listen",
+    "ask_question": "listen",
+    "question": "listen",
+    "debate": "defend",
+    "support": "defend",
+    "challenge": "challenge_consensus",
+    "contrarian": "minority_report",
+}
 
 
 @dataclass(frozen=True)
@@ -144,7 +185,10 @@ class CamelReasoner:
     """Optional CAMEL adapter that asks one ant for a qualitative judgment."""
 
     def __init__(self, config: CamelReasonerConfig | None = None) -> None:
-        self.config = config or CamelReasonerConfig()
+        resolved = config or CamelReasonerConfig()
+        if resolved.timeout_seconds < MIN_CAMEL_TIMEOUT_SECONDS:
+            resolved = replace(resolved, timeout_seconds=MIN_CAMEL_TIMEOUT_SECONDS)
+        self.config = resolved
         self._model: Any | None = None
         self._model_error = ""
 
@@ -181,17 +225,17 @@ class CamelReasoner:
         class CamelJudgmentPayload(BaseModel):
             persona_id: str = ""
             input_style: str = ""
-            stance: Literal["home", "draw", "away"]
-            conviction: Literal["very_low", "low", "medium", "high"]
-            intent: Literal["bet"]
-            action: Literal["commit_stake"]
-            civic_choice: Literal["home", "draw", "away"]
-            commitment_label: Literal["micro", "small", "medium", "high"]
-            risk_intent: Literal["micro", "small", "medium", "aggressive"]
+            stance: str
+            conviction: str
+            intent: str = "bet"
+            action: str = "commit_stake"
+            civic_choice: str
+            commitment_label: str = "micro"
+            risk_intent: str = "micro"
             thesis: str = ""
             main_signal: str = ""
-            risk_read: Literal["too_risky", "acceptable", "attractive"]
-            stake_level: Literal["micro", "small", "medium", "high"]
+            risk_read: str
+            stake_level: str
             survival_reason: str = ""
             action_target: str = ""
             evidence_used: list[str] = Field(default_factory=list, max_length=6)
@@ -199,12 +243,7 @@ class CamelReasoner:
             reasoning: list[str] = Field(default_factory=list, max_length=5)
             doubts: list[str] = Field(default_factory=list, max_length=4)
             debate_question: str = ""
-            social_move: Literal[
-                "defend",
-                "challenge_consensus",
-                "listen",
-                "minority_report",
-            ]
+            social_move: str = "listen"
             one_line: str = ""
 
         system = _system_prompt(agent)
@@ -216,6 +255,7 @@ class CamelReasoner:
             max_claims_per_finding=self.config.max_claims_per_finding,
             debate_messages=debate_messages or [],
         )
+        started_at = time.monotonic()
         try:
             camel_agent = ChatAgent(
                 system_message=system,
@@ -226,17 +266,24 @@ class CamelReasoner:
             )
             response = camel_agent.step(prompt, response_format=CamelJudgmentPayload)
             message = response.msgs[0]
-            parsed = getattr(message, "parsed", None)
-            if parsed is not None:
-                payload = parsed.model_dump() if hasattr(parsed, "model_dump") else parsed.dict()
-            else:
-                payload = json.loads(message.content)
+            payload = _payload_from_camel_message(message)
+            payload["diagnostics"] = {
+                **_clean_diagnostics(payload.get("diagnostics")),
+                "elapsed_seconds": round(time.monotonic() - started_at, 3),
+                "timeout_seconds": self.config.timeout_seconds,
+                "model": _configured_camel_model_name(),
+            }
         except Exception as exc:
             return _fallback_judgment(
                 agent=agent,
                 input_style=self.config.input_style,
                 source="camel_error",
                 reason=f"{type(exc).__name__}: {exc}",
+                diagnostics={
+                    "elapsed_seconds": round(time.monotonic() - started_at, 3),
+                    "timeout_seconds": self.config.timeout_seconds,
+                    "model": _configured_camel_model_name(),
+                },
             )
 
         return normalize_judgment(
@@ -273,7 +320,7 @@ def normalize_judgment(
     source: str,
 ) -> NaturalJudgment:
     stance = _choice(payload.get("stance"), STANCES, "undecided")
-    conviction = _choice(payload.get("conviction"), CONVICTIONS, "low")
+    conviction = _choice(payload.get("conviction"), CONVICTIONS, "low", aliases=CONVICTION_ALIASES)
     intent = _choice(payload.get("intent"), INTENTS, "pass")
     action = _choice(payload.get("action"), ACTIONS, "")
     civic_choice = _choice(payload.get("civic_choice"), SIDES, "")
@@ -281,13 +328,13 @@ def normalize_judgment(
         civic_choice = stance
     if not civic_choice:
         civic_choice = "draw"
-    social_move = _choice(payload.get("social_move"), SOCIAL_MOVES, "listen")
+    social_move = _choice(payload.get("social_move"), SOCIAL_MOVES, "listen", aliases=SOCIAL_MOVE_ALIASES)
     if action:
         intent = ACTION_TO_INTENT.get(action, intent)
     else:
         action = _action_from_intent_and_social_move(intent=intent, social_move=social_move)
 
-    risk_read = _choice(payload.get("risk_read"), RISK_READS, "")
+    risk_read = _choice(payload.get("risk_read"), RISK_READS, "", aliases=RISK_READ_ALIASES)
     stake_level = _stake_level_from_payload(payload)
     if not risk_read:
         risk_read = _risk_read_from_stake_level(stake_level=stake_level, conviction=conviction)
@@ -336,9 +383,15 @@ def normalize_judgment(
     if not one_line:
         one_line = "I commit the minimum survival stake while keeping the thesis cautious."
 
+    resolved_persona_id = (
+        persona_id
+        if _is_survival_judgment_source(source)
+        else _clean_text(payload.get("persona_id")) or persona_id
+    )
+
     return NaturalJudgment(
         agent_id=agent_id,
-        persona_id=_clean_text(payload.get("persona_id")) or persona_id,
+        persona_id=resolved_persona_id,
         input_style=_clean_text(payload.get("input_style")) or input_style,
         source=source,
         stance=stance,  # type: ignore[arg-type]
@@ -361,7 +414,7 @@ def normalize_judgment(
         debate_question=_clean_text(payload.get("debate_question")),
         social_move=social_move,  # type: ignore[arg-type]
         one_line=one_line,
-        diagnostics={"normalized": True},
+        diagnostics={**_clean_diagnostics(payload.get("diagnostics")), "normalized": True},
     )
 
 
@@ -538,7 +591,14 @@ def _evidence_cards(match: MatchContext, *, max_cards: int, max_claims_per_findi
     return "- No source-grounded evidence cards are available; be cautious."
 
 
-def _fallback_judgment(*, agent: AntAgent, input_style: str, source: str, reason: str) -> NaturalJudgment:
+def _fallback_judgment(
+    *,
+    agent: AntAgent,
+    input_style: str,
+    source: str,
+    reason: str,
+    diagnostics: dict | None = None,
+) -> NaturalJudgment:
     persona_id = str((agent.mind or {}).get("archetype") or agent.genome.persona)
     return NaturalJudgment(
         agent_id=agent.agent_id,
@@ -565,7 +625,7 @@ def _fallback_judgment(*, agent: AntAgent, input_style: str, source: str, reason
         debate_question="How much should the colony trust fallback survival stakes?",
         social_move="listen",
         one_line="CAMEL unavailable, so I participate with a micro fallback stake.",
-        diagnostics={"error": reason},
+        diagnostics={"error": reason, **(diagnostics or {})},
     )
 
 
@@ -668,6 +728,13 @@ def _stake_level_from_payload(payload: dict) -> str:
         "low": "micro",
         "minimal": "micro",
         "minimum": "micro",
+        "1": "micro",
+        "2": "small",
+        "moderate": "medium",
+        "solid": "medium",
+        "3": "medium",
+        "4": "high",
+        "5": "high",
         "aggressive": "high",
         "large": "high",
         "big": "high",
@@ -720,9 +787,64 @@ def _qualitative_market_read(home_probability: float, home_team: str, away_team:
     return "Market reads close to balanced."
 
 
-def _choice(value: object, allowed: set[str], fallback: str) -> str:
+def _choice(value: object, allowed: set[str], fallback: str, *, aliases: dict[str, str] | None = None) -> str:
     text = _clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    if aliases:
+        text = aliases.get(text, text)
     return text if text in allowed else fallback
+
+
+def _payload_from_camel_message(message: Any) -> dict[str, Any]:
+    parsed = getattr(message, "parsed", None)
+    if parsed is not None:
+        payload = parsed.model_dump() if hasattr(parsed, "model_dump") else parsed.dict()
+        return dict(payload)
+    payload = _json_object_from_text(getattr(message, "content", ""))
+    if not isinstance(payload, dict):
+        raise ValueError("CAMEL response did not contain a JSON object")
+    return payload
+
+
+def _json_object_from_text(text: object) -> dict[str, Any]:
+    raw = _clean_text(text)
+    if raw.startswith("```"):
+        raw = raw.strip("`").strip()
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start < 0 or end <= start:
+            raise
+        value = json.loads(raw[start : end + 1])
+    if not isinstance(value, dict):
+        raise ValueError("JSON payload is not an object")
+    return value
+
+
+def _clean_diagnostics(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    cleaned: dict[str, Any] = {}
+    for key, item in value.items():
+        name = _clean_text(key)
+        if not name:
+            continue
+        if isinstance(item, str | int | float | bool) or item is None:
+            cleaned[name] = item
+        else:
+            cleaned[name] = _clean_text(item)
+    return cleaned
+
+
+def _configured_camel_model_name() -> str:
+    return (
+        os.environ.get("COLONY_CAMEL_MODEL", "").strip()
+        or os.environ.get("COLONY_LLM_MODEL", "").strip()
+        or ""
+    )
 
 
 def _clean_list(value: object, *, limit: int) -> list[str]:

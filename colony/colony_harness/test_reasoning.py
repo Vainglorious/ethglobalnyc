@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from .models import Forecast, MatchContext
-from .reasoning import apply_judgment_to_forecast, normalize_judgment
+from .reasoning import CamelReasoner, CamelReasonerConfig, apply_judgment_to_forecast, normalize_judgment
 
 
 def _forecast() -> Forecast:
@@ -180,6 +180,39 @@ class ReasoningTests(unittest.TestCase):
         self.assertEqual(judgment.commitment_label, "micro")
         self.assertEqual(judgment.stake_level, "micro")
         self.assertEqual(judgment.action_target, "E2 source_quality")
+
+    def test_normalizes_common_llm_aliases_before_validation(self) -> None:
+        judgment = normalize_judgment(
+            {
+                "stance": "home",
+                "persona_id": "ant_0001",
+                "civic_choice": "home",
+                "conviction": "solid",
+                "action": "commit_stake",
+                "commitment_label": "3",
+                "risk_read": "reasonable",
+                "thesis": "Brazil's lineup and recent form are enough for a controlled position.",
+                "main_signal": "lineup form",
+                "social_move": "support",
+            },
+            agent_id="ant_0001",
+            persona_id="tactical_scout",
+            input_style="structured_evidence_cards",
+            source="camel",
+        )
+
+        self.assertEqual(judgment.persona_id, "tactical_scout")
+        self.assertEqual(judgment.conviction, "medium")
+        self.assertEqual(judgment.stake_level, "medium")
+        self.assertEqual(judgment.commitment_label, "medium")
+        self.assertEqual(judgment.risk_intent, "medium")
+        self.assertEqual(judgment.risk_read, "acceptable")
+        self.assertEqual(judgment.social_move, "defend")
+
+    def test_camel_reasoner_clamps_too_short_timeout(self) -> None:
+        reasoner = CamelReasoner(CamelReasonerConfig(timeout_seconds=8))
+
+        self.assertGreaterEqual(reasoner.config.timeout_seconds, 30)
 
 
 if __name__ == "__main__":

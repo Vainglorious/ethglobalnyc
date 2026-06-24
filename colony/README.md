@@ -433,12 +433,14 @@ python3 colony/run_match.py \
   --rooms 3 \
   --seed 103 \
   --camel-judgment-agents 10 \
-  --camel-judgment-timeout 30
+  --camel-judgment-timeout 60
 ```
 
 Those ants return qualitative judgments: team pick, thesis, main signal, conviction, risk read,
 stake level, and survival reason. If the configured model provider is unavailable, the run still
 finishes with a baseline `micro` commitment rather than a silent pass.
+The CLI clamps CAMEL judgment timeouts below 30 seconds because the CAMEL/OpenRouter structured
+response path can take longer than a direct short chat completion.
 
 To fetch lightweight public data instead of using seeded scout outputs:
 
@@ -856,7 +858,7 @@ COLONY_LLM_PROVIDER=openrouter
 COLONY_LLM_API_KEY=
 COLONY_LLM_BASE_URL=https://openrouter.ai/api/v1
 COLONY_LLM_MODEL=deepseek/deepseek-v4-flash
-COLONY_LLM_TIMEOUT_SECONDS=30
+COLONY_LLM_TIMEOUT_SECONDS=60
 OPENROUTER_HTTP_REFERER=
 OPENROUTER_APP_TITLE=Colony Harness
 ```

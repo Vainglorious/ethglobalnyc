@@ -19,7 +19,7 @@ from colony_harness.identity import assign_ens_names, write_identity_records
 from colony_harness.live_scouts import public_match_context_from_tournament_match
 from colony_harness.models import Finding
 from colony_harness.population import load_population_state, normalize_agent_lineages, save_population_state
-from colony_harness.reasoning import CamelReasoner, CamelReasonerConfig
+from colony_harness.reasoning import CamelReasoner, CamelReasonerConfig, MIN_CAMEL_TIMEOUT_SECONDS
 from colony_harness.scouts import (
     mock_match_context_from_tournament_match,
     openfootball_match_context_from_tournament_match,
@@ -268,8 +268,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--camel-judgment-timeout",
         type=int,
-        default=45,
-        help="Timeout in seconds for each CAMEL judgment call.",
+        default=60,
+        help=(
+            "Timeout in seconds for each CAMEL judgment call. "
+            f"Values below {MIN_CAMEL_TIMEOUT_SECONDS}s are clamped up."
+        ),
     )
     parser.add_argument(
         "--camel-judgment-concurrency",
@@ -636,7 +639,11 @@ def main() -> None:
     loaded_agents = _load_population_if_present(args.population_state, expected_agents=expected_agents)
     judgment_agent_count = max(0, min(int(args.camel_judgment_agents or 0), population_size))
     judgment_reasoner = (
-        CamelReasoner(CamelReasonerConfig(timeout_seconds=max(5, int(args.camel_judgment_timeout or 45))))
+        CamelReasoner(
+            CamelReasonerConfig(
+                timeout_seconds=max(MIN_CAMEL_TIMEOUT_SECONDS, int(args.camel_judgment_timeout or 60))
+            )
+        )
         if judgment_agent_count > 0
         else None
     )
