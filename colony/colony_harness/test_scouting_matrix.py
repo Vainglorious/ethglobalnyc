@@ -89,6 +89,16 @@ class ScoutingMatrixCatalogTests(unittest.TestCase):
         self.assertEqual(sources[1].config["query"]["q"], "Brazil Morocco")
         self.assertEqual(sources[1].config["adapter"], "polymarket_gamma")
 
+    def test_txline_context_renders_prediction_cutoff_as_epoch_ms(self) -> None:
+        context = scouting_matrix._match_template_context(
+            MATCH_ENTITY,
+            txline_fixture={"fixture_id": 17588234, "start_time": 1782500400000},
+            cutoff_hours=6.0,
+        )
+
+        self.assertEqual(context["txline_prediction_cutoff_utc"], "2026-06-26T13:00:00Z")
+        self.assertEqual(context["txline_prediction_cutoff_ms"], "1782478800000")
+
     def test_catalog_pipeline_flags_enable_optional_social_modules(self) -> None:
         catalog = scouting_matrix._load_source_catalog(str(scouting_matrix.DEFAULT_SOURCE_CATALOG))
 

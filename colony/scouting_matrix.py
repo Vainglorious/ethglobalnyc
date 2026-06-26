@@ -372,6 +372,7 @@ def _match_template_context(
         "epoch_day": _epoch_day(match_date) if match_date else "",
         "kickoff_utc": _iso_utc(kickoff_utc) if kickoff_utc else "",
         "prediction_cutoff_utc": _iso_utc(prediction_cutoff_utc) if prediction_cutoff_utc else "",
+        "prediction_cutoff_ms": _epoch_ms(prediction_cutoff_utc) if prediction_cutoff_utc else "",
     }
     if txline_fixture:
         txline_start_utc = _timestamp_to_utc(txline_fixture.get("start_time"))
@@ -382,6 +383,7 @@ def _match_template_context(
                 "txline_start_time": txline_fixture.get("start_time") or "",
                 "txline_start_time_utc": _iso_utc(txline_start_utc) if txline_start_utc else "",
                 "txline_prediction_cutoff_utc": _iso_utc(txline_cutoff_utc) if txline_cutoff_utc else "",
+                "txline_prediction_cutoff_ms": _epoch_ms(txline_cutoff_utc) if txline_cutoff_utc else "",
             }
         )
     return context
@@ -459,6 +461,12 @@ def _iso_utc(value: datetime | None) -> str:
     if value is None:
         return ""
     return value.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _epoch_ms(value: datetime | None) -> str:
+    if value is None:
+        return ""
+    return str(int(value.astimezone(timezone.utc).timestamp() * 1000))
 
 
 def _safe_slug(value: str) -> str:

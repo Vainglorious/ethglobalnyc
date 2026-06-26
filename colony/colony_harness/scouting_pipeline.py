@@ -1196,9 +1196,16 @@ def _api_source_response(source: SourceSpec, *, timeout_seconds: int) -> ApiSour
     body = _api_request_body(config, headers=headers, source=source)
     method = str(config.get("method") or ("POST" if body is not None else "GET")).upper()
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        raw = response.read().decode("utf-8", errors="replace")
-        content_type = response.headers.get("Content-Type", "")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            content_type = response.headers.get("Content-Type", "")
+    except urllib.error.HTTPError as exc:
+        if exc.code not in _api_empty_on_status_codes(config, source=source):
+            raise
+        raw = exc.read().decode("utf-8", errors="replace")
+        content_type = exc.headers.get("Content-Type", "") if exc.headers else ""
+        return ApiSourceResponse(url=url, content_type=content_type, raw=raw, payload=[])
     payload = _json_payload_from_api_response(raw, content_type=content_type)
     return ApiSourceResponse(url=url, content_type=content_type, raw=raw, payload=payload)
 
@@ -1208,6 +1215,21 @@ def _api_source_config(source: SourceSpec) -> dict[str, Any]:
     if not config:
         config = {"kind": "api", "url": source.locator}
     return config
+
+
+def _api_empty_on_status_codes(config: dict[str, Any], *, source: SourceSpec) -> set[int]:
+    raw_codes = config.get("empty_on_status") or config.get("empty_on_status_codes") or []
+    if isinstance(raw_codes, (str, int)):
+        raw_codes = [raw_codes]
+    if not isinstance(raw_codes, list):
+        raise ScoutingSourceError(f"{source.label} empty_on_status must be a list of HTTP status codes")
+    codes: set[int] = set()
+    for raw_code in raw_codes:
+        try:
+            codes.add(int(raw_code))
+        except (TypeError, ValueError) as exc:
+            raise ScoutingSourceError(f"{source.label} empty_on_status contains an invalid HTTP status code") from exc
+    return codes
 
 
 def _api_request_url(source: SourceSpec, config: dict[str, Any]) -> str:

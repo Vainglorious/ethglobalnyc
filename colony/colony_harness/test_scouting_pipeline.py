@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
 import tempfile
 import textwrap
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -968,6 +970,35 @@ class ScoutingPipelineTests(unittest.TestCase):
         self.assertEqual(json.loads(claims[0]["metrics"]["price_names"]), ["part1", "draw", "part2"])
         self.assertEqual(json.loads(claims[0]["metrics"]["price_labels"]), ["Brazil", "draw", "Morocco"])
         self.assertIn("Brazil=1500", claims[0]["claim"])
+
+    def test_api_source_empty_on_status_treats_404_as_empty_payload(self) -> None:
+        source = parse_source_spec(
+            {
+                "kind": "api",
+                "url": "https://example.test/api/odds/snapshot/987654",
+                "adapter": "txline_odds",
+                "title": "TXLINE odds snapshot",
+                "empty_on_status": [404],
+            }
+        )
+        http_error = urllib.error.HTTPError(
+            source.config["url"],
+            404,
+            "Not Found",
+            {"Content-Type": "text/plain"},
+            io.BytesIO(b"not found"),
+        )
+
+        with mock.patch("urllib.request.urlopen", side_effect=http_error):
+            result = build_local_scouting_result(
+                match_entity=MATCH_ENTITY,
+                mode="fast",
+                sources=[source],
+            )
+
+        self.assertEqual(result.source_summaries[0]["finding_count"], 0)
+        self.assertEqual(result.source_summaries[0]["evidence_claim_count"], 0)
+        self.assertNotIn("error_type", result.source_summaries[0])
 
     def test_txline_scores_api_source_maps_scheduled_rows_to_coverage_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

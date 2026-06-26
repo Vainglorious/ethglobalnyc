@@ -324,7 +324,7 @@
       ],
       "requires_context": [
         "txline_fixture",
-        "txline_prediction_cutoff_utc"
+        "txline_prediction_cutoff_ms"
       ],
       "claim_types": [
         "market_snapshot"
@@ -340,8 +340,11 @@
             "X-Api-Token": "${TXLINE_API_TOKEN}"
           },
           "query": {
-            "asOf": "{txline_prediction_cutoff_utc}"
+            "asOf": "{txline_prediction_cutoff_ms}"
           },
+          "empty_on_status": [
+            404
+          ],
           "max_rows": 30
         }
       ]
