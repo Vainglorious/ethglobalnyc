@@ -10,3 +10,7 @@ contracts/out/
 
 # Solana private working notes (keep out of git)
 SOLANA/notes.txt
+
+# macOS junk
+.DS_Store
+**/.DS_Store
