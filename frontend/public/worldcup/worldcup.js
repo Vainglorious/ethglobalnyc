@@ -248,6 +248,12 @@
   }
   function isUpcoming(g) { return !isPast(g); }
 
+  /* Knockout fixtures in the KG use unresolved bracket tokens for teams ("1C", "2F",
+     "3A/B/C/D/F", "W73", "L101") because group results aren't recorded. Those aren't real
+     matchups, so we skip them in the next-match + upcoming list until they resolve. */
+  function isBracketToken(name) { return /[0-9]/.test(name || '') || String(name || '').indexOf('/') >= 0; }
+  function isResolvedFixture(g) { return g && !isBracketToken(g.home_team) && !isBracketToken(g.away_team); }
+
   /* ---------------------------------------------------------------- render: matches */
   function matchesSection() {
     if (!S.loaded) return '<section class="wc-section" id="wc-matches"><h2>Match Schedule &amp; Colony Picks</h2>' +
@@ -256,9 +262,13 @@
 
     var games = (S.games && S.games.games) || [];
     var idx = buildIndex();
-    // sort by true kickoff instant so "next" is correct regardless of viewer timezone
-    var upcoming = games.filter(isUpcoming).slice().sort(function (a, b) { return whenMs(a) - whenMs(b); });
+    // upcoming, real matchups only (skip unresolved knockout bracket slots), sorted by true
+    // kickoff instant so "next" is correct regardless of viewer timezone
+    var upcoming = games.filter(function (g) { return isUpcoming(g) && isResolvedFixture(g); })
+      .slice().sort(function (a, b) { return whenMs(a) - whenMs(b); });
     var next = upcoming[0];
+    // is there knockout action coming that just hasn't resolved to real teams yet?
+    var bracketPending = games.some(function (g) { return isUpcoming(g) && !isResolvedFixture(g); });
     // games the colony actually weighed in on (real or simulated)
     var picked = games.filter(function (g) { return betsFor(idx, g).length > 0; });
 
@@ -267,6 +277,7 @@
       'against. A badge shows whether the colony has a position on each match.</div>';
 
     if (next) html += nextCard(next, betsFor(idx, next));
+    else if (bracketPending) html += bracketPendingCard();
 
     if (picked.length) {
       html += '<h3 style="font-family:var(--display);font-size:12px;color:#FFE7A8;margin:26px 0 4px">Colony’s match picks</h3>' +
@@ -274,10 +285,27 @@
     }
 
     var rail = upcoming.slice(0, 12);
-    html += '<h3 style="font-family:var(--display);font-size:12px;color:#FFE7A8;margin:26px 0 4px">Upcoming matches</h3>' +
-      '<div class="wc-fixtures">' + rail.map(function (g) { return fixCard(g, betsFor(idx, g)); }).join('') + '</div>';
+    if (rail.length) {
+      html += '<h3 style="font-family:var(--display);font-size:12px;color:#FFE7A8;margin:26px 0 4px">Upcoming matches</h3>' +
+        '<div class="wc-fixtures">' + rail.map(function (g) { return fixCard(g, betsFor(idx, g)); }).join('') + '</div>';
+    } else if (bracketPending && next == null) {
+      // already showed the bracket-pending hero card above; no rail to render
+    }
 
     return html + '</section>';
+  }
+
+  /* graceful state when every upcoming fixture is an unresolved knockout slot */
+  function bracketPendingCard() {
+    return '<div class="wc-card wc-next wc-bracket-pending" style="margin-top:18px">' +
+      '<div class="wc-vs"><span class="wc-mid" style="font-size:30px">🏆</span></div>' +
+      '<div class="wc-meta">' +
+        '<div style="font-family:var(--mono);font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold-deep);font-weight:700">Next match</div>' +
+        '<div style="margin-top:6px"><b>Group stage complete</b></div>' +
+        '<div>Knockout bracket resolving — fixtures appear here once teams are set.</div>' +
+      '</div>' +
+      '<div></div>' +
+    '</div>';
   }
 
   function kickoff(g) {
