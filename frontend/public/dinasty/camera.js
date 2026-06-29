@@ -133,7 +133,7 @@ DN.camera = (function () {
       const camFwd   = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
       const camRight = new THREE.Vector3( Math.cos(yaw), 0, -Math.sin(yaw));
       const accel    = new THREE.Vector3();
-      const sprint   = keys['ControlLeft'] || keys['ControlRight'];
+      const sprint   = keys['ControlLeft'] || keys['ControlRight'] || keys['ShiftLeft'] || keys['ShiftRight'];
       const sp       = sprint ? 22 : 11;
       if (keys['KeyW'] || keys['ArrowUp'])    accel.add(camFwd);
       if (keys['KeyS'] || keys['ArrowDown'])  accel.sub(camFwd);
@@ -183,9 +183,13 @@ DN.camera = (function () {
         cam.position.lerp(desired, Math.min(1, dt * 1.6));
       }
     } else {
-      // Arrow-key plane pan (cinematic). Up = forward in the camera's
-      // facing direction, Down = back, Left/Right = strafe. Pans both
-      // camera and orbit target so the relative view doesn't change.
+      // Game-feel orbit + plane pan. Q/E rotate the tactical camera
+      // around its target, while arrows pan the whole view across the map.
+      if (keys['KeyQ'] || keys['KeyE']) {
+        controls.autoRotate = false;
+        const dir = keys['KeyQ'] ? 1 : -1;
+        if (controls.rotateLeft) controls.rotateLeft(dir * dt * 1.35);
+      }
       const pressed = keys['ArrowUp'] || keys['ArrowDown'] || keys['ArrowLeft'] || keys['ArrowRight'];
       if (pressed) {
         controls.autoRotate = false;

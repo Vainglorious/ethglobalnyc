@@ -225,7 +225,8 @@ DN.ants = (function () {
   A.antMaterial = antMaterial;
 
   function antMaterial() {
-    const mat = DN.util.voxelMat({ roughness: 0.42, metalness: 0.12, flatShading: false });
+    const mat = DN.util.voxelMat({ roughness: 0.34, metalness: 0.18, flatShading: false });
+    mat.userData.sceneRevampSheen = true;
     mat.onBeforeCompile = function (sh) {
       sh.uniforms.uTime = { value: 0 };
       sh.vertexShader = sh.vertexShader.replace('#include <common>', `#include <common>
@@ -246,6 +247,11 @@ DN.ants = (function () {
           transformed = aLegRoot + lp;
         }
         transformed.y += sin(uTime*aInst.y*2.0 + aInst.x)*0.018;`);
+      sh.fragmentShader = sh.fragmentShader.replace('#include <dithering_fragment>', `
+        float antRim = pow(1.0 - clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0), 2.2);
+        gl_FragColor.rgb += vec3(0.055, 0.050, 0.040) * antRim;
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.0), 0.06);
+        #include <dithering_fragment>`);
       mat.userData.sh = sh;
     };
     return mat;

@@ -15,7 +15,7 @@ DN.world = (function () {
   // terrain smoothly melts down to the skirt level.
   const EDGE_START = SIZE * 0.34;
   const EDGE_END = SIZE * 0.49;
-  let noise, fireflies, dust, cn;
+  let noise, fireflies, dust, cn, clouds, terrainDetail, critters;
 
   // ---- shared height field (metres-ish units) ----
   function heightAt(x, z) {
@@ -43,6 +43,177 @@ DN.world = (function () {
   }
   W.heightAt = heightAt;
   W.WATER_LEVEL = -3.2;
+
+  function makeWaterMaterial(color) {
+    return new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      uniforms: {
+        uTime: { value: 0 },
+        uColor: { value: new THREE.Color(color) },
+        uFoam: { value: new THREE.Color(0xE9FFF0) }
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        varying vec3 vWorld;
+        uniform float uTime;
+        void main(){
+          vUv = uv;
+          vec3 p = position;
+          float w1 = sin((p.x + uTime * 9.0) * 0.045 + sin(p.z * 0.035));
+          float w2 = cos((p.z - uTime * 7.0) * 0.052 + p.x * 0.018);
+          p.y += (w1 + w2) * 0.07;
+          vec4 world = modelMatrix * vec4(p, 1.0);
+          vWorld = world.xyz;
+          gl_Position = projectionMatrix * viewMatrix * world;
+        }`,
+      fragmentShader: `
+        varying vec2 vUv;
+        varying vec3 vWorld;
+        uniform float uTime;
+        uniform vec3 uColor;
+        uniform vec3 uFoam;
+        float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+        float noise(vec2 p){
+          vec2 i=floor(p), f=fract(p);
+          float a=hash(i), b=hash(i+vec2(1.,0.)), c=hash(i+vec2(0.,1.)), d=hash(i+vec2(1.,1.));
+          vec2 u=f*f*(3.-2.*f);
+          return mix(a,b,u.x)+(c-a)*u.y*(1.-u.x)+(d-b)*u.x*u.y;
+        }
+        void main(){
+          float n = noise(vWorld.xz * 0.075 + vec2(uTime * 0.08, -uTime * 0.055));
+          float ripple = sin(vWorld.x * 0.13 + uTime * 1.8) * cos(vWorld.z * 0.11 - uTime * 1.4);
+          float vein = smoothstep(0.58, 0.96, n + ripple * 0.18);
+          float foam = smoothstep(0.74, 0.98, noise(vWorld.xz * 0.16 - uTime * 0.10) + abs(ripple) * 0.22);
+          vec3 col = mix(uColor * 0.72, uColor * 1.35, vein);
+          col = mix(col, uFoam, foam * 0.16);
+          float alpha = 0.30 + vein * 0.12 + foam * 0.08;
+          gl_FragColor = vec4(col, alpha);
+        }`
+    });
+  }
+
+  function makeClouds(scene) {
+    const g = new THREE.Group();
+    g.name = 'atmospheric-clouds';
+    const tex = DN.util.softSprite();
+    for (let i = 0; i < 20; i++) {
+      const mat = new THREE.SpriteMaterial({
+        map: tex,
+        color: i % 3 === 0 ? 0xFFF4DA : 0xEAF5FF,
+        transparent: true,
+        opacity: 0.055 + Math.random() * 0.045,
+        depthWrite: false
+      });
+      const sp = new THREE.Sprite(mat);
+      const a = Math.random() * Math.PI * 2;
+      const r = 520 + Math.random() * 1180;
+      sp.position.set(Math.cos(a) * r, 220 + Math.random() * 115, Math.sin(a) * r);
+      sp.scale.set(160 + Math.random() * 180, 32 + Math.random() * 30, 1);
+      sp.userData = { drift: 1.6 + Math.random() * 2.6, phase: Math.random() * 6.28, baseY: sp.position.y };
+      g.add(sp);
+    }
+    scene.add(g);
+    return g;
+  }
+
+  function makeTerrainDetail(scene) {
+    const root = new THREE.Group();
+    root.name = 'terrain-detail-overlay';
+    const bladeGeo = new THREE.ConeGeometry(0.18, 1.15, 4);
+    const bladeMat = new THREE.MeshStandardMaterial({ color: 0x5E8D38, roughness: 1.0, metalness: 0.0, flatShading: true });
+    const count = 720;
+    const mesh = new THREE.InstancedMesh(bladeGeo, bladeMat, count);
+    mesh.name = 'terrain-detail-overlay-grass';
+    mesh.castShadow = false;
+    mesh.receiveShadow = true;
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sv = new THREE.Vector3(), pv = new THREE.Vector3();
+    let placed = 0;
+    for (let i = 0; i < count * 2 && placed < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = 18 + Math.pow(Math.random(), 0.72) * (SIZE * 0.43);
+      const x = Math.cos(a) * r, z = Math.sin(a) * r;
+      const y = heightAt(x, z);
+      if (y < W.WATER_LEVEL + 1.0) continue;
+      e.set((Math.random() - 0.5) * 0.34, Math.random() * Math.PI * 2, (Math.random() - 0.5) * 0.34);
+      q.setFromEuler(e);
+      const sc = 0.55 + Math.random() * 0.95;
+      sv.set(sc, sc * (0.75 + Math.random() * 0.8), sc);
+      pv.set(x, y + 0.42 * sv.y, z);
+      m.compose(pv, q, sv);
+      mesh.setMatrixAt(placed++, m);
+    }
+    mesh.count = placed;
+    mesh.instanceMatrix.needsUpdate = true;
+    root.add(mesh);
+
+    const pebGeo = new THREE.DodecahedronGeometry(0.75, 0);
+    const pebMat = new THREE.MeshStandardMaterial({ color: 0x8D887B, roughness: 1.0, metalness: 0.0, flatShading: true });
+    const pebbles = new THREE.InstancedMesh(pebGeo, pebMat, 180);
+    pebbles.name = 'terrain-detail-overlay-pebbles';
+    for (let i = 0; i < 180; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = 24 + Math.random() * (SIZE * 0.40);
+      const x = Math.cos(a) * r, z = Math.sin(a) * r;
+      const y = heightAt(x, z);
+      e.set(Math.random() * 0.7, Math.random() * Math.PI * 2, Math.random() * 0.7);
+      q.setFromEuler(e);
+      const sc = 0.28 + Math.random() * 0.62;
+      sv.set(sc * (1.1 + Math.random() * 0.8), sc * 0.42, sc);
+      pv.set(x, y + 0.12, z);
+      m.compose(pv, q, sv);
+      pebbles.setMatrixAt(i, m);
+    }
+    pebbles.instanceMatrix.needsUpdate = true;
+    root.add(pebbles);
+    scene.add(root);
+    return root;
+  }
+
+  function makeLivingCritters(scene) {
+    const root = new THREE.Group();
+    root.name = 'living-critters';
+    const count = 140;
+    const pos = new Float32Array(count * 3);
+    const col = new Float32Array(count * 3);
+    const base = new Float32Array(count * 3);
+    const ph = new Float32Array(count);
+    const palette = [new THREE.Color(0xFFE36E), new THREE.Color(0xFF9E6E), new THREE.Color(0xB8F56B), new THREE.Color(0x9AE7FF), new THREE.Color(0xF2D8FF)];
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = 20 + Math.pow(Math.random(), 0.65) * (SIZE * 0.38);
+      const x = Math.cos(a) * r;
+      const z = Math.sin(a) * r;
+      const y = heightAt(x, z) + 2.2 + Math.random() * 8.0;
+      base[i * 3] = pos[i * 3] = x;
+      base[i * 3 + 1] = pos[i * 3 + 1] = y;
+      base[i * 3 + 2] = pos[i * 3 + 2] = z;
+      ph[i] = Math.random() * Math.PI * 2;
+      const c = palette[i % palette.length];
+      col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    const mat = new THREE.PointsMaterial({
+      size: 1.4,
+      map: DN.util.softSprite(),
+      transparent: true,
+      opacity: 0.58,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      vertexColors: true,
+      sizeAttenuation: true
+    });
+    const points = new THREE.Points(geo, mat);
+    points.name = 'living-critters-points';
+    points.frustumCulled = false;
+    root.add(points);
+    root.userData = { points, base, ph };
+    scene.add(root);
+    return root;
+  }
 
   function makeSky(scene) {
     const geo = new THREE.SphereGeometry(4800, 64, 40);
@@ -77,9 +248,9 @@ DN.world = (function () {
     noise = new DNNoise(11);
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(DN.palette.horizon);
-    // No fog. The green horizon/background (palette.horizon + biome bg/sky.bot)
-    // keeps the surround green so the finite terrain never reveals a white void.
-    scene.fog = null;
+    // Subtle aerial perspective. Far terrain now fades into the horizon instead of
+    // reading as a hard toy edge, while the skirt still hides the finite terrain.
+    scene.fog = new THREE.Fog(DN.palette.horizon, 2400, 5200);
 
     // Wider FOV (was 60) makes the basin feel expansive — the world reads
     // as a big map instead of a cropped diorama. Camera pulled back a touch
@@ -87,8 +258,11 @@ DN.world = (function () {
     const camera = new THREE.PerspectiveCamera(74, innerWidth / innerHeight, 0.1, 8000);
     camera.position.set(46, 18, 82);
 
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(1);
+    // `default` lets the OS pick the integrated GPU on laptops. `high-performance`
+    // pins the discrete GPU on for the whole session — a big battery drain for a
+    // scene this light. Switch back to high-performance only if framerate suffers.
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'default' });
+    renderer.setPixelRatio(Math.min(1.35, window.devicePixelRatio || 1));
     renderer.setSize(innerWidth, innerHeight);
     renderer.shadowMap.enabled = false;
     renderer.outputEncoding = THREE.LinearEncoding;
@@ -173,10 +347,7 @@ DN.world = (function () {
     // below WATER_LEVEL — the skirt sits above water level out at the horizon.
     const waterGeo = new THREE.PlaneGeometry(SIZE, SIZE, 1, 1);
     waterGeo.rotateX(-Math.PI / 2);
-    const waterMat = new THREE.MeshStandardMaterial({
-      color: DN.palette.water, transparent: true, opacity: 0.78,
-      roughness: 0.18, metalness: 0.0
-    });
+    const waterMat = makeWaterMaterial(DN.palette.water);
     const water = new THREE.Mesh(waterGeo, waterMat);
     water.position.y = W.WATER_LEVEL;
     water.receiveShadow = false;
@@ -220,8 +391,13 @@ DN.world = (function () {
     scene.add(fireflies);
     W._fire = { pts: fireflies, base: fpos.slice(), ph: fph };
 
+    clouds = makeClouds(scene);
+    terrainDetail = makeTerrainDetail(scene);
+    critters = makeLivingCritters(scene);
+
     W.scene = scene; W.camera = camera; W.renderer = renderer;
-    W.terrain = terrain; W.sun = sun; W.water = water; W.hemi = hemi; W.amb = amb;
+    W.terrain = terrain; W.sun = sun; W.water = water; W.hemi = hemi; W.amb = amb; W.clouds = clouds; W.terrainDetail = terrainDetail; W.critters = critters;
+    W._sceneRevampV2 = true;
     W.SIZE = SIZE;
 
     addEventListener('resize', function () {
@@ -240,7 +416,7 @@ DN.world = (function () {
     _atmosTick++;
     const updateAtmos = (_atmosTick & 1) === 0;
     if (!updateAtmos) {
-      if (W.water) W.water.material.opacity = 0.74 + Math.sin(elapsed * 0.6) * 0.04;
+      if (W.water && W.water.material.uniforms) W.water.material.uniforms.uTime.value = elapsed;
       return;
     }
     const d = W._dust;
@@ -268,7 +444,28 @@ DN.world = (function () {
       const night = W._night || 0;
       f.pts.material.opacity = (0.25 + Math.sin(elapsed * 2) * 0.1) * (0.2 + night * 0.9);
     }
-    if (W.water) W.water.material.opacity = 0.74 + Math.sin(elapsed * 0.6) * 0.04;
+    if (W.water && W.water.material.uniforms) W.water.material.uniforms.uTime.value = elapsed;
+    if (W.clouds) {
+      for (let i = 0; i < W.clouds.children.length; i++) {
+        const c = W.clouds.children[i];
+        c.position.x += dt * c.userData.drift;
+        c.position.y = c.userData.baseY + Math.sin(elapsed * 0.08 + c.userData.phase) * 7;
+        if (c.position.x > 1800) c.position.x = -1800;
+      }
+    }
+    if (W.critters && W.critters.userData.points) {
+      const u = W.critters.userData;
+      const arr = u.points.geometry.attributes.position.array;
+      for (let i = 0; i < u.ph.length; i++) {
+        const ph = u.ph[i];
+        const bx = u.base[i * 3], by = u.base[i * 3 + 1], bz = u.base[i * 3 + 2];
+        arr[i * 3] = bx + Math.sin(elapsed * 0.75 + ph) * 3.8 + Math.sin(elapsed * 1.7 + ph * 2.0) * 0.9;
+        arr[i * 3 + 1] = by + Math.sin(elapsed * 2.8 + ph) * 0.85 + Math.max(0, Math.sin(elapsed * 7.0 + ph)) * 0.42;
+        arr[i * 3 + 2] = bz + Math.cos(elapsed * 0.62 + ph * 1.3) * 3.8;
+      }
+      u.points.geometry.attributes.position.needsUpdate = true;
+      u.points.material.opacity = 0.42 + Math.sin(elapsed * 0.7) * 0.08;
+    }
   };
 
   // time-of-day 0..1 (0 dawn, .5 midday, 1 dusk->night)
@@ -346,7 +543,10 @@ DN.world = (function () {
       if (W.scene.fog) { W.scene.fog.color.set(b.bg); W.scene.fog.near = b.fog[0]; W.scene.fog.far = b.fog[1]; }
     }
     if (W.hemi) { W.hemi.color.set(b.hemiSky); W.hemi.groundColor.set(b.hemiGround); }
-    if (W.water) W.water.material.color.set(b.water);
+    if (W.water) {
+      if (W.water.material.uniforms && W.water.material.uniforms.uColor) W.water.material.uniforms.uColor.value.set(b.water);
+      else if (W.water.material.color) W.water.material.color.set(b.water);
+    }
     if (W.skyMat) { W.skyMat.uniforms.top.value.set(b.sky.top); W.skyMat.uniforms.mid.value.set(b.sky.mid); W.skyMat.uniforms.bot.value.set(b.sky.bot); W.skyMat.uniforms.sunCol.value.set(b.sky.sun); }
     W.recolorTerrain(b.ground);
     W.recolorSkirt(b.ground);

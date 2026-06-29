@@ -5,10 +5,10 @@ DN.app = (function () {
   const App = { view: 'surface', selection: null, following: null };
   const S = { playing: true, speed: 1, simTime: 20, GEN: 60, DAY: 200, lastThought: 0, lastWeather: -100, wIdx: 0 };
   const WEATHER = [
-    { name: 'Clear skies', fog: [180, 660], temp: 24 },
-    { name: 'Soft fog', fog: [110, 380], temp: 19 },
-    { name: 'Golden haze', fog: [150, 520], temp: 27 },
-    { name: 'Bright sun', fog: [200, 720], temp: 29 }
+    { name: 'Clear skies', fog: [2600, 5600], temp: 24 },
+    { name: 'Soft fog', fog: [1700, 4300], temp: 19 },
+    { name: 'Golden haze', fog: [2100, 5000], temp: 27 },
+    { name: 'Bright sun', fog: [3000, 6200], temp: 29 }
   ];
   let world, clock, lastHud = 0;
 
@@ -50,8 +50,13 @@ DN.app = (function () {
   }
   function period(p) { return p < 0.22 ? 'Dawn' : p < 0.5 ? 'Midday' : p < 0.72 ? 'Dusk' : 'Night'; }
 
+  let _rafId = 0;
   function frame() {
-    requestAnimationFrame(frame);
+    // Pause the entire render+sim loop while the tab is hidden. A
+    // backgrounded WebGL canvas otherwise keeps rendering the full scene
+    // and forces the (discrete) GPU to stay awake — the main battery drain.
+    if (typeof document !== 'undefined' && document.hidden) { _rafId = 0; return; }
+    _rafId = requestAnimationFrame(frame);
     const dt = Math.min(0.05, clock.getDelta());
     const el = clock.elapsedTime;
     const timeScale = S.playing ? S.speed : 0;
@@ -426,6 +431,11 @@ DN.app = (function () {
     wire();
 
     clock = new THREE.Clock();
+    // Resume the loop when the tab becomes visible again. `getDelta()` is
+    // reset first so we don't apply one giant catch-up dt on the next frame.
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && !_rafId) { clock.getDelta(); frame(); }
+    });
     frame();
 
     DN.hud.pushThought('WorldColony online — four AI ant civilizations awakening across the basin.', 'World', '#E8A23D');

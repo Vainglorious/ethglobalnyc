@@ -28,6 +28,7 @@ DN.supa = (function () {
 
   // ---- channels ----
   let queensChannel = null;
+  let queensJoined = false;
   let coloniesChannel = null;
   let lastQueenSendAt = 0;
   let lastQueenPayload = null;
@@ -147,7 +148,9 @@ DN.supa = (function () {
       if (!p || !p.pubkey || p.pubkey === S.selfPubkey) return;
       updateGhost(p);
     });
-    queensChannel.subscribe();
+    queensChannel.subscribe((status) => {
+      queensJoined = (status === 'SUBSCRIBED');
+    });
     return queensChannel;
   }
 
@@ -162,6 +165,10 @@ DN.supa = (function () {
     if (!S.ready) return;
     const ch = ensureQueensChannel();
     if (!ch) return;
+    // Until the channel has actually joined, `send()` falls back to a REST
+    // POST and Supabase logs a deprecation warning every call. Skip sending
+    // until we're subscribed over the websocket.
+    if (!queensJoined) return;
     const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     if (now - lastQueenSendAt < QUEEN_MIN_MS) return;
     // Cheap delta-skip: don't re-send if position barely changed.

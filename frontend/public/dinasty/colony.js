@@ -151,6 +151,60 @@ DN.colony = (function () {
     return out;
   }
 
+  function addMoundDetails(colGroup, moundGeo, accent, seed) {
+    const rng = (function (a) { return function () { a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; })(seed || 1);
+    const detail = new THREE.Group();
+    detail.name = 'colony-mound-detail';
+    const H = moundGeo.userData.peakH, R = moundGeo.userData.baseR, craterR = moundGeo.userData.craterR;
+
+    const shadowGeo = new THREE.RingGeometry(craterR * 0.54, craterR * 1.18, 36);
+    shadowGeo.rotateX(-Math.PI / 2);
+    const shadow = new THREE.Mesh(shadowGeo, new THREE.MeshBasicMaterial({
+      color: 0x070402, transparent: true, opacity: 0.50, side: THREE.DoubleSide, depthWrite: false
+    }));
+    shadow.position.y = H - 0.62;
+    detail.add(shadow);
+
+    const moistureGeo = new THREE.RingGeometry(R * 0.50, R * 0.92, 44);
+    moistureGeo.rotateX(-Math.PI / 2);
+    const moisture = new THREE.Mesh(moistureGeo, new THREE.MeshBasicMaterial({
+      color: 0x2f2412, transparent: true, opacity: 0.13, side: THREE.DoubleSide, depthWrite: false
+    }));
+    moisture.position.y = 0.08;
+    detail.add(moisture);
+
+    const rootMat = new THREE.MeshStandardMaterial({ color: P.dirtDark, roughness: 0.96, metalness: 0.0, flatShading: true });
+    const rootGeo = new THREE.BoxGeometry(1, 1, 1);
+    const roots = new THREE.InstancedMesh(rootGeo, rootMat, 18);
+    roots.name = 'colony-root-strands';
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sv = new THREE.Vector3(), pv = new THREE.Vector3();
+    for (let i = 0; i < 18; i++) {
+      const a = (i / 18) * Math.PI * 2 + (rng() - 0.5) * 0.28;
+      const len = 2.0 + rng() * 4.6;
+      const rr = R * (0.58 + rng() * 0.38);
+      pv.set(Math.cos(a) * (rr + len * 0.45), 0.18 + rng() * 0.35, Math.sin(a) * (rr + len * 0.45));
+      e.set((rng() - 0.5) * 0.16, -a + Math.PI / 2, (rng() - 0.5) * 0.16);
+      q.setFromEuler(e);
+      sv.set(len, 0.09 + rng() * 0.05, 0.08 + rng() * 0.05);
+      m.compose(pv, q, sv);
+      roots.setMatrixAt(i, m);
+    }
+    roots.instanceMatrix.needsUpdate = true;
+    detail.add(roots);
+
+    const ember = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: DN.util.softSprite(), color: accent, transparent: true, opacity: 0.32,
+      depthWrite: false, blending: THREE.AdditiveBlending
+    }));
+    ember.name = 'colony-shaft-inner-glow';
+    ember.position.set(0, H - 1.1, 0);
+    ember.scale.set(4.2, 4.2, 1);
+    detail.add(ember);
+
+    colGroup.add(detail);
+    return detail;
+  }
+
   // Build a single colony at (angle, dist) and register it. Returns the
   // colony object (already pushed onto C.list). Pulled out of C.init so
   // founding new colonies post-startup can reuse this codepath.
@@ -193,6 +247,8 @@ DN.colony = (function () {
     ring.position.y = 0.4;
     g.add(ring);
 
+    const detailGroup = addMoundDetails(g, moundGeo, accent, 700 + idx);
+
     group.add(g);
 
     // entrance is the shaft at the summit — ants converge on the centre, climb the
@@ -208,7 +264,7 @@ DN.colony = (function () {
       pos: new THREE.Vector3(cx, cy, cz),
       corePos: new THREE.Vector3(cx, cy + 7, cz),
       entrance,
-      group: g, mound, marker, glow, ring, pickTarget: pick,
+      group: g, mound, marker, glow, ring, pickTarget: pick, _detailGroup: detailGroup,
       _mH: moundGeo.userData.peakH, _mR: moundGeo.userData.baseR,
       _mCr: moundGeo.userData.craterR, _mSd: moundGeo.userData.shaftDepth,
       directive: 'forage', selected: false, _t: Math.random() * 6,
@@ -317,6 +373,7 @@ DN.colony = (function () {
 
     // Hide / pre-set everything for the animation.
     col.mound.scale.set(0.5, 0.001, 0.5);
+    if (col._detailGroup) col._detailGroup.scale.set(0.5, 0.001, 0.5);
     col.marker.material.opacity = 0;
     col.marker.scale.setScalar(0.01);
     col.marker.material.emissiveIntensity = 0;
@@ -392,9 +449,11 @@ DN.colony = (function () {
           c.mound.scale.y = 0.001 + e * 0.999;
           c.mound.scale.x = 0.5 + e * 0.5;
           c.mound.scale.z = 0.5 + e * 0.5;
+          if (c._detailGroup) c._detailGroup.scale.copy(c.mound.scale);
           c.glow.material.opacity = 0.55 + Math.sin(T * 5) * 0.08;
         } else if (T < 5.0) {
           c.mound.scale.set(1, 1, 1);
+          if (c._detailGroup) c._detailGroup.scale.set(1, 1, 1);
           const p = (T - 3.8) / 1.2;
           const e = Math.sin(p * Math.PI * 0.5); // ease-out sine
           c.marker.scale.setScalar(e);
@@ -411,6 +470,7 @@ DN.colony = (function () {
         } else {
           // finalise
           c.mound.scale.set(1, 1, 1);
+          if (c._detailGroup) c._detailGroup.scale.set(1, 1, 1);
           c.marker.scale.setScalar(1);
           c.marker.material.opacity = 1;
           c.marker.material.emissiveIntensity = 0.25;
